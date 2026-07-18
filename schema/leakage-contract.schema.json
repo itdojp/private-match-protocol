@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://itdo.jp/schemas/private-match/protocol/leakage-contract-0.1.json",
+  "title": "Private Match privacy leakage contract v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "record_type", "artifact", "scope", "actors",
+    "private_data_classes", "shared_protocol_data", "phase_leakage",
+    "minimum_disclosure_policy", "repeated_query_controls",
+    "small_intersection_controls", "input_authenticity_and_completeness",
+    "collusion_and_compromise", "retention", "claims_not_supported_by_this_contract",
+    "required_evidence_before_privacy_claim", "unresolved_decisions"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "record_type": {"const": "privacy-leakage-contract"},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "status", "protocol_profile", "decision_output", "owner", "reviewed_at", "next_review_at"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["draft", "candidate", "experimental", "stable", "deprecated", "withdrawn"]},
+        "protocol_profile": {"type": "string", "minLength": 1},
+        "decision_output": {"type": "string", "minLength": 1},
+        "owner": {"type": "string", "minLength": 1},
+        "reviewed_at": {"type": ["string", "null"], "format": "date"},
+        "next_review_at": {"type": "string", "format": "date"}
+      }
+    },
+    "scope": {"$ref": "#/$defs/object"},
+    "actors": {
+      "type": "object", "minProperties": 6,
+      "required": ["party_a_client", "party_b_client", "coordinator", "service_operator", "assurance_pipeline", "network_observer", "malicious_participant"],
+      "additionalProperties": {"$ref": "#/$defs/object"}
+    },
+    "private_data_classes": {"$ref": "#/$defs/nonEmptyObject"},
+    "shared_protocol_data": {"$ref": "#/$defs/nonEmptyObject"},
+    "phase_leakage": {"$ref": "#/$defs/nonEmptyObject"},
+    "minimum_disclosure_policy": {"$ref": "#/$defs/object"},
+    "repeated_query_controls": {"$ref": "#/$defs/object"},
+    "small_intersection_controls": {"$ref": "#/$defs/object"},
+    "input_authenticity_and_completeness": {"$ref": "#/$defs/object"},
+    "collusion_and_compromise": {"$ref": "#/$defs/object"},
+    "retention": {"$ref": "#/$defs/object"},
+    "claims_not_supported_by_this_contract": {"$ref": "#/$defs/nonEmptyStringArray"},
+    "required_evidence_before_privacy_claim": {"$ref": "#/$defs/nonEmptyStringArray"},
+    "unresolved_decisions": {"$ref": "#/$defs/nonEmptyStringArray"}
+  },
+  "$defs": {
+    "object": {"type": "object"},
+    "nonEmptyObject": {"type": "object", "minProperties": 1},
+    "nonEmptyStringArray": {
+      "type": "array", "minItems": 1,
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    }
+  }
+}
