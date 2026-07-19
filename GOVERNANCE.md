@@ -59,7 +59,9 @@ Publication approval does not mean production approval.
 
 ## Security reports
 
-Do not open public issues for suspected vulnerabilities. Use GitHub private vulnerability reporting or the security contact designated by ITDO Inc. Public disclosure occurs after remediation and approval.
+Do not open public issues for suspected vulnerabilities. Follow `SECURITY.md`
+for the current private reporting routes. Public disclosure occurs after
+remediation and approval.
 
 ## Conformance
 
