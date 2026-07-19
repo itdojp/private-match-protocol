@@ -28,6 +28,7 @@ path = [
   "ROADMAP.md",
   "SECURITY.md",
   "docs/*.md",
+  "docs/decisions/*.md",
   "specs/*.md",
 ]
 precedence = "aggregate"

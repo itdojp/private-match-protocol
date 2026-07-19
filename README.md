@@ -67,3 +67,6 @@ Repository content uses an explicit dual-license structure:
 precedence over this summary for individual files. Patent-sensitive implementation material
 and trade-secret candidates remain private or embargoed until human IP and publication
 approval; these licenses do not indicate that such material has been published here.
+
+The explicit human approval, scope, alternatives, and publication boundary for this decision
+are recorded in [ADR-0001](docs/decisions/ADR-0001-PUBLIC-LICENSING.md).

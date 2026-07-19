@@ -13,6 +13,11 @@ class NoDatesSafeLoader(yaml.SafeLoader):
     pass
 
 
+NoDatesSafeLoader.yaml_implicit_resolvers = {
+    first_char: list(resolvers)
+    for first_char, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+
 for first_char, resolvers in list(NoDatesSafeLoader.yaml_implicit_resolvers.items()):
     NoDatesSafeLoader.yaml_implicit_resolvers[first_char] = [
         entry for entry in resolvers if entry[0] != "tag:yaml.org,2002:timestamp"
@@ -32,7 +37,9 @@ def validate(root: Path) -> list[str]:
     contract = load_contract(contract_path)
     validator = Draft202012Validator(schema, format_checker=FormatChecker())
     messages = []
-    for error in sorted(validator.iter_errors(contract), key=lambda item: list(item.absolute_path)):
+    for error in sorted(
+        validator.iter_errors(contract), key=lambda item: list(item.absolute_path)
+    ):
         location = ".".join(str(value) for value in error.absolute_path) or "$"
         messages.append(f"{location}: {error.message}")
     return messages

@@ -1,5 +1,9 @@
 # Privacy Leakage Contract v0.1
 
+The governing disclosure-policy decision, assumptions, alternatives, compatibility impact,
+owner, and review date are recorded in
+[ADR-0002](decisions/ADR-0002-PRIVACY-DISCLOSURE-POLICY.md).
+
 ## Purpose
 
 Private Match is not designed to make every aspect of a transaction invisible. It is designed to disclose a bounded decision while prohibiting raw input and matching-element disclosure in the core profile.

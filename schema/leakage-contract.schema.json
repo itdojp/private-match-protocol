@@ -22,7 +22,7 @@
         "id": {"type": "string", "minLength": 1},
         "status": {"enum": ["draft", "candidate", "experimental", "stable", "deprecated", "withdrawn"]},
         "protocol_profile": {"type": "string", "minLength": 1},
-        "decision_output": {"type": "string", "minLength": 1},
+        "decision_output": {"const": "MATCH | NO_MATCH | INDETERMINATE"},
         "owner": {"type": "string", "minLength": 1},
         "reviewed_at": {"type": ["string", "null"], "format": "date"},
         "next_review_at": {"type": "string", "format": "date"}
@@ -30,22 +30,34 @@
     },
     "scope": {"$ref": "#/$defs/object"},
     "actors": {
-      "type": "object", "minProperties": 6,
-      "required": ["party_a_client", "party_b_client", "coordinator", "service_operator", "assurance_pipeline", "network_observer", "malicious_participant"],
-      "additionalProperties": {"$ref": "#/$defs/object"}
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "party_a_client", "party_b_client", "coordinator", "service_operator",
+        "assurance_pipeline", "network_observer", "malicious_participant"
+      ],
+      "properties": {
+        "party_a_client": {"$ref": "#/$defs/object"},
+        "party_b_client": {"$ref": "#/$defs/object"},
+        "coordinator": {"$ref": "#/$defs/coordinator"},
+        "service_operator": {"$ref": "#/$defs/object"},
+        "assurance_pipeline": {"$ref": "#/$defs/object"},
+        "network_observer": {"$ref": "#/$defs/object"},
+        "malicious_participant": {"$ref": "#/$defs/object"}
+      }
     },
-    "private_data_classes": {"$ref": "#/$defs/nonEmptyObject"},
-    "shared_protocol_data": {"$ref": "#/$defs/nonEmptyObject"},
+    "private_data_classes": {"$ref": "#/$defs/privateDataClasses"},
+    "shared_protocol_data": {"$ref": "#/$defs/sharedProtocolData"},
     "phase_leakage": {"$ref": "#/$defs/nonEmptyObject"},
-    "minimum_disclosure_policy": {"$ref": "#/$defs/object"},
-    "repeated_query_controls": {"$ref": "#/$defs/object"},
-    "small_intersection_controls": {"$ref": "#/$defs/object"},
-    "input_authenticity_and_completeness": {"$ref": "#/$defs/object"},
-    "collusion_and_compromise": {"$ref": "#/$defs/object"},
-    "retention": {"$ref": "#/$defs/object"},
-    "claims_not_supported_by_this_contract": {"$ref": "#/$defs/nonEmptyStringArray"},
+    "minimum_disclosure_policy": {"$ref": "#/$defs/minimumDisclosurePolicy"},
+    "repeated_query_controls": {"$ref": "#/$defs/repeatedQueryControls"},
+    "small_intersection_controls": {"$ref": "#/$defs/smallIntersectionControls"},
+    "input_authenticity_and_completeness": {"$ref": "#/$defs/inputAuthenticityAndCompleteness"},
+    "collusion_and_compromise": {"$ref": "#/$defs/collusionAndCompromise"},
+    "retention": {"$ref": "#/$defs/retention"},
+    "claims_not_supported_by_this_contract": {"$ref": "#/$defs/unsupportedClaims"},
     "required_evidence_before_privacy_claim": {"$ref": "#/$defs/nonEmptyStringArray"},
-    "unresolved_decisions": {"$ref": "#/$defs/nonEmptyStringArray"}
+    "unresolved_decisions": {"$ref": "#/$defs/unresolvedDecisions"}
   },
   "$defs": {
     "object": {"type": "object"},
@@ -54,6 +66,358 @@
       "type": "array", "minItems": 1,
       "items": {"type": "string", "minLength": 1},
       "uniqueItems": true
+    },
+    "coordinator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role", "trusted_for", "prohibited_from_receiving", "residual_visibility",
+        "outcome_visibility"
+      ],
+      "properties": {
+        "role": {
+          "const": "authoritative session, replay, query-budget, and audit-state coordinator"
+        },
+        "trusted_for": {"$ref": "#/$defs/nonEmptyStringArray"},
+        "prohibited_from_receiving": {
+          "allOf": [
+            {"$ref": "#/$defs/nonEmptyStringArray"},
+            {"contains": {"const": "raw identifiers"}},
+            {"contains": {"const": "normalized private inputs"}},
+            {"contains": {"const": "matching elements"}},
+            {"contains": {"const": "optional reveal payloads in the core profile"}}
+          ]
+        },
+        "residual_visibility": {"$ref": "#/$defs/nonEmptyStringArray"},
+        "outcome_visibility": {"const": "prohibited-target; evidence required"}
+      }
+    },
+    "localOnlyDataClass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["examples", "owner_visibility", "allowed_transmission", "allowed_logging"],
+      "properties": {
+        "examples": {"$ref": "#/$defs/nonEmptyStringArray"},
+        "owner_visibility": {"$ref": "#/$defs/nonEmptyStringArray"},
+        "allowed_transmission": {"const": "none in core profile"},
+        "allowed_logging": {"const": "none"}
+      }
+    },
+    "localSecretsDataClass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["examples", "owner_visibility", "allowed_transmission", "allowed_logging"],
+      "properties": {
+        "examples": {"$ref": "#/$defs/nonEmptyStringArray"},
+        "owner_visibility": {"$ref": "#/$defs/nonEmptyStringArray"},
+        "allowed_transmission": {
+          "const": "only protocol-defined public contribution derived under a selected profile"
+        },
+        "allowed_logging": {"const": "none"}
+      }
+    },
+    "privateDataClasses": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_identifiers", "normalized_private_inputs", "local_secrets"],
+      "properties": {
+        "raw_identifiers": {"$ref": "#/$defs/localOnlyDataClass"},
+        "normalized_private_inputs": {"$ref": "#/$defs/localOnlyDataClass"},
+        "local_secrets": {"$ref": "#/$defs/localSecretsDataClass"}
+      }
+    },
+    "decisionReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed_values", "visible_to", "coordinator_visibility", "prohibited_fields",
+        "residual_leakage"
+      ],
+      "properties": {
+        "allowed_values": {"const": ["MATCH", "NO_MATCH", "INDETERMINATE"]},
+        "visible_to": {"const": ["Party A", "Party B"]},
+        "coordinator_visibility": {"const": "prohibited-target; evidence required"},
+        "prohibited_fields": {
+          "allOf": [
+            {"$ref": "#/$defs/nonEmptyStringArray"},
+            {"contains": {"const": "exact intersection count"}},
+            {"contains": {"const": "matching elements"}},
+            {"contains": {"const": "non-matching elements"}},
+            {"contains": {"const": "identity or attribute reveal"}},
+            {"contains": {"const": "party-specific result"}}
+          ]
+        },
+        "residual_leakage": {"$ref": "#/$defs/nonEmptyStringArray"}
+      }
+    },
+    "sharedProtocolData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "participant_binding", "session_metadata", "input_commitment", "pet_contribution",
+        "decision_receipt", "audit_event"
+      ],
+      "properties": {
+        "participant_binding": {"$ref": "#/$defs/nonEmptyObject"},
+        "session_metadata": {"$ref": "#/$defs/nonEmptyObject"},
+        "input_commitment": {"$ref": "#/$defs/nonEmptyObject"},
+        "pet_contribution": {"$ref": "#/$defs/nonEmptyObject"},
+        "decision_receipt": {"$ref": "#/$defs/decisionReceipt"},
+        "audit_event": {"$ref": "#/$defs/nonEmptyObject"}
+      }
+    },
+    "minimumDisclosurePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exact_count", "matching_elements", "identity_reveal", "asymmetric_results",
+        "detailed_failure_reason_to_counterparty",
+        "one_accepted_evaluation_per_commitment_pair", "new_evaluation_requires",
+        "minimum_set_size", "threshold_policy", "output_bucketing"
+      ],
+      "properties": {
+        "exact_count": {"const": "prohibited"},
+        "matching_elements": {"const": "prohibited"},
+        "identity_reveal": {"const": "prohibited in core profile"},
+        "asymmetric_results": {"const": "prohibited"},
+        "detailed_failure_reason_to_counterparty": {
+          "const": "prohibited when it increases inference risk"
+        },
+        "one_accepted_evaluation_per_commitment_pair": {"const": "required"},
+        "new_evaluation_requires": {
+          "const": [
+            "new session or explicitly versioned retry transition",
+            "new query-budget authorization",
+            "participant and policy rebinding"
+          ]
+        },
+        "minimum_set_size": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "enforcement_owner"],
+          "properties": {
+            "status": {"const": "unresolved"},
+            "enforcement_owner": {"const": "coordinator plus selected integration profile"}
+          }
+        },
+        "threshold_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "visibility"],
+          "properties": {
+            "status": {"const": "policy-defined and mutually accepted"},
+            "visibility": {"const": "both participants and coordinator in the initial profile"}
+          }
+        },
+        "output_bucketing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {"status": {"const": "not applicable to decision-only core output"}}
+        }
+      }
+    },
+    "repeatedQueryControls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective", "required_controls", "not_sufficient_alone", "residual_risk"],
+      "properties": {
+        "objective": {"const": "prevent adaptive probing from reconstructing private data"},
+        "required_controls": {
+          "allOf": [
+            {"$ref": "#/$defs/nonEmptyStringArray"},
+            {
+              "contains": {
+                "const": "authoritative query budget per organization, participant, policy, and time window"
+              }
+            },
+            {"contains": {"const": "one accepted result per commitment pair"}},
+            {"contains": {"const": "replay and idempotency enforcement"}},
+            {"contains": {"const": "minimum session and set-size policies"}},
+            {"contains": {"const": "monitoring of correlated and overlapping query attempts"}},
+            {"contains": {"const": "rate and cost controls"}},
+            {"contains": {"const": "policy for materially changed datasets"}}
+          ]
+        },
+        "not_sufficient_alone": {
+          "allOf": [
+            {"$ref": "#/$defs/nonEmptyStringArray"},
+            {"contains": {"const": "client-side counters"}},
+            {"contains": {"const": "random nonce without authoritative replay state"}},
+            {"contains": {"const": "terms of service without technical enforcement"}},
+            {"contains": {"const": "withholding exact count while allowing unlimited predicates"}}
+          ]
+        },
+        "residual_risk": {"$ref": "#/$defs/nonEmptyStringArray"}
+      }
+    },
+    "smallIntersectionControls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exact_count", "matching_identity", "minimum_intersection", "negative_result_leakage",
+        "positive_result_leakage", "residual_risk"
+      ],
+      "properties": {
+        "exact_count": {"const": "prohibited"},
+        "matching_identity": {"const": "prohibited"},
+        "minimum_intersection": {"const": "unresolved policy requirement"},
+        "negative_result_leakage": {
+          "const": "NO_MATCH reveals that the policy threshold was not met"
+        },
+        "positive_result_leakage": {
+          "const": "MATCH reveals that the policy threshold was met"
+        },
+        "residual_risk": {
+          "allOf": [
+            {"$ref": "#/$defs/nonEmptyStringArray"},
+            {
+              "contains": {
+                "const": "carefully chosen inputs may turn a boolean result into a membership oracle"
+              }
+            },
+            {
+              "contains": {
+                "const": "threshold and minimum-set rules must be evaluated together with query budget"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "inputAuthenticityAndCompleteness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_guarantee", "participant_can", "candidate_external_controls", "claim_boundary"],
+      "properties": {
+        "protocol_guarantee": {"const": "none in the core profile"},
+        "participant_can": {
+          "allOf": [
+            {"$ref": "#/$defs/nonEmptyStringArray"},
+            {"contains": {"const": "omit records"}},
+            {"contains": {"const": "submit stale records"}},
+            {"contains": {"const": "fabricate records unless externally constrained"}},
+            {"contains": {"const": "choose a subset designed to probe the other party"}}
+          ]
+        },
+        "candidate_external_controls": {"$ref": "#/$defs/nonEmptyStringArray"},
+        "claim_boundary": {
+          "const": "a valid match result does not prove that either dataset was truthful, complete, current, or authorized"
+        }
+      }
+    },
+    "collusionAndCompromise": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpoint_compromise", "coordinator_and_party_collusion", "both_parties_collude",
+        "service_operator_compromise", "assurance_pipeline_compromise"
+      ],
+      "properties": {
+        "endpoint_compromise": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protection", "effect"],
+          "properties": {
+            "protection": {"const": "not provided"},
+            "effect": {
+              "const": "compromised client may expose its own raw input and session material"
+            }
+          }
+        },
+        "coordinator_and_party_collusion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protection"],
+          "properties": {
+            "protection": {
+              "const": "unresolved until PET integration profile selects a security model"
+            }
+          }
+        },
+        "both_parties_collude": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protection"],
+          "properties": {
+            "protection": {"const": "not meaningful for protecting each party from the other"}
+          }
+        },
+        "service_operator_compromise": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protection"],
+          "properties": {
+            "protection": {
+              "const": "defense-in-depth product control required; not established here"
+            }
+          }
+        },
+        "assurance_pipeline_compromise": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protection"],
+          "properties": {
+            "protection": {
+              "const": "provenance, review, and signed-manifest controls required; not established here"
+            }
+          }
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinator_session_metadata", "raw_identifiers", "normalized_private_inputs",
+        "protocol_contributions", "audit_events", "public_assurance_export"
+      ],
+      "properties": {
+        "coordinator_session_metadata": {
+          "const": "policy-defined; minimize and delete after audit/incident window"
+        },
+        "raw_identifiers": {"const": "must not be retained by coordinator"},
+        "normalized_private_inputs": {"const": "must not be retained by coordinator"},
+        "protocol_contributions": {
+          "const": "delete or irreversibly expire after the defined verification and dispute window"
+        },
+        "audit_events": {"const": "retain only approved fields for the approved period"},
+        "public_assurance_export": {
+          "const": "retain digests, status, tool metadata, assumptions, and limitations; no private input"
+        }
+      }
+    },
+    "unsupportedClaims": {
+      "allOf": [
+        {"$ref": "#/$defs/nonEmptyStringArray"},
+        {"contains": {"const": "zero leakage"}},
+        {"contains": {"const": "complete anonymity"}},
+        {"contains": {"const": "malicious-party security"}},
+        {"contains": {"const": "side-channel resistance"}},
+        {"contains": {"const": "endpoint security"}},
+        {"contains": {"const": "correctness or completeness of participant data"}},
+        {"contains": {"const": "legal or regulatory compliance"}},
+        {"contains": {"const": "production readiness"}},
+        {
+          "contains": {
+            "const": "security of an unselected PSI, OPRF, MPC, TEE, or ZKP profile"
+          }
+        }
+      ]
+    },
+    "unresolvedDecisions": {
+      "allOf": [
+        {"$ref": "#/$defs/nonEmptyStringArray"},
+        {"contains": {"const": "selected PET and trust profile"}},
+        {"contains": {"const": "minimum set size and policy threshold constraints"}},
+        {"contains": {"const": "padding or traffic-shaping requirements"}},
+        {"contains": {"const": "coordinator outcome-confidentiality mechanism"}},
+        {"contains": {"const": "participant and organization identity model"}},
+        {"contains": {"const": "authoritative dataset completeness mechanism"}},
+        {"contains": {"const": "retention durations"}},
+        {"contains": {"const": "collusion threshold"}},
+        {"contains": {"const": "retry semantics after indeterminate result"}}
+      ]
     }
   }
 }
