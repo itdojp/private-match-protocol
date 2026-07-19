@@ -1,0 +1,354 @@
+schema_version: "0.1"
+record_type: privacy-leakage-contract
+
+artifact:
+  id: private-match-core-leakage-v0.1
+  status: draft
+  protocol_profile: private-match-core/v0.1
+  decision_output: MATCH | NO_MATCH | INDETERMINATE
+  owner: ITDO Inc.
+  reviewed_at: null
+  next_review_at: "2026-10-18"
+
+scope:
+  purpose: >-
+    Define the minimum disclosure and residual metadata for a two-party,
+    decision-only Private Match session before a concrete PET integration profile is selected.
+  includes:
+    - local private-input handling boundary
+    - coordinator and participant metadata visibility
+    - minimum decision output
+    - repeated-query and small-intersection controls
+    - input authenticity and completeness assumptions
+    - logging and assurance evidence boundaries
+  excludes:
+    - production cryptographic security claim
+    - endpoint compromise resistance
+    - unrestricted analytics
+    - exact intersection count
+    - matching-element or identity reveal
+    - legal or regulatory compliance
+
+actors:
+  party_a_client:
+    role: local input holder and protocol participant
+    trusted_for:
+      - local input acquisition and normalization
+      - protection of Party A private data before protocol preparation
+    not_trusted_for:
+      - truthful or complete dataset submission
+      - respecting query policy without coordinator enforcement
+  party_b_client:
+    role: local input holder and protocol participant
+    trusted_for:
+      - local input acquisition and normalization
+      - protection of Party B private data before protocol preparation
+    not_trusted_for:
+      - truthful or complete dataset submission
+      - respecting query policy without coordinator enforcement
+  coordinator:
+    role: authoritative session, replay, query-budget, and audit-state coordinator
+    trusted_for:
+      - atomic enforcement of session and query state
+      - correct routing of versioned protocol messages
+    prohibited_from_receiving:
+      - raw identifiers
+      - normalized private inputs
+      - matching elements
+      - optional reveal payloads in the core profile
+    residual_visibility:
+      - participant and organization routing identifiers
+      - policy identifier and version
+      - session identifiers and lifecycle status
+      - timestamps, message count, size class, and network metadata
+      - success, abort, timeout, and error category
+    outcome_visibility: prohibited-target; evidence required
+  service_operator:
+    role: service administration and incident response
+    residual_visibility:
+      - aggregate service metrics
+      - approved audit events
+      - environment and deployment state
+    prohibited_from_receiving:
+      - raw or normalized private inputs
+      - match outcome by default
+      - matching elements
+  assurance_pipeline:
+    role: private evidence producer and public-safe export producer
+    residual_visibility:
+      - source and artifact digests
+      - normalized check status and tool metadata
+      - public-safe configuration
+    prohibited_from_receiving:
+      - raw private inputs
+      - customer identifiers
+      - secrets or internal topology in public exports
+  network_observer:
+    role: passive observer of transport metadata
+    residual_visibility:
+      - endpoints or relay addresses visible to the network layer
+      - connection timing, frequency, duration, and byte counts
+    content_visibility: transport encryption required; not established by this contract
+  malicious_participant:
+    role: participant attempting inference, replay, omission, or policy bypass
+    capabilities:
+      - choose and omit local inputs
+      - start permitted sessions
+      - adapt future inputs based on prior outcomes within external controls
+      - replay, reorder, duplicate, and tamper with messages
+      - collude with another compromised component unless excluded by an integration profile
+
+private_data_classes:
+  raw_identifiers:
+    examples:
+      - email address
+      - telephone number
+      - internal customer identifier
+      - relationship or conflict name
+    owner_visibility:
+      - originating client only
+    allowed_transmission: none in core profile
+    allowed_logging: none
+  normalized_private_inputs:
+    examples:
+      - normalized identifier
+      - private attribute or set element
+    owner_visibility:
+      - originating client only
+    allowed_transmission: none in core profile
+    allowed_logging: none
+  local_secrets:
+    examples:
+      - client randomness
+      - ephemeral private key
+      - protocol blinding material
+    owner_visibility:
+      - originating client and approved local cryptographic provider
+    allowed_transmission: only protocol-defined public contribution derived under a selected profile
+    allowed_logging: none
+
+shared_protocol_data:
+  participant_binding:
+    fields:
+      - participant key identifiers
+      - organization or tenant routing identifiers
+      - intended audience
+    visible_to:
+      - both participants
+      - coordinator
+    leakage: participation relationship and organizational metadata
+  session_metadata:
+    fields:
+      - protocol and message version
+      - session identifier
+      - policy identifier and version
+      - message identifier, sequence, and nonce
+      - issued-at and expiry
+      - transcript and payload digests
+    visible_to:
+      - both participants
+      - coordinator
+    leakage: timing, sequencing, and session activity
+  input_commitment:
+    visible_to:
+      - both participants
+      - coordinator
+    required_properties:
+      - binding to participant, session, policy, and input version
+      - immutable after evaluation begins
+    residual_leakage:
+      - existence of a submitted input
+      - commitment and contribution byte size
+      - cryptographic-profile-specific leakage not yet established
+  pet_contribution:
+    visible_to:
+      - as defined by the selected integration profile
+    prohibited_content:
+      - raw identifiers
+      - normalized private inputs
+    residual_leakage:
+      - message size and count
+      - profile-specific cryptographic or TEE metadata
+      - set-size or cardinality hints unless padded or otherwise controlled
+  decision_receipt:
+    allowed_values:
+      - MATCH
+      - NO_MATCH
+      - INDETERMINATE
+    visible_to:
+      - Party A
+      - Party B
+    coordinator_visibility: prohibited-target; evidence required
+    prohibited_fields:
+      - exact intersection count
+      - matching elements
+      - non-matching elements
+      - identity or attribute reveal
+      - party-specific result
+    residual_leakage:
+      - whether the agreed policy predicate evaluated true, false, or could not be established
+      - protocol, policy, and receipt version
+      - evaluation and expiry times
+      - integrity and transcript digests
+  audit_event:
+    visible_to:
+      - authorized service operator
+      - assurance pipeline in sanitized form
+    allowed_fields:
+      - event identifier and timestamp
+      - actor category or pseudonymous reference
+      - protocol, policy, and environment version
+      - action and normalized result status
+      - error category
+      - artifact or transcript digest
+      - size class when approved by policy
+    prohibited_fields:
+      - raw or normalized private input
+      - matching elements
+      - local secret
+      - plaintext decision outcome by default
+
+phase_leakage:
+  session_setup:
+    parties_learn:
+      - counterpart participation and accepted policy
+      - public session metadata
+    coordinator_learns:
+      - participants, policy, timing, and session status
+  commitment_registration:
+    parties_learn:
+      - counterpart submitted a commitment
+      - commitment and contribution size unless padded
+    coordinator_learns:
+      - commitment registration timing, identifiers, and size class
+  evaluation:
+    parties_learn:
+      - progress, failure category, and final decision receipt
+    coordinator_learns:
+      - evaluation timing, message metadata, and normalized completion status
+      - not the decision outcome under the target core profile
+  close_or_expiry:
+    parties_learn:
+      - closed, aborted, or expired status
+    coordinator_learns:
+      - terminal status and retention schedule
+
+minimum_disclosure_policy:
+  exact_count: prohibited
+  matching_elements: prohibited
+  identity_reveal: prohibited in core profile
+  asymmetric_results: prohibited
+  detailed_failure_reason_to_counterparty: prohibited when it increases inference risk
+  one_accepted_evaluation_per_commitment_pair: required
+  new_evaluation_requires:
+    - new session or explicitly versioned retry transition
+    - new query-budget authorization
+    - participant and policy rebinding
+  minimum_set_size:
+    status: unresolved
+    enforcement_owner: coordinator plus selected integration profile
+  threshold_policy:
+    status: policy-defined and mutually accepted
+    visibility: both participants and coordinator in the initial profile
+  output_bucketing:
+    status: not applicable to decision-only core output
+
+repeated_query_controls:
+  objective: prevent adaptive probing from reconstructing private data
+  required_controls:
+    - authoritative query budget per organization, participant, policy, and time window
+    - one accepted result per commitment pair
+    - replay and idempotency enforcement
+    - minimum session and set-size policies
+    - monitoring of correlated and overlapping query attempts
+    - rate and cost controls
+    - policy for materially changed datasets
+  not_sufficient_alone:
+    - client-side counters
+    - random nonce without authoritative replay state
+    - terms of service without technical enforcement
+    - withholding exact count while allowing unlimited predicates
+  residual_risk:
+    - multiple legitimate sessions or colluding identities may still reveal information
+    - organizational and legal controls may be required in addition to protocol controls
+
+small_intersection_controls:
+  exact_count: prohibited
+  matching_identity: prohibited
+  minimum_intersection: unresolved policy requirement
+  negative_result_leakage: NO_MATCH reveals that the policy threshold was not met
+  positive_result_leakage: MATCH reveals that the policy threshold was met
+  residual_risk:
+    - carefully chosen inputs may turn a boolean result into a membership oracle
+    - threshold and minimum-set rules must be evaluated together with query budget
+
+input_authenticity_and_completeness:
+  protocol_guarantee: none in the core profile
+  participant_can:
+    - omit records
+    - submit stale records
+    - fabricate records unless externally constrained
+    - choose a subset designed to probe the other party
+  candidate_external_controls:
+    - signed dataset manifest
+    - organizational approval and audit
+    - source-system attestation
+    - trusted issuer or credential
+    - contractual representation
+    - independent or bilateral dataset review
+  claim_boundary: a valid match result does not prove that either dataset was truthful, complete, current, or authorized
+
+collusion_and_compromise:
+  endpoint_compromise:
+    protection: not provided
+    effect: compromised client may expose its own raw input and session material
+  coordinator_and_party_collusion:
+    protection: unresolved until PET integration profile selects a security model
+  both_parties_collude:
+    protection: not meaningful for protecting each party from the other
+  service_operator_compromise:
+    protection: defense-in-depth product control required; not established here
+  assurance_pipeline_compromise:
+    protection: provenance, review, and signed-manifest controls required; not established here
+
+retention:
+  coordinator_session_metadata: policy-defined; minimize and delete after audit/incident window
+  raw_identifiers: must not be retained by coordinator
+  normalized_private_inputs: must not be retained by coordinator
+  protocol_contributions: delete or irreversibly expire after the defined verification and dispute window
+  audit_events: retain only approved fields for the approved period
+  public_assurance_export: retain digests, status, tool metadata, assumptions, and limitations; no private input
+
+claims_not_supported_by_this_contract:
+  - zero leakage
+  - complete anonymity
+  - malicious-party security
+  - side-channel resistance
+  - endpoint security
+  - correctness or completeness of participant data
+  - legal or regulatory compliance
+  - production readiness
+  - security of an unselected PSI, OPRF, MPC, TEE, or ZKP profile
+
+required_evidence_before_privacy_claim:
+  - reviewed data-flow diagram matching the implementation
+  - conformance tests for prohibited fields and asymmetric result rejection
+  - packet capture or equivalent egress observation using synthetic inputs
+  - logs and telemetry inspection showing prohibited values are absent
+  - repeated-query, replay, and cross-session adversarial tests
+  - selected PET profile security model and external analysis
+  - dependency and build provenance
+  - client artifact inspection excluding test and fallback modes
+  - coordinator result-confidentiality test or an explicit narrower claim
+  - known limitations and non-reproducible evidence disclosure
+
+unresolved_decisions:
+  - selected PET and trust profile
+  - minimum set size and policy threshold constraints
+  - padding or traffic-shaping requirements
+  - coordinator outcome-confidentiality mechanism
+  - participant and organization identity model
+  - authoritative dataset completeness mechanism
+  - retention durations
+  - collusion threshold
+  - retry semantics after indeterminate result

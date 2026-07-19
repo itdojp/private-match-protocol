@@ -1,0 +1,2 @@
+# Build backend required to install the hash-locked REUSE source distribution.
+poetry-core==2.3.2

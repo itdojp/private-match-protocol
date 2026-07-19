@@ -1,0 +1,36 @@
+version = 1
+SPDX-PackageName = "private-match-protocol"
+SPDX-PackageSupplier = "ITDO Inc. / 株式会社アイティードゥ"
+
+[[annotations]]
+path = [
+  ".github/workflows/protocol-spec.yml",
+  ".gitignore",
+  "privacy/leakage-contract.v0.1.yaml",
+  "REUSE.toml",
+  "requirements-build.in",
+  "requirements-build.txt",
+  "requirements-dev.in",
+  "requirements-dev.txt",
+  "schema/leakage-contract.schema.json",
+  "scripts/validate_leakage_contract.py",
+  "tests/test_leakage_contract.py",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 ITDO Inc. / 株式会社アイティードゥ"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [
+  "AGENTS.md",
+  "GOVERNANCE.md",
+  "README.md",
+  "ROADMAP.md",
+  "SECURITY.md",
+  "docs/*.md",
+  "docs/decisions/*.md",
+  "specs/*.md",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 ITDO Inc. / 株式会社アイティードゥ"
+SPDX-License-Identifier = "CC-BY-4.0"
