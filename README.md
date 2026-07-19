@@ -55,4 +55,15 @@ The repository is in pre-specification bootstrap. No protocol is production read
 
 ## License
 
-A public license will be selected before publishing executable reference components. Until then, repository content should be treated as specification drafts owned by ITDO Inc.; no additional license is granted by this README.
+Repository content uses an explicit dual-license structure:
+
+- Narrative protocol documentation, research text, tables, and diagrams are licensed under
+  [Creative Commons Attribution 4.0 International](LICENSES/CC-BY-4.0.txt).
+- Executable or reference code, Python and TypeScript code, JSON Schemas, validators, tests,
+  fixtures, conformance vectors, GitHub Actions, and related build inputs are licensed under
+  the [Apache License 2.0](LICENSES/Apache-2.0.txt).
+
+[`REUSE.toml`](REUSE.toml) provides the machine-readable SPDX file mapping and takes
+precedence over this summary for individual files. Patent-sensitive implementation material
+and trade-secret candidates remain private or embargoed until human IP and publication
+approval; these licenses do not indicate that such material has been published here.

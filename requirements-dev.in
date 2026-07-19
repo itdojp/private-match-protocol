@@ -1,0 +1,4 @@
+# Direct development dependencies. Install the build lock first, then requirements-dev.txt.
+jsonschema==4.26.0
+PyYAML==6.0.3
+reuse==6.2.0
