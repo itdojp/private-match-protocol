@@ -4,11 +4,22 @@
 
 Do not open a public GitHub Issue or disclose exploit details in a pull request.
 
-Use GitHub private vulnerability reporting for this repository when available. If it is unavailable, contact ITDO Inc. through an established private company channel and identify the affected repository and version.
+Use GitHub private vulnerability reporting when it is enabled for this
+repository:
+
+<https://github.com/itdojp/private-match-protocol/security/advisories/new>
+
+If GitHub reports that private vulnerability reporting is unavailable, use the
+[ITDO Inc. contact form](https://c.itdo.jp/contacts/) with the subject
+`Private Match security report`. Include only the affected repository and
+version plus safe contact information, and request a private response channel.
+Do not put exploit details, customer data, secrets, keys, or tokens in the form.
+Send technical details only after ITDO Inc. establishes a private response
+channel.
 
 Include, when safe:
 
-- affected protocol, schema, reference component, or test-suite version
+- affected protocol, schema, reference component, or test suite version
 - impact and attacker prerequisites
 - reproduction steps or test vector
 - whether active exploitation is suspected
