@@ -30,7 +30,9 @@ jobs:
         run: python -m pip install --require-hashes --no-build-isolation -r requirements-dev.txt
       - name: Run contract tests
         run: python -m unittest discover -s tests -p 'test_*.py'
-      - name: Validate machine-readable contract
+      - name: Validate privacy leakage contract
         run: python scripts/validate_leakage_contract.py --root .
+      - name: Validate session state machine
+        run: python scripts/validate_session_state_machine.py --root . --print-digest
       - name: Validate REUSE licensing metadata
         run: reuse lint

@@ -38,9 +38,20 @@ The following belong in private repositories:
 - `itdojp/private-match-assurance` — public release evidence and assurance reports
 - `itdojp/ae-framework` — assurance control plane used to organize evidence and policy gates
 
+## Current draft artifacts
+
+- [Actors and trust boundaries](specs/ACTORS_AND_TRUST_BOUNDARIES.md)
+- [Privacy Leakage Contract](docs/PRIVACY_LEAKAGE_CONTRACT.md) and its
+  [machine-readable artifact](privacy/leakage-contract.v0.1.yaml)
+- [Core session and disclosure state machine](specs/state-machines/private-match-core-session-v0.1.md)
+  and its
+  [machine-readable artifact](specs/state-machines/private-match-core-session-v0.1.yaml)
+
 ## Maturity
 
-The repository is in pre-specification bootstrap. No protocol is production ready, no cryptographic security claim has been established, and no compatibility commitment exists yet.
+The repository contains draft protocol artifacts. No artifact is `candidate` or
+`stable`, no production protocol or PET has been selected, no cryptographic
+security claim has been established, and no compatibility commitment exists yet.
 
 ## Initial design principles
 
