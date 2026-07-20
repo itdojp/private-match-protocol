@@ -538,7 +538,7 @@
         },
         "visibility": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "items": {
             "$ref": "#/$defs/actorId"
           },
@@ -557,8 +557,55 @@
         "description": {
           "type": "string",
           "minLength": 1
+        },
+        "entry_visibility": {
+          "$ref": "#/$defs/entryVisibility"
+        },
+        "profile_visibility": {
+          "$ref": "#/$defs/profileVisibility"
+        },
+        "coordinator_projection": {
+          "$ref": "#/$defs/coordinatorProjection"
+        },
+        "global_invariant_observer": {
+          "$ref": "#/$defs/globalInvariantObserver"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "enum": [
+                  "proposed_result_state",
+                  "accepted_result_state",
+                  "result_ack"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "entry_visibility",
+              "profile_visibility",
+              "coordinator_projection",
+              "global_invariant_observer"
+            ],
+            "properties": {
+              "visibility": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "visibility": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "visibility": {
       "type": "object",
@@ -598,7 +645,10 @@
         "duplicate_behavior",
         "retry_class",
         "default_failure_code",
-        "parameters"
+        "parameters",
+        "delivery_class",
+        "required_envelope",
+        "deduplication_domain"
       ],
       "properties": {
         "id": {
@@ -672,7 +722,12 @@
             "evaluation-continuation",
             "non-retryable-current-session",
             "idempotent-resend",
-            "new-session"
+            "new-session",
+            "operation-resend",
+            "callback-resend",
+            "threshold-recheck",
+            "not-applicable",
+            "local-guidance"
           ]
         },
         "default_failure_code": {
@@ -680,14 +735,165 @@
         },
         "parameters": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "items": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]*$"
           },
           "uniqueItems": true
+        },
+        "delivery_class": {
+          "$ref": "#/$defs/deliveryClass"
+        },
+        "required_envelope": {
+          "$ref": "#/$defs/requiredEnvelope"
+        },
+        "deduplication_domain": {
+          "$ref": "#/$defs/nonEmptyString"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "delivery_class": {
+                "const": "party_message"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "required_envelope": {
+                "const": "replay_envelope"
+              },
+              "parameters": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "session_context"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "replay_envelope"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "delivery_class": {
+                "const": "coordinator_command"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "required_envelope": {
+                "const": "operation_envelope"
+              },
+              "parameters": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "session_context"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "operation_envelope"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "delivery_class": {
+                "const": "profile_callback"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "required_envelope": {
+                "const": "profile_callback_envelope"
+              },
+              "parameters": {
+                "allOf": [
+                  {
+                    "contains": {
+                      "const": "session_context"
+                    }
+                  },
+                  {
+                    "contains": {
+                      "const": "profile_callback_envelope"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "delivery_class": {
+                "const": "timer"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "required_envelope": {
+                "const": "time_advance_parameter"
+              },
+              "parameters": {
+                "const": [
+                  "time_advance_parameter"
+                ]
+              },
+              "idempotency_behavior": {
+                "not": {
+                  "pattern": "message_id|nonce|prior normalized message response"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "delivery_class": {
+                "enum": [
+                  "derived_transition",
+                  "local_guidance"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "required_envelope": {
+                "const": "none"
+              },
+              "idempotency_behavior": {
+                "not": {
+                  "pattern": "prior normalized.*response"
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "guard": {
       "type": "object",
@@ -696,7 +902,8 @@
         "id",
         "predicate",
         "reads",
-        "arguments"
+        "arguments",
+        "parameter_reads"
       ],
       "properties": {
         "id": {
@@ -709,7 +916,7 @@
         },
         "reads": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "items": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]*$"
@@ -723,6 +930,14 @@
             "minLength": 1
           },
           "uniqueItems": true
+        },
+        "parameter_reads": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$"
+          },
+          "uniqueItems": true
         }
       }
     },
@@ -733,7 +948,8 @@
         "id",
         "operation",
         "writes",
-        "arguments"
+        "arguments",
+        "parameter_reads"
       ],
       "properties": {
         "id": {
@@ -757,6 +973,14 @@
           "items": {
             "type": "string",
             "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "parameter_reads": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$"
           },
           "uniqueItems": true
         }
@@ -877,7 +1101,12 @@
             "evaluation-continuation",
             "non-retryable-current-session",
             "idempotent-resend",
-            "new-session"
+            "new-session",
+            "operation-resend",
+            "callback-resend",
+            "threshold-recheck",
+            "not-applicable",
+            "local-guidance"
           ]
         },
         "failure_code": {
@@ -974,7 +1203,13 @@
         "failure_refund",
         "idempotent_resend_cost",
         "new_evaluation_requirement",
-        "prohibitions"
+        "prohibitions",
+        "unused_reservation_on_close",
+        "unused_reservation_on_abort",
+        "unused_reservation_on_expiry",
+        "post_start_terminal_disposition",
+        "authorization_ledger_assumption",
+        "released_reservation_reuse"
       ],
       "properties": {
         "authority": {
@@ -1011,6 +1246,24 @@
             "minLength": 1
           },
           "uniqueItems": true
+        },
+        "unused_reservation_on_close": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "unused_reservation_on_abort": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "unused_reservation_on_expiry": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "post_start_terminal_disposition": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "authorization_ledger_assumption": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "released_reservation_reuse": {
+          "$ref": "#/$defs/nonEmptyString"
         }
       }
     },
@@ -1069,7 +1322,10 @@
         "match_is_blanket_consent",
         "withdrawal_before_completion",
         "withdrawal_after_completion",
-        "core_payload"
+        "core_payload",
+        "expiry_or_withdrawal_policy",
+        "replacement_policy",
+        "mixed_generation_policy"
       ],
       "properties": {
         "allowed_after": {
@@ -1098,6 +1354,15 @@
         "core_payload": {
           "type": "string",
           "minLength": 1
+        },
+        "expiry_or_withdrawal_policy": {
+          "const": "new-session-required"
+        },
+        "replacement_policy": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "mixed_generation_policy": {
+          "$ref": "#/$defs/nonEmptyString"
         }
       }
     },
@@ -1149,7 +1414,13 @@
         "message_stale_threshold",
         "verification_material_validity",
         "timeout_vs_expiry",
-        "clock_rollback"
+        "clock_rollback",
+        "time_advance_event",
+        "time_advance_parameter",
+        "maximum_time_jump",
+        "evaluation_deadline",
+        "stale_message_relation",
+        "atomic_deadline_crossing"
       ],
       "properties": {
         "authoritative_clock": {
@@ -1182,6 +1453,24 @@
         "clock_rollback": {
           "type": "string",
           "minLength": 1
+        },
+        "time_advance_event": {
+          "const": "advance_authoritative_time"
+        },
+        "time_advance_parameter": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "maximum_time_jump": {
+          "$ref": "#/$defs/typedPolicy"
+        },
+        "evaluation_deadline": {
+          "$ref": "#/$defs/typedEffectPolicy"
+        },
+        "stale_message_relation": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "atomic_deadline_crossing": {
+          "$ref": "#/$defs/nonEmptyString"
         }
       }
     },
@@ -1199,7 +1488,13 @@
         "cross_session_replay",
         "prior_policy_replay",
         "prior_participant_set_replay",
-        "transport_buffering"
+        "transport_buffering",
+        "operation_domain",
+        "operation_identity",
+        "profile_callback_domain",
+        "profile_callback_identity",
+        "timer_identity",
+        "derived_transition_identity"
       ],
       "properties": {
         "replay_domain": {
@@ -1216,6 +1511,7 @@
           "const": [
             "message_id",
             "nonce",
+            "issued_at",
             "canonical event digest"
           ]
         },
@@ -1247,6 +1543,41 @@
         "transport_buffering": {
           "type": "string",
           "minLength": 1
+        },
+        "operation_domain": {
+          "const": [
+            "actor_id",
+            "operation_id"
+          ]
+        },
+        "operation_identity": {
+          "const": [
+            "operation_id",
+            "idempotency_key",
+            "canonical operation digest"
+          ]
+        },
+        "profile_callback_domain": {
+          "const": [
+            "profile_id",
+            "profile_version",
+            "profile_instance_id",
+            "session_id",
+            "evaluation_attempt_id"
+          ]
+        },
+        "profile_callback_identity": {
+          "const": [
+            "callback_id",
+            "idempotency_key",
+            "canonical callback digest"
+          ]
+        },
+        "timer_identity": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "derived_transition_identity": {
+          "$ref": "#/$defs/nonEmptyString"
         }
       }
     },
@@ -1259,7 +1590,12 @@
         "evaluation_continuation",
         "new_attempt_id",
         "new_session",
-        "non_retryable_terminal"
+        "non_retryable_terminal",
+        "coordinator_operation_retry",
+        "profile_callback_retry",
+        "timer_retry",
+        "derived_transition",
+        "party_retry_scope"
       ],
       "properties": {
         "idempotent_resend": {
@@ -1285,6 +1621,21 @@
         "non_retryable_terminal": {
           "type": "string",
           "minLength": 1
+        },
+        "coordinator_operation_retry": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "profile_callback_retry": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "timer_retry": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "derived_transition": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "party_retry_scope": {
+          "$ref": "#/$defs/nonEmptyString"
         }
       }
     },
@@ -1324,7 +1675,9 @@
         "query_budget_effect": {
           "enum": [
             "unchanged-from-current-state",
-            "consumed-no-automatic-refund"
+            "consumed-no-automatic-refund",
+            "release-unused-reservation",
+            "expire-unused-reservation"
           ]
         },
         "party_error_category": {
@@ -1494,7 +1847,7 @@
         },
         "event_relation": {
           "type": "array",
-          "minItems": 24,
+          "minItems": 27,
           "items": {
             "$ref": "#/$defs/eventRelation"
           }
@@ -1548,6 +1901,113 @@
         },
         "tla_model_status": {
           "const": "not created or model-checked in this issue"
+        }
+      }
+    },
+    "deliveryClass": {
+      "enum": [
+        "party_message",
+        "coordinator_command",
+        "profile_callback",
+        "timer",
+        "derived_transition",
+        "local_guidance"
+      ]
+    },
+    "requiredEnvelope": {
+      "enum": [
+        "replay_envelope",
+        "operation_envelope",
+        "profile_callback_envelope",
+        "time_advance_parameter",
+        "none"
+      ]
+    },
+    "entryVisibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "A",
+        "B"
+      ],
+      "properties": {
+        "A": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/actorId"
+          },
+          "uniqueItems": true
+        },
+        "B": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/actorId"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "profileVisibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "entries",
+        "constraint"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "none",
+            "profile-dependent"
+          ]
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "A",
+              "B"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "constraint": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "coordinatorProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "permitted_fields",
+        "prohibited_fields"
+      ],
+      "properties": {
+        "permitted_fields": {
+          "$ref": "#/$defs/possiblyEmptyStringArray"
+        },
+        "prohibited_fields": {
+          "$ref": "#/$defs/stringArray"
+        }
+      }
+    },
+    "globalInvariantObserver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "may_compare_entries",
+        "implementation_actor_access"
+      ],
+      "properties": {
+        "may_compare_entries": {
+          "const": true
+        },
+        "implementation_actor_access": {
+          "const": false
         }
       }
     }

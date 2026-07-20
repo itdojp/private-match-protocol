@@ -205,8 +205,8 @@ event_parameter_catalog:
   type: record<session_id,protocol_profile,policy_binding,participant_binding,intended_audience,commitment_pair_id,evaluation_attempt_id>
   description: Exact current binding; pre-stage values are explicitly NONE.
 - id: replay_envelope
-  type: record<sender_participant_id,message_id,nonce,sequence,canonical_event_digest>
-  description: Ordering and exact-duplicate identity; wire encoding is deferred.
+  type: record<sender_participant_id,message_id,nonce,sequence,issued_at,canonical_event_digest>
+  description: Party-message ordering, issued time, and exact-duplicate identity; wire encoding is deferred.
 - id: clock_policy
   type: record<authoritative_time,session_expiry,allowed_skew,stale_threshold>
   description: Typed policy parameters, not fixed business durations.
@@ -243,6 +243,16 @@ event_parameter_catalog:
 - id: normalized_failure_parameter
   type: failure_code
   description: Declared normalized category; private detail is not echoed.
+- id: operation_envelope
+  type: record<actor_id,operation_id,canonical_operation_digest,idempotency_key>
+  description: Coordinator-command identity in an actor-scoped operation domain; separate from the participant
+    replay envelope.
+- id: profile_callback_envelope
+  type: record<profile_id,profile_version,profile_instance_id,callback_id,canonical_callback_digest,idempotency_key,session_id,evaluation_attempt_id>
+  description: Reviewed profile callback identity bound to profile instance, session, and evaluation attempt.
+- id: time_advance_parameter
+  type: record<new_authoritative_time,reason_or_source_class>
+  description: Bounded coordinator-clock/environment time proposal; client time is never authoritative.
 phases:
 - id: UNINITIALIZED
   terminal: false
@@ -295,25 +305,31 @@ phases:
   core_reachable: true
   description: The session is closed; only exact replay and non-mutating rejection/query semantics remain.
   allowed_terminal_operations:
-  - retry_idempotent_message
-  - request_new_evaluation_session
   - reject_message
+  - request_new_evaluation_session
+  - retry_idempotent_message
+  - retry_idempotent_operation
+  - retry_idempotent_profile_callback
 - id: ABORTED
   terminal: true
   core_reachable: true
   description: The session failed closed; a new session is required for another evaluation.
   allowed_terminal_operations:
-  - retry_idempotent_message
-  - request_new_evaluation_session
   - reject_message
+  - request_new_evaluation_session
+  - retry_idempotent_message
+  - retry_idempotent_operation
+  - retry_idempotent_profile_callback
 - id: EXPIRED
   terminal: true
   core_reachable: true
   description: Authoritative session expiry has passed; no mutating protocol transition is permitted.
   allowed_terminal_operations:
-  - retry_idempotent_message
-  - request_new_evaluation_session
   - reject_message
+  - request_new_evaluation_session
+  - retry_idempotent_message
+  - retry_idempotent_operation
+  - retry_idempotent_profile_callback
 state_variables:
 - id: phase
   type: enum<phase_id>
@@ -471,7 +487,7 @@ state_variables:
   coordinator_access: read-write
   description: Maximum one accepted evaluation for a commitment pair.
 - id: query_budget_state
-  type: enum<NONE,RESERVED,CONSUMED,EXHAUSTED>
+  type: enum<NONE,RESERVED,CONSUMED,RELEASED,EXPIRED,EXHAUSTED>
   initial: NONE
   owner:
   - coordinator
@@ -481,30 +497,70 @@ state_variables:
   - party_b_client
   - assurance_pipeline
   coordinator_access: read-write
-  description: Authoritative reservation and atomic consumption state.
+  description: Authoritative reservation lifecycle; unused reservations release on close/abort or expire
+    on session expiry, while started evaluations stay CONSUMED.
 - id: proposed_result_state
   type: map<party,enum<NONE,MATCH,NO_MATCH,INDETERMINATE,CONFLICT>>
   initial: '{A:NONE,B:NONE}'
   owner:
   - party_a_client
   - party_b_client
-  visibility:
-  - party_a_client
-  - party_b_client
-  - selected_integration_profile
+  visibility: []
   coordinator_access: prohibited
-  description: Party-local result proposed in the acknowledgment; coordinator sees no value.
+  description: Entry-scoped party-local proposal; the formal invariant observer may compare A and B without
+    granting either implementation party peer access.
+  entry_visibility:
+    A:
+    - party_a_client
+    B:
+    - party_b_client
+  profile_visibility:
+    status: profile-dependent
+    entries:
+    - A
+    - B
+    constraint: A reviewed selected integration profile defines access; core grants no unconditional implementation
+      access.
+  coordinator_projection:
+    permitted_fields: []
+    prohibited_fields:
+    - local_result
+    - local_result_binding
+    - peer proposed result
+  global_invariant_observer:
+    may_compare_entries: true
+    implementation_actor_access: false
 - id: accepted_result_state
   type: map<party,enum<NONE,MATCH,NO_MATCH,INDETERMINATE,CONFLICT>>
   initial: '{A:NONE,B:NONE}'
   owner:
   - party_a_client
   - party_b_client
-  visibility:
-  - party_a_client
-  - party_b_client
+  visibility: []
   coordinator_access: prohibited
-  description: Party-local accepted decision values; coordinator must not receive or persist them.
+  description: Entry-scoped party-local accepted value; symmetry is a global specification predicate,
+    not peer-readable implementation state.
+  entry_visibility:
+    A:
+    - party_a_client
+    B:
+    - party_b_client
+  profile_visibility:
+    status: profile-dependent
+    entries:
+    - A
+    - B
+    constraint: A reviewed selected integration profile defines access; core grants no unconditional implementation
+      access.
+  coordinator_projection:
+    permitted_fields: []
+    prohibited_fields:
+    - local_result
+    - local_result_binding
+    - peer accepted result
+  global_invariant_observer:
+    may_compare_entries: true
+    implementation_actor_access: false
 - id: opaque_receipt_ref
   type: opaque_profile_reference
   initial: NONE
@@ -523,13 +579,33 @@ state_variables:
   owner:
   - party_a_client
   - party_b_client
-  visibility:
-  - party_a_client
-  - party_b_client
-  - selected_integration_profile
+  visibility: []
   coordinator_access: opaque-reference-only
-  description: Per-party acknowledgment; coordinator sees only the opaque reference and normalized acknowledgment
-    status.
+  description: Entry-scoped party acknowledgment; coordinator projection is limited to the opaque reference
+    and normalized acknowledgment status.
+  entry_visibility:
+    A:
+    - party_a_client
+    B:
+    - party_b_client
+  profile_visibility:
+    status: profile-dependent
+    entries:
+    - A
+    - B
+    constraint: A reviewed selected integration profile defines access; core grants no unconditional implementation
+      access.
+  coordinator_projection:
+    permitted_fields:
+    - opaque_receipt_ref
+    - normalized_ack_status
+    prohibited_fields:
+    - local_result
+    - local_result_binding
+    - peer acknowledgment binding
+  global_invariant_observer:
+    may_compare_entries: true
+    implementation_actor_access: false
 - id: consent
   type: map<party,record_or_none>
   initial: '{A:NONE,B:NONE}'
@@ -701,6 +777,73 @@ state_variables:
   - assurance_pipeline
   coordinator_access: read-write
   description: Approved normalized audit fields only.
+- id: evaluation_deadline
+  type: authoritative_timestamp_or_none
+  initial: NONE
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - selected_integration_profile
+  coordinator_access: read-write
+  description: Policy-derived deadline set atomically at start_evaluation and compared against authoritative_time.
+- id: accepted_operation_ids
+  type: map<actor_id,operation_id_map>
+  initial: '{}'
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  coordinator_access: read-write
+  description: Actor-scoped coordinator operation IDs and prior normalized operation responses.
+- id: accepted_operation_digests
+  type: map<actor_id,operation_digest_map>
+  initial: '{}'
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  coordinator_access: read-write
+  description: Canonical operation digests for exact coordinator-command duplicate equality.
+- id: normalized_operation_responses
+  type: map<actor_operation_id,normalized_response>
+  initial: '{}'
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  coordinator_access: read-write
+  description: Prior bounded response for an exact operation-envelope duplicate.
+- id: accepted_profile_callback_ids
+  type: map<profile_callback_domain,callback_id_map>
+  initial: '{}'
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - selected_integration_profile
+  coordinator_access: read-write
+  description: Profile-instance/session/attempt-scoped accepted callback IDs.
+- id: accepted_profile_callback_digests
+  type: map<profile_callback_domain,callback_digest_map>
+  initial: '{}'
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - selected_integration_profile
+  coordinator_access: read-write
+  description: Canonical callback digests for exact profile callback duplicate equality.
+- id: normalized_profile_callback_responses
+  type: map<profile_callback_id,normalized_response>
+  initial: '{}'
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - selected_integration_profile
+  coordinator_access: read-write
+  description: Prior bounded response for an exact profile callback duplicate.
 events:
 - id: create_session
   initiator:
@@ -741,14 +884,19 @@ events:
   - opaque_artifact_or_transcript_reference
   - approved_size_class
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: UNKNOWN_VERSION
   parameters:
   - session_context
   - clock_policy
+  - operation_envelope
+  delivery_class: coordinator_command
+  required_envelope: operation_envelope
+  deduplication_domain: (actor_id,operation_id)
 - id: bind_participant_a
   initiator:
   - party_a_client
@@ -768,8 +916,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: PARTICIPANT_MISMATCH
@@ -777,6 +925,9 @@ events:
   - session_context
   - replay_envelope
   - participant_binding_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: bind_participant_b
   initiator:
   - party_b_client
@@ -796,8 +947,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: PARTICIPANT_MISMATCH
@@ -805,6 +956,9 @@ events:
   - session_context
   - replay_envelope
   - participant_binding_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: accept_policy
   initiator:
   - party_a_client
@@ -825,8 +979,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: POLICY_VERSION_MISMATCH
@@ -834,6 +988,9 @@ events:
   - session_context
   - replay_envelope
   - policy_acceptance_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: reserve_query_budget
   initiator:
   - coordinator
@@ -853,14 +1010,19 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: QUERY_BUDGET_EXHAUSTED
   parameters:
   - session_context
   - query_budget_authorization_ref
+  - operation_envelope
+  delivery_class: coordinator_command
+  required_envelope: operation_envelope
+  deduplication_domain: (actor_id,operation_id)
 - id: register_commitment_a
   initiator:
   - party_a_client
@@ -881,8 +1043,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: COMMITMENT_MISMATCH
@@ -890,6 +1052,9 @@ events:
   - session_context
   - replay_envelope
   - commitment_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: register_commitment_b
   initiator:
   - party_b_client
@@ -910,8 +1075,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: COMMITMENT_MISMATCH
@@ -919,6 +1084,9 @@ events:
   - session_context
   - replay_envelope
   - commitment_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: start_evaluation
   initiator:
   - coordinator
@@ -939,14 +1107,19 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: QUERY_BUDGET_MISSING
   parameters:
   - session_context
   - evaluation_attempt_parameter
+  - operation_envelope
+  delivery_class: coordinator_command
+  required_envelope: operation_envelope
+  deduplication_domain: (actor_id,operation_id)
 - id: submit_evaluation_contribution
   initiator:
   - party_a_client
@@ -955,7 +1128,7 @@ events:
   - selected_integration_profile
   authoritative_state_owner:
   - selected_integration_profile
-  visibility: &id007
+  visibility:
   - actor: selected_integration_profile
     data:
     - profile-defined opaque contribution
@@ -973,8 +1146,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: evaluation-continuation
   default_failure_code: PARTIAL_PARTY_FAILURE
@@ -982,6 +1155,9 @@ events:
   - session_context
   - replay_envelope
   - evaluation_contribution_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: acknowledge_opaque_receipt_a
   initiator:
   - party_a_client
@@ -991,15 +1167,19 @@ events:
   authoritative_state_owner:
   - party_a_client
   - coordinator
-  visibility: &id008
+  visibility:
   - actor: party_a_client
     data:
-    - own local result
-    - opaque receipt reference
+    - own proposed result entry
+    - own local-result binding
+    - own normalized response
   - actor: coordinator
     data:
-    - opaque receipt reference
-    - normalized acknowledgment
+    - opaque_receipt_ref
+    - normalized_ack_status
+  - actor: selected_integration_profile
+    data:
+    - profile-dependent entry access under a separately reviewed profile
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1011,8 +1191,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: RESULT_CONFLICT
@@ -1021,6 +1201,9 @@ events:
   - replay_envelope
   - local_result_parameter
   - opaque_receipt_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: acknowledge_opaque_receipt_b
   initiator:
   - party_b_client
@@ -1030,15 +1213,19 @@ events:
   authoritative_state_owner:
   - party_b_client
   - coordinator
-  visibility: &id009
+  visibility:
   - actor: party_b_client
     data:
-    - own local result
-    - opaque receipt reference
+    - own proposed result entry
+    - own local-result binding
+    - own normalized response
   - actor: coordinator
     data:
-    - opaque receipt reference
-    - normalized acknowledgment
+    - opaque_receipt_ref
+    - normalized_ack_status
+  - actor: selected_integration_profile
+    data:
+    - profile-dependent entry access under a separately reviewed profile
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1050,8 +1237,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: RESULT_CONFLICT
@@ -1060,6 +1247,9 @@ events:
   - replay_envelope
   - local_result_parameter
   - opaque_receipt_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: accept_symmetric_result
   initiator:
   - selected_integration_profile
@@ -1071,19 +1261,22 @@ events:
   - party_a_client
   - party_b_client
   - coordinator
-  visibility: &id010
+  visibility:
   - actor: party_a_client
     data:
-    - own accepted result
-    - opaque receipt reference
+    - own accepted result entry
+    - own normalized response
   - actor: party_b_client
     data:
-    - own accepted result
-    - opaque receipt reference
+    - own accepted result entry
+    - own normalized response
   - actor: coordinator
     data:
-    - opaque receipt reference
-    - RESULT_ACCEPTED lifecycle only
+    - opaque_receipt_ref
+    - normalized_ack_status
+  - actor: selected_integration_profile
+    data:
+    - profile-dependent comparison under a separately reviewed profile
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1095,14 +1288,20 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact profile_callback_envelope duplicate in the profile instance session attempt
+    domain returns the prior normalized callback response without another state, budget, release, disclosure,
+    or audit change
+  duplicate_behavior: same callback_id or idempotency_key with a different canonical callback digest is
+    REPLAY_CONFLICT
   retry_class: non-retryable-current-session
   default_failure_code: RESULT_CONFLICT
   parameters:
   - session_context
   - opaque_receipt_parameter
+  - profile_callback_envelope
+  delivery_class: profile_callback
+  required_envelope: profile_callback_envelope
+  deduplication_domain: (profile_id,profile_version,profile_instance_id,session_id,evaluation_attempt_id,callback_id)
 - id: grant_consent_a
   initiator:
   - party_a_client
@@ -1123,8 +1322,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: CONSENT_MISSING
@@ -1132,6 +1331,9 @@ events:
   - session_context
   - replay_envelope
   - consent_binding_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: grant_consent_b
   initiator:
   - party_b_client
@@ -1152,8 +1354,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: CONSENT_MISSING
@@ -1161,6 +1363,9 @@ events:
   - session_context
   - replay_envelope
   - consent_binding_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: withdraw_consent_a
   initiator:
   - party_a_client
@@ -1181,8 +1386,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: CONSENT_WITHDRAWN
@@ -1190,6 +1395,9 @@ events:
   - session_context
   - replay_envelope
   - consent_binding_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: withdraw_consent_b
   initiator:
   - party_b_client
@@ -1210,8 +1418,8 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: CONSENT_WITHDRAWN
@@ -1219,6 +1427,9 @@ events:
   - session_context
   - replay_envelope
   - consent_binding_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: authorize_disclosure_extension
   initiator:
   - coordinator
@@ -1239,14 +1450,19 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: new-message
   default_failure_code: DISCLOSURE_PROFILE_REQUIRED
   parameters:
   - session_context
   - disclosure_extension_parameter
+  - operation_envelope
+  delivery_class: coordinator_command
+  required_envelope: operation_envelope
+  deduplication_domain: (actor_id,operation_id)
 - id: record_disclosure_completion
   initiator:
   - selected_integration_profile
@@ -1254,7 +1470,7 @@ events:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: &id021
+  visibility:
   - actor: coordinator
     data:
     - normalized completion only
@@ -1276,14 +1492,20 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact profile_callback_envelope duplicate in the profile instance session attempt
+    domain returns the prior normalized callback response without another state, budget, release, disclosure,
+    or audit change
+  duplicate_behavior: same callback_id or idempotency_key with a different canonical callback digest is
+    REPLAY_CONFLICT
   retry_class: non-retryable-current-session
   default_failure_code: CONSENT_WITHDRAWN
   parameters:
   - session_context
   - disclosure_extension_parameter
+  - profile_callback_envelope
+  delivery_class: profile_callback
+  required_envelope: profile_callback_envelope
+  deduplication_domain: (profile_id,profile_version,profile_instance_id,session_id,evaluation_attempt_id,callback_id)
 - id: reject_message
   initiator:
   - coordinator
@@ -1303,18 +1525,18 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: false
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
-  retry_class: transient-message
+  idempotency_behavior: deterministic state-derived relation with no external delivery or retry
+  duplicate_behavior: not externally duplicable
+  retry_class: not-applicable
   default_failure_code: UNKNOWN_EVENT
   parameters:
   - normalized_failure_parameter
+  delivery_class: derived_transition
+  required_envelope: none
+  deduplication_domain: none
 - id: abort_session
   initiator:
   - coordinator
-  - party_a_client
-  - party_b_client
   verifier:
   - coordinator
   authoritative_state_owner:
@@ -1331,14 +1553,19 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: new-session
   default_failure_code: PARTIAL_PARTY_FAILURE
   parameters:
   - session_context
+  - operation_envelope
   - normalized_failure_parameter
+  delivery_class: coordinator_command
+  required_envelope: operation_envelope
+  deduplication_domain: (actor_id,operation_id)
 - id: expire_session
   initiator:
   - coordinator
@@ -1358,19 +1585,19 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
-  retry_class: non-retryable-current-session
+  idempotency_behavior: level-triggered threshold evaluation; the same threshold is a no-op and cannot
+    duplicate state, budget, release, or audit change
+  duplicate_behavior: not message replay; rollback is rejected and an already-applied threshold is a no-op
+  retry_class: threshold-recheck
   default_failure_code: SESSION_EXPIRED
   parameters:
-  - session_context
-  - clock_policy
+  - time_advance_parameter
+  delivery_class: timer
+  required_envelope: time_advance_parameter
+  deduplication_domain: authoritative time threshold
 - id: close_session
   initiator:
   - coordinator
-  - party_a_client
-  - party_b_client
   verifier:
   - coordinator
   authoritative_state_owner:
@@ -1387,13 +1614,18 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: true
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: non-retryable-current-session
   default_failure_code: SESSION_CLOSED
   parameters:
   - session_context
+  - operation_envelope
+  delivery_class: coordinator_command
+  required_envelope: operation_envelope
+  deduplication_domain: (actor_id,operation_id)
 - id: retry_idempotent_message
   initiator:
   - party_a_client
@@ -1414,14 +1646,17 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: false
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: idempotent-resend
   default_failure_code: REPLAY
   parameters:
   - session_context
   - replay_envelope
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
 - id: request_new_evaluation_session
   initiator:
   - party_a_client
@@ -1442,14 +1677,168 @@ events:
   - plaintext decision outcome visible to coordinator
   audit_fields: *id002
   mutating: false
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
-  retry_class: new-session
+  idempotency_behavior: non-mutating local guidance from current state with no external delivery deduplication
+  duplicate_behavior: not externally duplicable
+  retry_class: local-guidance
   default_failure_code: QUERY_BUDGET_MISSING
   parameters:
   - session_context
-  - query_budget_authorization_ref
+  delivery_class: local_guidance
+  required_envelope: none
+  deduplication_domain: none
+- verifier:
+  - coordinator
+  authoritative_state_owner:
+  - coordinator
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  prohibited_data:
+  - raw identifiers
+  - normalized private inputs
+  - matching or non-matching elements
+  - exact intersection count
+  - private attributes
+  - local secrets
+  - actual disclosure payload
+  - plaintext decision outcome visible to coordinator
+  audit_fields:
+  - event_id
+  - authoritative_timestamp
+  - actor_category_or_pseudonymous_ref
+  - protocol_profile
+  - policy_version
+  - normalized_lifecycle_status
+  - normalized_error_category
+  - opaque_artifact_or_transcript_reference
+  - approved_size_class
+  default_failure_code: STALE_MESSAGE
+  id: advance_authoritative_time
+  initiator:
+  - coordinator
+  mutating: true
+  delivery_class: timer
+  required_envelope: time_advance_parameter
+  deduplication_domain: authoritative time threshold
+  idempotency_behavior: level-triggered threshold evaluation; the same threshold is a no-op and cannot
+    duplicate state, budget, release, or audit change
+  duplicate_behavior: not message replay; rollback is rejected and an already-applied threshold is a no-op
+  retry_class: threshold-recheck
+  parameters:
+  - time_advance_parameter
+- verifier:
+  - coordinator
+  authoritative_state_owner:
+  - coordinator
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  prohibited_data:
+  - raw identifiers
+  - normalized private inputs
+  - matching or non-matching elements
+  - exact intersection count
+  - private attributes
+  - local secrets
+  - actual disclosure payload
+  - plaintext decision outcome visible to coordinator
+  audit_fields:
+  - event_id
+  - authoritative_timestamp
+  - actor_category_or_pseudonymous_ref
+  - protocol_profile
+  - policy_version
+  - normalized_lifecycle_status
+  - normalized_error_category
+  - opaque_artifact_or_transcript_reference
+  - approved_size_class
+  default_failure_code: REPLAY_CONFLICT
+  id: retry_idempotent_operation
+  initiator:
+  - coordinator
+  mutating: false
+  delivery_class: coordinator_command
+  required_envelope: operation_envelope
+  deduplication_domain: (actor_id,operation_id)
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
+  retry_class: operation-resend
+  parameters:
+  - session_context
+  - operation_envelope
+- verifier:
+  - coordinator
+  - selected_integration_profile
+  authoritative_state_owner:
+  - coordinator
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  prohibited_data:
+  - raw identifiers
+  - normalized private inputs
+  - matching or non-matching elements
+  - exact intersection count
+  - private attributes
+  - local secrets
+  - actual disclosure payload
+  - plaintext decision outcome visible to coordinator
+  audit_fields:
+  - event_id
+  - authoritative_timestamp
+  - actor_category_or_pseudonymous_ref
+  - protocol_profile
+  - policy_version
+  - normalized_lifecycle_status
+  - normalized_error_category
+  - opaque_artifact_or_transcript_reference
+  - approved_size_class
+  default_failure_code: REPLAY_CONFLICT
+  id: retry_idempotent_profile_callback
+  initiator:
+  - selected_integration_profile
+  mutating: false
+  delivery_class: profile_callback
+  required_envelope: profile_callback_envelope
+  deduplication_domain: (profile_id,profile_version,profile_instance_id,session_id,evaluation_attempt_id,callback_id)
+  idempotency_behavior: exact profile_callback_envelope duplicate in the profile instance session attempt
+    domain returns the prior normalized callback response without another state, budget, release, disclosure,
+    or audit change
+  duplicate_behavior: same callback_id or idempotency_key with a different canonical callback digest is
+    REPLAY_CONFLICT
+  retry_class: callback-resend
+  parameters:
+  - session_context
+  - profile_callback_envelope
 transitions:
 - id: TR-CREATE
   event: create_session
@@ -1458,17 +1847,32 @@ transitions:
   - UNINITIALIZED
   to_phase: CREATED
   guards:
+  - id: G-OPERATION-DEDUP
+    predicate: new_or_exact_actor_scoped_operation
+    reads:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - new operation or exact duplicate only
+    - conflict is REPLAY_CONFLICT
   - id: G-KNOWN-PROFILE
     predicate: equals
     reads:
     - protocol_profile
     arguments:
     - private-match-core/v0.1
+    parameter_reads: []
   - id: G-NEW-SESSION
     predicate: is_unset
     reads:
     - session_id
     arguments: []
+    parameter_reads: []
   - id: G-CLOCK-POLICY
     predicate: valid_clock_policy
     reads:
@@ -1476,6 +1880,7 @@ transitions:
     - allowed_clock_skew
     - message_stale_threshold
     arguments: []
+    parameter_reads: []
   effects:
   - id: E-CREATE
     operation: initialize_session
@@ -1496,6 +1901,7 @@ transitions:
     arguments:
     - bind supplied versioned context
     - derive expiry from reviewed policy parameters
+    parameter_reads: []
   - &id003
     id: E-AUDIT
     operation: append_normalized_audit
@@ -1503,19 +1909,46 @@ transitions:
     - audit_lifecycle
     arguments:
     - append only audit_policy.allowed_fields
-  visibility: *id001
+    parameter_reads: []
+  - id: E-ACCEPT-OPERATION
+    operation: record_actor_scoped_operation
+    writes:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    - normalized_operation_responses
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - record once atomically with command state and audit
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
   - UNKNOWN_VERSION
   - UNKNOWN_FIELD
   - AUDIENCE_MISMATCH
+  - REPLAY_CONFLICT
   terminal_effect: none
   mutating: true
   extension_only: false
@@ -1548,6 +1981,7 @@ transitions:
     arguments:
     - all fields bind to their current values; pre-commitment and pre-attempt values bind explicitly to
       NONE
+    parameter_reads: []
   - &id005
     id: G-ORDER-AND-REPLAY
     predicate: fresh_ordered_message
@@ -1560,6 +1994,7 @@ transitions:
     - sequence equals sender next_sequence
     - nonce unused in (session_id,sender_participant_id)
     - message_id unused unless exact duplicate
+    parameter_reads: []
   - id: G-A-UNBOUND-FIRST
     predicate: all_equal
     reads:
@@ -1567,6 +2002,19 @@ transitions:
     arguments:
     - A=NONE
     - B=NONE
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-BIND-A
     operation: bind_once
@@ -1575,6 +2023,7 @@ transitions:
     - intended_audience
     arguments:
     - bind A participant_id and key_id
+    parameter_reads: []
   - &id006
     id: E-ACCEPT-MESSAGE
     operation: record_accepted_message
@@ -1587,14 +2036,26 @@ transitions:
     arguments:
     - atomically add message_id, nonce, canonical event digest and normalized response
     - advance only the accepted sender sequence
+    parameter_reads: []
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -1630,6 +2091,19 @@ transitions:
     arguments:
     - A=NONE
     - B=BOUND
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-BIND-A-COMPLETE
     operation: bind_once
@@ -1639,15 +2113,27 @@ transitions:
     - phase
     arguments:
     - bind A; both participants now bound
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -1683,6 +2169,19 @@ transitions:
     arguments:
     - B=NONE
     - A=NONE
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-BIND-B
     operation: bind_once
@@ -1691,15 +2190,27 @@ transitions:
     - intended_audience
     arguments:
     - bind B participant_id and key_id
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -1735,6 +2246,19 @@ transitions:
     arguments:
     - B=NONE
     - A=BOUND
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-BIND-B-COMPLETE
     operation: bind_once
@@ -1744,15 +2268,27 @@ transitions:
     - phase
     arguments:
     - bind B; both participants now bound
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -1787,6 +2323,19 @@ transitions:
     - policy_acceptance
     arguments:
     - A=false
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-ACCEPT-POLICY-A
     operation: set
@@ -1794,15 +2343,27 @@ transitions:
     - policy_acceptance
     arguments:
     - A=true for exact policy_binding
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -1836,6 +2397,19 @@ transitions:
     - policy_acceptance
     arguments:
     - B=false
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-ACCEPT-POLICY-B
     operation: set
@@ -1843,15 +2417,27 @@ transitions:
     - policy_acceptance
     arguments:
     - B=true for exact policy_binding
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -1877,6 +2463,19 @@ transitions:
   - PARTICIPANTS_BOUND
   to_phase: COMMITMENTS_PENDING
   guards:
+  - id: G-OPERATION-DEDUP
+    predicate: new_or_exact_actor_scoped_operation
+    reads:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - new operation or exact duplicate only
+    - conflict is REPLAY_CONFLICT
   - *id004
   - id: G-BOTH-POLICY
     predicate: all_true
@@ -1885,18 +2484,21 @@ transitions:
     arguments:
     - A
     - B
+    parameter_reads: []
   - id: G-BUDGET-AUTHORIZED
     predicate: equals
     reads:
     - query_budget_state
     arguments:
     - NONE
+    parameter_reads: []
   - id: G-NOT-EXPIRED-RESERVE
     predicate: before
     reads:
     - authoritative_time
     - session_expires_at
     arguments: []
+    parameter_reads: []
   effects:
   - id: E-RESERVE-BUDGET
     operation: reserve
@@ -1905,20 +2507,47 @@ transitions:
     - phase
     arguments:
     - query_budget_state=RESERVED
+    parameter_reads: []
   - *id003
-  visibility: *id001
+  - id: E-ACCEPT-OPERATION
+    operation: record_actor_scoped_operation
+    writes:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    - normalized_operation_responses
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - record once atomically with command state and audit
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
   - QUERY_BUDGET_EXHAUSTED
   - POLICY_VERSION_MISMATCH
   - SESSION_EXPIRED
+  - REPLAY_CONFLICT
   terminal_effect: none
   mutating: true
   extension_only: false
@@ -1947,12 +2576,26 @@ transitions:
     arguments:
     - A=NONE
     - B=NONE
+    parameter_reads: []
   - id: G-BUDGET-RESERVED-COMMIT
     predicate: equals
     reads:
     - query_budget_state
     arguments:
     - RESERVED
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-COMMIT-A
     operation: bind_once
@@ -1960,15 +2603,27 @@ transitions:
     - commitment
     arguments:
     - register opaque commitment for A
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -2004,12 +2659,26 @@ transitions:
     arguments:
     - A=NONE
     - B=BOUND
+    parameter_reads: []
   - id: G-BUDGET-RESERVED-COMMIT
     predicate: equals
     reads:
     - query_budget_state
     arguments:
     - RESERVED
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-COMMIT-A-PAIR
     operation: bind_once
@@ -2019,15 +2688,27 @@ transitions:
     - phase
     arguments:
     - register A commitment and derive opaque commitment_pair_id over both commitments and versioned binding
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -2063,12 +2744,26 @@ transitions:
     arguments:
     - B=NONE
     - A=NONE
+    parameter_reads: []
   - id: G-BUDGET-RESERVED-COMMIT
     predicate: equals
     reads:
     - query_budget_state
     arguments:
     - RESERVED
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-COMMIT-B
     operation: bind_once
@@ -2076,15 +2771,27 @@ transitions:
     - commitment
     arguments:
     - register opaque commitment for B
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -2120,12 +2827,26 @@ transitions:
     arguments:
     - B=NONE
     - A=BOUND
+    parameter_reads: []
   - id: G-BUDGET-RESERVED-COMMIT
     predicate: equals
     reads:
     - query_budget_state
     arguments:
     - RESERVED
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-COMMIT-B-PAIR
     operation: bind_once
@@ -2135,15 +2856,27 @@ transitions:
     - phase
     arguments:
     - register B commitment and derive opaque commitment_pair_id over both commitments and versioned binding
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -2170,6 +2903,19 @@ transitions:
   - COMMITTED
   to_phase: EVALUATING
   guards:
+  - id: G-OPERATION-DEDUP
+    predicate: new_or_exact_actor_scoped_operation
+    reads:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - new operation or exact duplicate only
+    - conflict is REPLAY_CONFLICT
   - *id004
   - id: G-BUDGET-RESERVED
     predicate: equals
@@ -2177,6 +2923,7 @@ transitions:
     - query_budget_state
     arguments:
     - RESERVED
+    parameter_reads: []
   - id: G-COMMITMENT-PAIR-BOUND
     predicate: all_set
     reads:
@@ -2185,6 +2932,7 @@ transitions:
     arguments:
     - A
     - B
+    parameter_reads: []
   - id: G-NO-PRIOR-EVALUATION
     predicate: all_equal
     reads:
@@ -2193,6 +2941,7 @@ transitions:
     arguments:
     - 'false'
     - '0'
+    parameter_reads: []
   - id: G-VERIFICATION-MATERIAL-VALID
     predicate: valid_at
     reads:
@@ -2201,12 +2950,14 @@ transitions:
     arguments:
     - material exists
     - not_before <= authoritative_time < not_after
+    parameter_reads: []
   - id: G-NOT-EXPIRED-EVALUATION
     predicate: before
     reads:
     - authoritative_time
     - session_expires_at
     arguments: []
+    parameter_reads: []
   effects:
   - id: E-START-EVALUATION
     operation: consume_atomically
@@ -2218,15 +2969,49 @@ transitions:
     arguments:
     - RESERVED->CONSUMED exactly once
     - bind one new attempt ID
+    parameter_reads: []
   - *id003
-  visibility: *id001
+  - id: E-ACCEPT-OPERATION
+    operation: record_actor_scoped_operation
+    writes:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    - normalized_operation_responses
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - record once atomically with command state and audit
+  - id: E-SET-EVALUATION-DEADLINE
+    operation: set_policy_deadline
+    writes:
+    - evaluation_deadline
+    parameter_reads: []
+    arguments:
+    - authoritative_time + policy evaluation timeout
+    - must be within TimeDomain
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
   - QUERY_BUDGET_MISSING
@@ -2234,6 +3019,7 @@ transitions:
   - VERIFICATION_MATERIAL_MISSING
   - VERIFICATION_MATERIAL_EXPIRED
   - SESSION_EXPIRED
+  - REPLAY_CONFLICT
   terminal_effect: none
   mutating: true
   extension_only: false
@@ -2263,12 +3049,26 @@ transitions:
     - evaluation_contribution
     arguments:
     - A
+    parameter_reads: []
   - id: G-COMMITMENTS-LOCKED
     predicate: equals
     reads:
     - evaluation_started
     arguments:
     - 'true'
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-CONTRIBUTION-A
     operation: bind_once
@@ -2276,15 +3076,22 @@ transitions:
     - evaluation_contribution
     arguments:
     - store profile-defined opaque contribution reference for A outside coordinator plaintext
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id007
+  visibility:
+  - actor: selected_integration_profile
+    data:
+    - profile-defined opaque contribution
+  - actor: coordinator
+    data:
+    - normalized contribution receipt only
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: evaluation-continuation
   failure_code:
@@ -2320,12 +3127,26 @@ transitions:
     - evaluation_contribution
     arguments:
     - B
+    parameter_reads: []
   - id: G-COMMITMENTS-LOCKED
     predicate: equals
     reads:
     - evaluation_started
     arguments:
     - 'true'
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-CONTRIBUTION-B
     operation: bind_once
@@ -2333,15 +3154,22 @@ transitions:
     - evaluation_contribution
     arguments:
     - store profile-defined opaque contribution reference for B outside coordinator plaintext
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id007
+  visibility:
+  - actor: selected_integration_profile
+    data:
+    - profile-defined opaque contribution
+  - actor: coordinator
+    data:
+    - normalized contribution receipt only
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: evaluation-continuation
   failure_code:
@@ -2377,6 +3205,7 @@ transitions:
     - result_ack
     arguments:
     - A
+    parameter_reads: []
   - id: G-OPAQUE-RECEIPT
     predicate: profile_opaque_reference
     reads:
@@ -2384,12 +3213,26 @@ transitions:
     arguments:
     - not a bare digest over MATCH|NO_MATCH|INDETERMINATE
     - profile-defined high-entropy or confidential reference
+    parameter_reads: []
   - id: G-LOCAL-RESULT-A
     predicate: event_parameter_one_of
     reads:
     - proposed_result_state
     arguments:
     - local_result_parameter=MATCH|NO_MATCH|INDETERMINATE
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-ACK-RECEIPT-A
     operation: set_if_unset_or_equal
@@ -2399,15 +3242,28 @@ transitions:
     - proposed_result_state
     arguments:
     - record A opaque reference and party-local proposed result; coordinator sees opaque reference only
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id008
+  visibility:
+  - actor: party_a_client
+    data:
+    - own proposed result entry
+    - own local-result binding
+    - own normalized response
+  - actor: coordinator
+    data:
+    - opaque_receipt_ref
+    - normalized_ack_status
+  - actor: selected_integration_profile
+    data:
+    - profile-dependent entry access under a separately reviewed profile
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -2443,6 +3299,7 @@ transitions:
     - result_ack
     arguments:
     - B
+    parameter_reads: []
   - id: G-OPAQUE-RECEIPT
     predicate: profile_opaque_reference
     reads:
@@ -2450,12 +3307,26 @@ transitions:
     arguments:
     - not a bare digest over MATCH|NO_MATCH|INDETERMINATE
     - profile-defined high-entropy or confidential reference
+    parameter_reads: []
   - id: G-LOCAL-RESULT-B
     predicate: event_parameter_one_of
     reads:
     - proposed_result_state
     arguments:
     - local_result_parameter=MATCH|NO_MATCH|INDETERMINATE
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-ACK-RECEIPT-B
     operation: set_if_unset_or_equal
@@ -2465,15 +3336,28 @@ transitions:
     - proposed_result_state
     arguments:
     - record B opaque reference and party-local proposed result; coordinator sees opaque reference only
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id009
+  visibility:
+  - actor: party_b_client
+    data:
+    - own proposed result entry
+    - own local-result binding
+    - own normalized response
+  - actor: coordinator
+    data:
+    - opaque_receipt_ref
+    - normalized_ack_status
+  - actor: selected_integration_profile
+    data:
+    - profile-dependent entry access under a separately reviewed profile
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -2501,6 +3385,23 @@ transitions:
   - EVALUATING
   to_phase: RESULT_ACCEPTED
   guards:
+  - id: G-PROFILE-CALLBACK-DEDUP
+    predicate: new_or_exact_profile_callback
+    reads:
+    - accepted_profile_callback_ids
+    - accepted_profile_callback_digests
+    parameter_reads:
+    - profile_callback_envelope.profile_id
+    - profile_callback_envelope.profile_version
+    - profile_callback_envelope.profile_instance_id
+    - profile_callback_envelope.callback_id
+    - profile_callback_envelope.canonical_callback_digest
+    - profile_callback_envelope.idempotency_key
+    - profile_callback_envelope.session_id
+    - profile_callback_envelope.evaluation_attempt_id
+    arguments:
+    - new callback or exact duplicate only
+    - conflict is REPLAY_CONFLICT
   - *id004
   - id: G-BOTH-ACKS
     predicate: all_set
@@ -2509,6 +3410,7 @@ transitions:
     arguments:
     - A
     - B
+    parameter_reads: []
   - id: G-SAME-OPAQUE-RECEIPT
     predicate: all_equal
     reads:
@@ -2516,12 +3418,14 @@ transitions:
     - opaque_receipt_ref
     arguments:
     - A.ref=B.ref=opaque_receipt_ref
+    parameter_reads: []
   - id: G-SAME-PARTY-RESULT
     predicate: all_equal
     reads:
     - proposed_result_state
     arguments:
     - A=B
+    parameter_reads: []
   - id: G-RESULT-ALLOWED
     predicate: one_of
     reads:
@@ -2530,24 +3434,28 @@ transitions:
     - MATCH
     - NO_MATCH
     - INDETERMINATE
+    parameter_reads: []
   - id: G-ONE-ACCEPTED-EVALUATION
     predicate: equals
     reads:
     - accepted_evaluation_count
     arguments:
     - '0'
+    parameter_reads: []
   - id: G-VERIFICATION-MATERIAL-VALID
     predicate: valid_at
     reads:
     - verification_material_validity
     - authoritative_time
     arguments: []
+    parameter_reads: []
   - id: G-NOT-EXPIRED-RESULT
     predicate: before
     reads:
     - authoritative_time
     - session_expires_at
     arguments: []
+    parameter_reads: []
   effects:
   - id: E-ACCEPT-RESULT
     operation: set_and_increment
@@ -2559,21 +3467,57 @@ transitions:
     - party-local values remain identical
     - accepted_evaluation_count=1
     - coordinator stores RESULT_ACCEPTED lifecycle only
+    parameter_reads: []
   - *id003
-  visibility: *id010
+  - id: E-ACCEPT-PROFILE-CALLBACK
+    operation: record_profile_callback
+    writes:
+    - accepted_profile_callback_ids
+    - accepted_profile_callback_digests
+    - normalized_profile_callback_responses
+    parameter_reads:
+    - profile_callback_envelope.profile_id
+    - profile_callback_envelope.profile_version
+    - profile_callback_envelope.profile_instance_id
+    - profile_callback_envelope.callback_id
+    - profile_callback_envelope.canonical_callback_digest
+    - profile_callback_envelope.idempotency_key
+    - profile_callback_envelope.session_id
+    - profile_callback_envelope.evaluation_attempt_id
+    arguments:
+    - record once atomically with callback state and audit
+  visibility:
+  - actor: party_a_client
+    data:
+    - own accepted result entry
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own accepted result entry
+    - own normalized response
+  - actor: coordinator
+    data:
+    - opaque_receipt_ref
+    - normalized_ack_status
+  - actor: selected_integration_profile
+    data:
+    - profile-dependent comparison under a separately reviewed profile
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact profile_callback_envelope duplicate in the profile instance session attempt
+    domain returns the prior normalized callback response without another state, budget, release, disclosure,
+    or audit change
+  duplicate_behavior: same callback_id or idempotency_key with a different canonical callback digest is
+    REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
   - RESULT_CONFLICT
   - VERIFICATION_MATERIAL_MISSING
   - VERIFICATION_MATERIAL_EXPIRED
   - SESSION_EXPIRED
+  - REPLAY_CONFLICT
   terminal_effect: none
   mutating: true
   extension_only: false
@@ -2596,6 +3540,23 @@ transitions:
   - EVALUATING
   to_phase: ABORTED
   guards:
+  - id: G-PROFILE-CALLBACK-DEDUP
+    predicate: new_or_exact_profile_callback
+    reads:
+    - accepted_profile_callback_ids
+    - accepted_profile_callback_digests
+    parameter_reads:
+    - profile_callback_envelope.profile_id
+    - profile_callback_envelope.profile_version
+    - profile_callback_envelope.profile_instance_id
+    - profile_callback_envelope.callback_id
+    - profile_callback_envelope.canonical_callback_digest
+    - profile_callback_envelope.idempotency_key
+    - profile_callback_envelope.session_id
+    - profile_callback_envelope.evaluation_attempt_id
+    arguments:
+    - new callback or exact duplicate only
+    - conflict is REPLAY_CONFLICT
   - *id004
   - id: G-RESULT-CONFLICT
     predicate: any_true
@@ -2605,6 +3566,7 @@ transitions:
     arguments:
     - opaque receipt references differ
     - party-local result values differ
+    parameter_reads: []
   effects:
   - id: E-RESULT-CONFLICT
     operation: fail_closed
@@ -2616,18 +3578,64 @@ transitions:
     - party-local accepted_result_state=CONFLICT
     - terminal_reason=RESULT_CONFLICT
     - coordinator retains no plaintext result
+    parameter_reads: []
   - *id003
-  visibility: *id010
+  - id: E-ACCEPT-PROFILE-CALLBACK
+    operation: record_profile_callback
+    writes:
+    - accepted_profile_callback_ids
+    - accepted_profile_callback_digests
+    - normalized_profile_callback_responses
+    parameter_reads:
+    - profile_callback_envelope.profile_id
+    - profile_callback_envelope.profile_version
+    - profile_callback_envelope.profile_instance_id
+    - profile_callback_envelope.callback_id
+    - profile_callback_envelope.canonical_callback_digest
+    - profile_callback_envelope.idempotency_key
+    - profile_callback_envelope.session_id
+    - profile_callback_envelope.evaluation_attempt_id
+    arguments:
+    - record once atomically with callback state and audit
+  - id: E-TERMINAL-BUDGET-ABORT
+    operation: apply_terminal_budget_disposition
+    writes:
+    - query_budget_state
+    parameter_reads: []
+    arguments:
+    - if RESERVED and evaluation_started=false then RELEASED
+    - if evaluation_started=true then CONSUMED remains CONSUMED
+    - never refund after result timeout failure or INDETERMINATE
+    - opaque authorization ledger update is atomic
+  visibility:
+  - actor: party_a_client
+    data:
+    - own accepted result entry
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own accepted result entry
+    - own normalized response
+  - actor: coordinator
+    data:
+    - opaque_receipt_ref
+    - normalized_ack_status
+  - actor: selected_integration_profile
+    data:
+    - profile-dependent comparison under a separately reviewed profile
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact profile_callback_envelope duplicate in the profile instance session attempt
+    domain returns the prior normalized callback response without another state, budget, release, disclosure,
+    or audit change
+  duplicate_behavior: same callback_id or idempotency_key with a different canonical callback digest is
+    REPLAY_CONFLICT
   retry_class: new-session
   failure_code:
   - RESULT_CONFLICT
+  - REPLAY_CONFLICT
   terminal_effect: abort
   mutating: true
   extension_only: false
@@ -2656,12 +3664,14 @@ transitions:
     - phase
     arguments:
     - RESULT_ACCEPTED or CONSENT_PENDING
+    parameter_reads: []
   - id: G-CONSENT-A-EMPTY
     predicate: is_unset
     reads:
     - consent
     arguments:
     - A
+    parameter_reads: []
   - id: G-CONSENT-BINDING
     predicate: consent_fields_bind
     reads:
@@ -2682,6 +3692,38 @@ transitions:
     - expires_at
     - consent nonce
     - artifact digest
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
+  - id: G-CONSENT-SLOT-EMPTY-A
+    predicate: equals
+    reads:
+    - consent
+    parameter_reads: []
+    arguments:
+    - consent[A]=NONE
+    - replacement in same session is forbidden
+  - id: G-CONSENT-TIME-VALID-A
+    predicate: valid_interval
+    reads:
+    - authoritative_time
+    - session_expires_at
+    parameter_reads:
+    - consent_binding_parameter.issued_at
+    - consent_binding_parameter.expires_at
+    arguments:
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - authoritative_time < expires_at <= session_expires_at
   effects:
   - id: E-GRANT-CONSENT-A
     operation: bind_once
@@ -2694,15 +3736,27 @@ transitions:
     - record A consent binding metadata
     - bind disclosure_profile_ref once from the first consent and require equality thereafter
     - disclosure_state=CONSENT_PENDING
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -2732,7 +3786,7 @@ transitions:
   from_phase:
   - CONSENT_PENDING
   - DISCLOSURE_AUTHORIZED
-  to_phase: RESULT_ACCEPTED
+  to_phase: ABORTED
   guards:
   - *id004
   - *id005
@@ -2742,6 +3796,7 @@ transitions:
     - consent
     arguments:
     - A
+    parameter_reads: []
   - id: G-WITHDRAWAL-BEFORE-COMPLETION
     predicate: ordered_before
     reads:
@@ -2750,34 +3805,80 @@ transitions:
     - authoritative_time
     arguments:
     - withdrawal accepted before completion in coordinator authoritative order
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-WITHDRAW-CONSENT-A
-    operation: invalidate
+    operation: withdraw_and_terminalize
     writes:
     - consent
     - disclosure_state
     - phase
+    - terminal_reason
+    - query_budget_state
+    parameter_reads: []
     arguments:
-    - invalidate A consent
-    - disclosure_state=WITHDRAWN
-    - authorization invalidated
-  - *id006
-  - *id003
-  visibility: *id001
+    - mark consent[A] withdrawn and preserve history
+    - set disclosure_state=WITHDRAWN
+    - set phase=ABORTED
+    - set terminal_reason=CONSENT_WITHDRAWN
+    - CONSUMED remains CONSUMED; no refund
+  - id: E-ACCEPT-MESSAGE
+    operation: record_accepted_message
+    writes:
+    - next_sequence
+    - accepted_message_ids
+    - accepted_nonces
+    - accepted_event_digests
+    - normalized_responses
+    arguments:
+    - atomically add message_id, nonce, canonical event digest and normalized response
+    - advance only the accepted sender sequence
+    parameter_reads: []
+  - id: E-AUDIT
+    operation: append_normalized_audit
+    writes:
+    - audit_lifecycle
+    arguments:
+    - append only audit_policy.allowed_fields
+    parameter_reads: []
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
   - CONSENT_WITHDRAWN
-  - SESSION_EXPIRED
   - OUT_OF_ORDER
   - REPLAY_CONFLICT
-  terminal_effect: none
+  - SESSION_EXPIRED
+  terminal_effect: abort
   mutating: true
   extension_only: false
   privacy_notes:
@@ -2806,12 +3907,14 @@ transitions:
     - phase
     arguments:
     - RESULT_ACCEPTED or CONSENT_PENDING
+    parameter_reads: []
   - id: G-CONSENT-B-EMPTY
     predicate: is_unset
     reads:
     - consent
     arguments:
     - B
+    parameter_reads: []
   - id: G-CONSENT-BINDING
     predicate: consent_fields_bind
     reads:
@@ -2832,6 +3935,38 @@ transitions:
     - expires_at
     - consent nonce
     - artifact digest
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
+  - id: G-CONSENT-SLOT-EMPTY-B
+    predicate: equals
+    reads:
+    - consent
+    parameter_reads: []
+    arguments:
+    - consent[B]=NONE
+    - replacement in same session is forbidden
+  - id: G-CONSENT-TIME-VALID-B
+    predicate: valid_interval
+    reads:
+    - authoritative_time
+    - session_expires_at
+    parameter_reads:
+    - consent_binding_parameter.issued_at
+    - consent_binding_parameter.expires_at
+    arguments:
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - authoritative_time < expires_at <= session_expires_at
   effects:
   - id: E-GRANT-CONSENT-B
     operation: bind_once
@@ -2844,15 +3979,27 @@ transitions:
     - record B consent binding metadata
     - bind disclosure_profile_ref once from the first consent and require equality thereafter
     - disclosure_state=CONSENT_PENDING
+    parameter_reads: []
   - *id006
   - *id003
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
@@ -2882,7 +4029,7 @@ transitions:
   from_phase:
   - CONSENT_PENDING
   - DISCLOSURE_AUTHORIZED
-  to_phase: RESULT_ACCEPTED
+  to_phase: ABORTED
   guards:
   - *id004
   - *id005
@@ -2892,6 +4039,7 @@ transitions:
     - consent
     arguments:
     - B
+    parameter_reads: []
   - id: G-WITHDRAWAL-BEFORE-COMPLETION
     predicate: ordered_before
     reads:
@@ -2900,34 +4048,80 @@ transitions:
     - authoritative_time
     arguments:
     - withdrawal accepted before completion in coordinator authoritative order
+    parameter_reads: []
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
   effects:
   - id: E-WITHDRAW-CONSENT-B
-    operation: invalidate
+    operation: withdraw_and_terminalize
     writes:
     - consent
     - disclosure_state
     - phase
+    - terminal_reason
+    - query_budget_state
+    parameter_reads: []
     arguments:
-    - invalidate B consent
-    - disclosure_state=WITHDRAWN
-    - authorization invalidated
-  - *id006
-  - *id003
-  visibility: *id001
+    - mark consent[B] withdrawn and preserve history
+    - set disclosure_state=WITHDRAWN
+    - set phase=ABORTED
+    - set terminal_reason=CONSENT_WITHDRAWN
+    - CONSUMED remains CONSUMED; no refund
+  - id: E-ACCEPT-MESSAGE
+    operation: record_accepted_message
+    writes:
+    - next_sequence
+    - accepted_message_ids
+    - accepted_nonces
+    - accepted_event_digests
+    - normalized_responses
+    arguments:
+    - atomically add message_id, nonce, canonical event digest and normalized response
+    - advance only the accepted sender sequence
+    parameter_reads: []
+  - id: E-AUDIT
+    operation: append_normalized_audit
+    writes:
+    - audit_lifecycle
+    arguments:
+    - append only audit_policy.allowed_fields
+    parameter_reads: []
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
   - CONSENT_WITHDRAWN
-  - SESSION_EXPIRED
   - OUT_OF_ORDER
   - REPLAY_CONFLICT
-  terminal_effect: none
+  - SESSION_EXPIRED
+  terminal_effect: abort
   mutating: true
   extension_only: false
   privacy_notes:
@@ -2947,8 +4141,21 @@ transitions:
   - CONSENT_PENDING
   to_phase: DISCLOSURE_AUTHORIZED
   guards:
+  - id: G-OPERATION-DEDUP
+    predicate: new_or_exact_actor_scoped_operation
+    reads:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - new operation or exact duplicate only
+    - conflict is REPLAY_CONFLICT
   - *id004
-  - &id011
+  - &id007
     id: G-DISCLOSURE-MATCH
     predicate: equals
     reads:
@@ -2956,7 +4163,8 @@ transitions:
     arguments:
     - A=MATCH
     - B=MATCH
-  - &id012
+    parameter_reads: []
+  - &id008
     id: G-BILATERAL-CONSENT
     predicate: all_valid
     reads:
@@ -2965,7 +4173,8 @@ transitions:
     arguments:
     - A
     - B
-  - &id013
+    parameter_reads: []
+  - &id009
     id: G-CONSENT-RECEIPT-BINDING
     predicate: all_bind
     reads:
@@ -2973,7 +4182,8 @@ transitions:
     - opaque_receipt_ref
     arguments:
     - A.receipt=B.receipt=opaque_receipt_ref
-  - &id014
+    parameter_reads: []
+  - &id010
     id: G-CONSENT-PARTICIPANT-BINDING
     predicate: all_bind
     reads:
@@ -2981,7 +4191,8 @@ transitions:
     - participant_binding
     arguments:
     - session participant set
-  - &id015
+    parameter_reads: []
+  - &id011
     id: G-CONSENT-PROFILE-BINDING
     predicate: all_bind
     reads:
@@ -2989,14 +4200,16 @@ transitions:
     - disclosure_profile_ref
     arguments:
     - same profile ID and version
-  - &id016
+    parameter_reads: []
+  - &id012
     id: G-CONSENT-SCOPE-BINDING
     predicate: all_bind
     reads:
     - consent
     arguments:
     - same exact disclosure scope
-  - &id017
+    parameter_reads: []
+  - &id013
     id: G-CONSENT-AUDIENCE-BINDING
     predicate: all_bind
     reads:
@@ -3004,7 +4217,8 @@ transitions:
     - intended_audience
     arguments:
     - same intended audience
-  - &id018
+    parameter_reads: []
+  - &id014
     id: G-CONSENT-EXPIRY
     predicate: before
     reads:
@@ -3012,7 +4226,8 @@ transitions:
     - consent
     arguments:
     - both consent expiries
-  - &id019
+    parameter_reads: []
+  - &id015
     id: G-PROFILE-REVIEWED
     predicate: reviewed_profile_exists
     reads:
@@ -3020,7 +4235,8 @@ transitions:
     arguments:
     - profile is not NONE
     - exact ID/version is separately reviewed
-  - &id020
+    parameter_reads: []
+  - &id016
     id: G-ACTIVE-SESSION
     predicate: not_in
     reads:
@@ -3029,6 +4245,7 @@ transitions:
     - EXPIRED
     - CLOSED
     - ABORTED
+    parameter_reads: []
   effects:
   - id: E-AUTHORIZE-DISCLOSURE
     operation: set
@@ -3037,15 +4254,41 @@ transitions:
     - phase
     arguments:
     - AUTHORIZED for exact reviewed extension binding
+    parameter_reads: []
   - *id003
-  visibility: *id001
+  - id: E-ACCEPT-OPERATION
+    operation: record_actor_scoped_operation
+    writes:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    - normalized_operation_responses
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - record once atomically with command state and audit
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
   - CONSENT_MISSING
@@ -3055,6 +4298,7 @@ transitions:
   - DISCLOSURE_SCOPE_MISMATCH
   - AUDIENCE_MISMATCH
   - SESSION_EXPIRED
+  - REPLAY_CONFLICT
   terminal_effect: none
   mutating: true
   extension_only: true
@@ -3075,23 +4319,41 @@ transitions:
   - DISCLOSURE_AUTHORIZED
   to_phase: CLOSED
   guards:
+  - id: G-PROFILE-CALLBACK-DEDUP
+    predicate: new_or_exact_profile_callback
+    reads:
+    - accepted_profile_callback_ids
+    - accepted_profile_callback_digests
+    parameter_reads:
+    - profile_callback_envelope.profile_id
+    - profile_callback_envelope.profile_version
+    - profile_callback_envelope.profile_instance_id
+    - profile_callback_envelope.callback_id
+    - profile_callback_envelope.canonical_callback_digest
+    - profile_callback_envelope.idempotency_key
+    - profile_callback_envelope.session_id
+    - profile_callback_envelope.evaluation_attempt_id
+    arguments:
+    - new callback or exact duplicate only
+    - conflict is REPLAY_CONFLICT
   - *id004
+  - *id007
+  - *id008
+  - *id009
+  - *id010
   - *id011
   - *id012
   - *id013
   - *id014
   - *id015
   - *id016
-  - *id017
-  - *id018
-  - *id019
-  - *id020
   - id: G-AUTHORIZATION-STILL-VALID
     predicate: equals
     reads:
     - disclosure_state
     arguments:
     - AUTHORIZED
+    parameter_reads: []
   - id: G-NO-EARLIER-WITHDRAWAL
     predicate: authoritative_order
     reads:
@@ -3100,6 +4362,7 @@ transitions:
     - disclosure_state
     arguments:
     - completion precedes no accepted withdrawal
+    parameter_reads: []
   effects:
   - id: E-COMPLETE-DISCLOSURE
     operation: set
@@ -3111,15 +4374,55 @@ transitions:
     - COMPLETED
     - phase=CLOSED
     - terminal_reason=NONE; no payload retained
+    parameter_reads: []
   - *id003
-  visibility: *id021
+  - id: E-ACCEPT-PROFILE-CALLBACK
+    operation: record_profile_callback
+    writes:
+    - accepted_profile_callback_ids
+    - accepted_profile_callback_digests
+    - normalized_profile_callback_responses
+    parameter_reads:
+    - profile_callback_envelope.profile_id
+    - profile_callback_envelope.profile_version
+    - profile_callback_envelope.profile_instance_id
+    - profile_callback_envelope.callback_id
+    - profile_callback_envelope.canonical_callback_digest
+    - profile_callback_envelope.idempotency_key
+    - profile_callback_envelope.session_id
+    - profile_callback_envelope.evaluation_attempt_id
+    arguments:
+    - record once atomically with callback state and audit
+  - id: E-TERMINAL-BUDGET-CLOSE
+    operation: apply_terminal_budget_disposition
+    writes:
+    - query_budget_state
+    parameter_reads: []
+    arguments:
+    - if RESERVED and evaluation_started=false then RELEASED
+    - if evaluation_started=true then CONSUMED remains CONSUMED
+    - never refund after result timeout failure or INDETERMINATE
+    - opaque authorization ledger update is atomic
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized completion only
+    - opaque extension transcript reference
+  - actor: party_a_client
+    data:
+    - normalized completion
+  - actor: party_b_client
+    data:
+    - normalized completion
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact profile_callback_envelope duplicate in the profile instance session attempt
+    domain returns the prior normalized callback response without another state, budget, release, disclosure,
+    or audit change
+  duplicate_behavior: same callback_id or idempotency_key with a different canonical callback digest is
+    REPLAY_CONFLICT
   retry_class: new-message
   failure_code:
   - CONSENT_MISSING
@@ -3127,6 +4430,7 @@ transitions:
   - CONSENT_WITHDRAWN
   - DISCLOSURE_PROFILE_REQUIRED
   - SESSION_EXPIRED
+  - REPLAY_CONFLICT
   terminal_effect: close
   mutating: true
   extension_only: true
@@ -3143,7 +4447,7 @@ transitions:
 - id: TR-REJECT-MESSAGE
   event: reject_message
   actor: coordinator
-  from_phase: &id023
+  from_phase: &id018
   - UNINITIALIZED
   - CREATED
   - PARTICIPANTS_BOUND
@@ -3164,21 +4468,33 @@ transitions:
     - phase
     arguments:
     - no accepted state mutation
+    parameter_reads: []
   effects:
   - id: E-REJECT-NO-CHANGE
     operation: no_change
     writes: []
     arguments:
     - return bounded normalized failure; do not advance sequence
-  visibility: *id001
+    parameter_reads: []
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
-  retry_class: transient-message
+  idempotency_behavior: deterministic state-derived relation with no external delivery or retry
+  duplicate_behavior: not externally duplicable
+  retry_class: not-applicable
   failure_code:
   - PARTICIPANT_MISMATCH
   - PROTOCOL_VERSION_MISMATCH
@@ -3221,7 +4537,7 @@ transitions:
 - id: TR-ABORT
   event: abort_session
   actor: coordinator
-  from_phase: &id022
+  from_phase: &id017
   - CREATED
   - PARTICIPANTS_BOUND
   - COMMITMENTS_PENDING
@@ -3232,36 +4548,87 @@ transitions:
   - DISCLOSURE_AUTHORIZED
   to_phase: ABORTED
   guards:
-  - *id004
-  - id: G-ABORT-REASON
-    predicate: declared_failure
+  - id: G-OPERATION-DEDUP
+    predicate: new_or_exact_actor_scoped_operation
     reads:
-    - terminal_reason
-    arguments: []
+    - accepted_operation_ids
+    - accepted_operation_digests
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - new operation or exact duplicate only
+    - conflict is REPLAY_CONFLICT
+  - id: G-ABORT-REASON
+    predicate: declared_session_abort_failure
+    reads: []
+    parameter_reads:
+    - normalized_failure_parameter.failure_code
+    arguments:
+    - failure_code exists in failure_taxonomy
+    - failure disposition=session-abort
+    - party cannot supply coordinator-only failure code
   effects:
   - id: E-ABORT
-    operation: set
+    operation: atomic_generic_abort
     writes:
     - phase
     - terminal_reason
     - disclosure_state
+    - query_budget_state
+    - audit_lifecycle
+    parameter_reads:
+    - normalized_failure_parameter.failure_code
     arguments:
-    - phase=ABORTED
-    - invalidate any pending disclosure authorization
-  - *id003
-  visibility: *id001
+    - set phase=ABORTED
+    - set terminal_reason=event failure_code
+    - invalidate disclosure authorization
+    - if RESERVED and evaluation_started=false then RELEASED
+    - if evaluation_started=true then CONSUMED remains CONSUMED
+    - append normalized abort audit category
+  - id: E-ACCEPT-OPERATION
+    operation: record_actor_scoped_operation
+    writes:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    - normalized_operation_responses
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - record once atomically with command state and audit
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: new-session
   failure_code:
+  - COMMITMENT_MUTATION
+  - CONSENT_EXPIRED
+  - CONSENT_WITHDRAWN
   - PARTIAL_PARTY_FAILURE
-  - RESULT_CONFLICT
   - REPLAY_CONFLICT
+  - RESULT_CONFLICT
   - UNKNOWN_STATE
   terminal_effect: abort
   mutating: true
@@ -3275,136 +4642,79 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-EXPIRY
   - INV-REVEAL-SAFETY
-- id: TR-EVALUATION-TIMEOUT
-  event: abort_session
-  actor: coordinator
-  from_phase:
-  - EVALUATING
-  to_phase: ABORTED
-  guards:
-  - *id004
-  - id: G-EVALUATION-DEADLINE
-    predicate: deadline_reached
-    reads:
-    - authoritative_time
-    - evaluation_attempt_id
-    arguments: []
-  effects:
-  - id: E-TIMEOUT
-    operation: set
-    writes:
-    - phase
-    - terminal_reason
-    arguments:
-    - phase=ABORTED
-    - terminal_reason=EVALUATION_TIMEOUT
-    - budget remains consumed
-  - *id003
-  visibility: *id001
-  audit_effect:
-    category: normalized-protocol-lifecycle
-    fields: *id002
-    detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
-  retry_class: new-session
-  failure_code:
-  - EVALUATION_TIMEOUT
-  terminal_effect: abort
-  mutating: true
-  extension_only: false
-  privacy_notes:
-  - No prohibited private, result, element, count, or payload data enters coordinator state or audit.
-  related_invariants:
-  - INV-SESSION-BINDING
-  - INV-NO-REPLAY
-  - INV-IDEMPOTENCY
-  - INV-MINIMUM-DISCLOSURE
-  - INV-ONE-EVALUATION
-  - INV-QUERY-BUDGET
-  - INV-EXPIRY
-- id: TR-PARTIAL-PARTY-FAILURE
-  event: abort_session
-  actor: coordinator
-  from_phase:
-  - EVALUATING
-  to_phase: ABORTED
-  guards:
-  - *id004
-  - id: G-PARTIAL-FAILURE
-    predicate: evaluation_cannot_continue
-    reads:
-    - evaluation_contribution
-    - authoritative_time
-    arguments: []
-  effects:
-  - id: E-PARTIAL-FAILURE
-    operation: set
-    writes:
-    - phase
-    - terminal_reason
-    arguments:
-    - phase=ABORTED
-    - terminal_reason=PARTIAL_PARTY_FAILURE
-    - budget remains consumed
-  - *id003
-  visibility: *id001
-  audit_effect:
-    category: normalized-protocol-lifecycle
-    fields: *id002
-    detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
-  retry_class: new-session
-  failure_code:
-  - PARTIAL_PARTY_FAILURE
-  terminal_effect: abort
-  mutating: true
-  extension_only: false
-  privacy_notes:
-  - No prohibited private, result, element, count, or payload data enters coordinator state or audit.
-  related_invariants:
-  - INV-SESSION-BINDING
-  - INV-NO-REPLAY
-  - INV-IDEMPOTENCY
-  - INV-MINIMUM-DISCLOSURE
-  - INV-ONE-EVALUATION
-  - INV-QUERY-BUDGET
-- id: TR-EXPIRE
+- id: TR-ADVANCE-TIME-EXPIRE
   event: expire_session
   actor: coordinator
-  from_phase: *id022
+  from_phase: *id017
   to_phase: EXPIRED
   guards:
-  - id: G-SESSION-EXPIRY
-    predicate: at_or_after
+  - id: G-TIME-MONOTONIC
+    predicate: greater_than_or_equal
     reads:
     - authoritative_time
-    - session_expires_at
-    arguments: []
-  effects:
-  - id: E-EXPIRE
-    operation: set
-    writes:
-    - phase
-    - terminal_reason
-    - disclosure_state
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
     arguments:
-    - phase=EXPIRED
-    - terminal_reason=SESSION_EXPIRED
-    - invalidate authorization
-  - *id003
-  visibility: *id001
+    - new_authoritative_time >= authoritative_time
+    - rollback forbidden
+  - id: G-TIME-DOMAIN
+    predicate: within_bounded_time_domain
+    reads:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    - time_advance_parameter.reason_or_source_class
+    arguments:
+    - new_authoritative_time in TimeDomain
+    - policy maximum jump is not exceeded
+  - id: G-SESSION-EXPIRY-CROSSED
+    predicate: greater_than_or_equal
+    reads:
+    - session_expires_at
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - new_authoritative_time >= session_expires_at
+  effects:
+  - id: E-ADVANCE-AND-EXPIRE
+    operation: atomic_time_and_expiry
+    writes:
+    - authoritative_time
+    - phase
+    - disclosure_state
+    - terminal_reason
+    - query_budget_state
+    - audit_lifecycle
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - set authoritative_time=new_authoritative_time
+    - set phase=EXPIRED
+    - invalidate disclosure authorization
+    - set terminal_reason=SESSION_EXPIRED
+    - if RESERVED and evaluation_started=false then EXPIRED
+    - if evaluation_started=true then CONSUMED remains CONSUMED
+    - append normalized expiry audit category
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
-  retry_class: non-retryable-current-session
+  idempotency_behavior: level-triggered threshold evaluation; the same threshold is a no-op and cannot
+    duplicate state, budget, release, or audit change
+  duplicate_behavior: not message replay; rollback is rejected and an already-applied threshold is a no-op
+  retry_class: threshold-recheck
   failure_code:
   - SESSION_EXPIRED
   terminal_effect: expire
@@ -3431,6 +4741,19 @@ transitions:
   - CONSENT_PENDING
   to_phase: CLOSED
   guards:
+  - id: G-OPERATION-DEDUP
+    predicate: new_or_exact_actor_scoped_operation
+    reads:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - new operation or exact duplicate only
+    - conflict is REPLAY_CONFLICT
   - *id004
   - id: G-CLOSE-NO-ACTIVE-DISCLOSURE
     predicate: not_in
@@ -3438,6 +4761,7 @@ transitions:
     - disclosure_state
     arguments:
     - AUTHORIZED
+    parameter_reads: []
   effects:
   - id: E-CLOSE
     operation: set
@@ -3448,19 +4772,56 @@ transitions:
     arguments:
     - phase=CLOSED
     - invalidate incomplete consent or disclosure authorization
+    parameter_reads: []
   - *id003
-  visibility: *id001
+  - id: E-ACCEPT-OPERATION
+    operation: record_actor_scoped_operation
+    writes:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    - normalized_operation_responses
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - record once atomically with command state and audit
+  - id: E-TERMINAL-BUDGET-CLOSE
+    operation: apply_terminal_budget_disposition
+    writes:
+    - query_budget_state
+    parameter_reads: []
+    arguments:
+    - if RESERVED and evaluation_started=false then RELEASED
+    - if evaluation_started=true then CONSUMED remains CONSUMED
+    - never refund after result timeout failure or INDETERMINATE
+    - opaque authorization ledger update is atomic
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
   retry_class: non-retryable-current-session
   failure_code:
   - SESSION_CLOSED
   - CONSENT_WITHDRAWN
+  - REPLAY_CONFLICT
   terminal_effect: close
   mutating: true
   extension_only: false
@@ -3476,7 +4837,7 @@ transitions:
 - id: TR-RETRY-EXACT-DUPLICATE-A
   event: retry_idempotent_message
   actor: party_a_client
-  from_phase: *id023
+  from_phase: *id018
   to_phase: SAME
   guards:
   - id: G-EXACT-DUPLICATE-A
@@ -3489,25 +4850,39 @@ transitions:
     - same message_id
     - same nonce
     - same canonical event digest
+    parameter_reads: []
   - id: G-PRIOR-RESPONSE-A
     predicate: is_set
     reads:
     - normalized_responses
     arguments:
     - message_id
+    parameter_reads: []
   effects:
   - id: E-RETURN-PRIOR-A
     operation: return_prior_response
     writes: []
     arguments:
     - no state, sequence, nonce, audit, or budget change
-  visibility: *id001
+    parameter_reads: []
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: idempotent-resend
   failure_code:
@@ -3542,6 +4917,7 @@ transitions:
     - CLOSED
     - ABORTED
     - EXPIRED
+    parameter_reads: []
   effects:
   - id: E-REQUIRE-NEW-SESSION-A
     operation: no_change
@@ -3549,15 +4925,26 @@ transitions:
     arguments:
     - return requirement for new session ID, participant/policy rebinding, materially changed dataset
       policy, and new budget authorization
-  visibility: *id001
+    parameter_reads: []
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
-  retry_class: new-session
+  idempotency_behavior: non-mutating local guidance from current state with no external delivery deduplication
+  duplicate_behavior: not externally duplicable
+  retry_class: local-guidance
   failure_code:
   - QUERY_BUDGET_MISSING
   - SESSION_CLOSED
@@ -3575,7 +4962,7 @@ transitions:
 - id: TR-RETRY-EXACT-DUPLICATE-B
   event: retry_idempotent_message
   actor: party_b_client
-  from_phase: *id023
+  from_phase: *id018
   to_phase: SAME
   guards:
   - id: G-EXACT-DUPLICATE-B
@@ -3588,25 +4975,39 @@ transitions:
     - same message_id
     - same nonce
     - same canonical event digest
+    parameter_reads: []
   - id: G-PRIOR-RESPONSE-B
     predicate: is_set
     reads:
     - normalized_responses
     arguments:
     - message_id
+    parameter_reads: []
   effects:
   - id: E-RETURN-PRIOR-B
     operation: return_prior_response
     writes: []
     arguments:
     - no state, sequence, nonce, audit, or budget change
-  visibility: *id001
+    parameter_reads: []
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change
   duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
   retry_class: idempotent-resend
   failure_code:
@@ -3641,6 +5042,7 @@ transitions:
     - CLOSED
     - ABORTED
     - EXPIRED
+    parameter_reads: []
   effects:
   - id: E-REQUIRE-NEW-SESSION-B
     operation: no_change
@@ -3648,15 +5050,26 @@ transitions:
     arguments:
     - return requirement for new session ID, participant/policy rebinding, materially changed dataset
       policy, and new budget authorization
-  visibility: *id001
+    parameter_reads: []
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
     fields: *id002
     detail_policy: counterparty receives only the normalized category when detail would increase inference
-  idempotency_behavior: exact duplicate returns the prior normalized response without another state or
-    budget change
-  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
-  retry_class: new-session
+  idempotency_behavior: non-mutating local guidance from current state with no external delivery deduplication
+  duplicate_behavior: not externally duplicable
+  retry_class: local-guidance
   failure_code:
   - QUERY_BUDGET_MISSING
   - SESSION_CLOSED
@@ -3669,6 +5082,548 @@ transitions:
   - No prohibited private, result, element, count, or payload data enters coordinator state or audit.
   related_invariants:
   - INV-ONE-EVALUATION
+  - INV-QUERY-BUDGET
+  - INV-EXPIRY
+- id: TR-ADVANCE-TIME-NOOP
+  event: advance_authoritative_time
+  actor: coordinator
+  from_phase: &id019
+  - CREATED
+  - PARTICIPANTS_BOUND
+  - COMMITMENTS_PENDING
+  - COMMITTED
+  - EVALUATING
+  - RESULT_ACCEPTED
+  - CONSENT_PENDING
+  - DISCLOSURE_AUTHORIZED
+  to_phase: SAME
+  guards:
+  - id: G-TIME-MONOTONIC
+    predicate: greater_than_or_equal
+    reads:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - new_authoritative_time >= authoritative_time
+    - rollback forbidden
+  - id: G-TIME-DOMAIN
+    predicate: within_bounded_time_domain
+    reads:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    - time_advance_parameter.reason_or_source_class
+    arguments:
+    - new_authoritative_time in TimeDomain
+    - policy maximum jump is not exceeded
+  - id: G-TIME-SAME
+    predicate: equals
+    reads:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - new_authoritative_time=authoritative_time
+    - no state or audit change
+  - id: G-NO-DEADLINE-CROSSED
+    predicate: below_all_active_deadlines
+    reads:
+    - session_expires_at
+    - evaluation_deadline
+    - consent
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - same time is below every active deadline
+  effects:
+  - id: E-TIME-NOOP
+    operation: no_change
+    writes: []
+    parameter_reads: []
+    arguments:
+    - same threshold produces no state budget release or audit change
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  audit_effect:
+    category: normalized-protocol-lifecycle
+    fields:
+    - event_id
+    - authoritative_timestamp
+    - actor_category_or_pseudonymous_ref
+    - protocol_profile
+    - policy_version
+    - normalized_lifecycle_status
+    - normalized_error_category
+    - opaque_artifact_or_transcript_reference
+    - approved_size_class
+    detail_policy: counterparty receives only the normalized category when detail would increase inference
+  idempotency_behavior: level-triggered threshold evaluation; the same threshold is a no-op and cannot
+    duplicate state, budget, release, or audit change
+  duplicate_behavior: not message replay; rollback is rejected and an already-applied threshold is a no-op
+  retry_class: threshold-recheck
+  failure_code:
+  - STALE_MESSAGE
+  terminal_effect: no-state-change
+  mutating: false
+  extension_only: false
+  privacy_notes:
+  - Failure detail is bounded and hidden from the counterparty when it would increase inference.
+  related_invariants:
+  - INV-EXPIRY
+  - INV-IDEMPOTENCY
+- id: TR-ADVANCE-TIME-LIVE
+  event: advance_authoritative_time
+  actor: coordinator
+  from_phase: *id019
+  to_phase: SAME
+  guards:
+  - id: G-TIME-MONOTONIC
+    predicate: greater_than_or_equal
+    reads:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - new_authoritative_time >= authoritative_time
+    - rollback forbidden
+  - id: G-TIME-DOMAIN
+    predicate: within_bounded_time_domain
+    reads:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    - time_advance_parameter.reason_or_source_class
+    arguments:
+    - new_authoritative_time in TimeDomain
+    - policy maximum jump is not exceeded
+  - id: G-TIME-INCREASES
+    predicate: greater_than
+    reads:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - new_authoritative_time > authoritative_time
+  - id: G-BEFORE-ALL-ACTIVE-DEADLINES
+    predicate: below_all_active_deadlines
+    reads:
+    - session_expires_at
+    - evaluation_deadline
+    - consent
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - new_authoritative_time < session_expires_at
+    - if evaluating then new_authoritative_time < evaluation_deadline
+    - if consent active then new_authoritative_time < each active consent expiry
+  effects:
+  - id: E-ADVANCE-TIME-ONLY
+    operation: set
+    writes:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - set authoritative_time=new_authoritative_time; no other state write
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  audit_effect:
+    category: normalized-protocol-lifecycle
+    fields:
+    - event_id
+    - authoritative_timestamp
+    - actor_category_or_pseudonymous_ref
+    - protocol_profile
+    - policy_version
+    - normalized_lifecycle_status
+    - normalized_error_category
+    - opaque_artifact_or_transcript_reference
+    - approved_size_class
+    detail_policy: counterparty receives only the normalized category when detail would increase inference
+  idempotency_behavior: level-triggered threshold evaluation; the same threshold is a no-op and cannot
+    duplicate state, budget, release, or audit change
+  duplicate_behavior: not message replay; rollback is rejected and an already-applied threshold is a no-op
+  retry_class: threshold-recheck
+  failure_code:
+  - STALE_MESSAGE
+  - SESSION_EXPIRED
+  - EVALUATION_TIMEOUT
+  - CONSENT_EXPIRED
+  terminal_effect: none
+  mutating: true
+  extension_only: false
+  privacy_notes:
+  - Failure detail is bounded and hidden from the counterparty when it would increase inference.
+  related_invariants:
+  - INV-EXPIRY
+  - INV-SESSION-BINDING
+- id: TR-EVALUATION-TIMEOUT
+  event: advance_authoritative_time
+  actor: coordinator
+  from_phase:
+  - EVALUATING
+  to_phase: ABORTED
+  guards:
+  - id: G-TIME-MONOTONIC
+    predicate: greater_than_or_equal
+    reads:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - new_authoritative_time >= authoritative_time
+    - rollback forbidden
+  - id: G-TIME-DOMAIN
+    predicate: within_bounded_time_domain
+    reads:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    - time_advance_parameter.reason_or_source_class
+    arguments:
+    - new_authoritative_time in TimeDomain
+    - policy maximum jump is not exceeded
+  - id: G-EVALUATION-DEADLINE-CROSSED
+    predicate: greater_than_or_equal
+    reads:
+    - evaluation_deadline
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - new_authoritative_time >= evaluation_deadline
+    - new_authoritative_time < session_expires_at
+  effects:
+  - id: E-TIMEOUT-AT-DEADLINE
+    operation: atomic_time_and_abort
+    writes:
+    - authoritative_time
+    - phase
+    - terminal_reason
+    - disclosure_state
+    - query_budget_state
+    - audit_lifecycle
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - set authoritative_time=new_authoritative_time
+    - set phase=ABORTED
+    - set terminal_reason=EVALUATION_TIMEOUT
+    - invalidate disclosure authorization
+    - CONSUMED remains CONSUMED; no refund
+    - append normalized timeout audit category
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  audit_effect:
+    category: normalized-protocol-lifecycle
+    fields:
+    - event_id
+    - authoritative_timestamp
+    - actor_category_or_pseudonymous_ref
+    - protocol_profile
+    - policy_version
+    - normalized_lifecycle_status
+    - normalized_error_category
+    - opaque_artifact_or_transcript_reference
+    - approved_size_class
+    detail_policy: counterparty receives only the normalized category when detail would increase inference
+  idempotency_behavior: level-triggered threshold evaluation; the same threshold is a no-op and cannot
+    duplicate state, budget, release, or audit change
+  duplicate_behavior: not message replay; rollback is rejected and an already-applied threshold is a no-op
+  retry_class: threshold-recheck
+  failure_code:
+  - EVALUATION_TIMEOUT
+  - SESSION_EXPIRED
+  terminal_effect: abort
+  mutating: true
+  extension_only: false
+  privacy_notes:
+  - Failure detail is bounded and hidden from the counterparty when it would increase inference.
+  related_invariants:
+  - INV-ONE-EVALUATION
+  - INV-EXPIRY
+  - INV-QUERY-BUDGET
+- id: TR-CONSENT-EXPIRED
+  event: advance_authoritative_time
+  actor: coordinator
+  from_phase:
+  - CONSENT_PENDING
+  - DISCLOSURE_AUTHORIZED
+  to_phase: ABORTED
+  guards:
+  - id: G-TIME-MONOTONIC
+    predicate: greater_than_or_equal
+    reads:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - new_authoritative_time >= authoritative_time
+    - rollback forbidden
+  - id: G-TIME-DOMAIN
+    predicate: within_bounded_time_domain
+    reads:
+    - authoritative_time
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    - time_advance_parameter.reason_or_source_class
+    arguments:
+    - new_authoritative_time in TimeDomain
+    - policy maximum jump is not exceeded
+  - id: G-ACTIVE-CONSENT-EXPIRED
+    predicate: active_consent_expiry_crossed
+    reads:
+    - consent
+    - session_expires_at
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - new_authoritative_time >= at least one active consent expires_at
+    - new_authoritative_time < session_expires_at
+    - same-session replacement forbidden
+  effects:
+  - id: E-CONSENT-EXPIRY-ABORT
+    operation: atomic_time_and_abort
+    writes:
+    - authoritative_time
+    - phase
+    - terminal_reason
+    - disclosure_state
+    - query_budget_state
+    - audit_lifecycle
+    parameter_reads:
+    - time_advance_parameter.new_authoritative_time
+    arguments:
+    - set authoritative_time=new_authoritative_time
+    - set phase=ABORTED
+    - set terminal_reason=CONSENT_EXPIRED
+    - invalidate disclosure authorization
+    - CONSUMED remains CONSUMED; no refund
+    - append normalized consent-expiry audit category
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  audit_effect:
+    category: normalized-protocol-lifecycle
+    fields:
+    - event_id
+    - authoritative_timestamp
+    - actor_category_or_pseudonymous_ref
+    - protocol_profile
+    - policy_version
+    - normalized_lifecycle_status
+    - normalized_error_category
+    - opaque_artifact_or_transcript_reference
+    - approved_size_class
+    detail_policy: counterparty receives only the normalized category when detail would increase inference
+  idempotency_behavior: level-triggered threshold evaluation; the same threshold is a no-op and cannot
+    duplicate state, budget, release, or audit change
+  duplicate_behavior: not message replay; rollback is rejected and an already-applied threshold is a no-op
+  retry_class: threshold-recheck
+  failure_code:
+  - CONSENT_EXPIRED
+  - SESSION_EXPIRED
+  terminal_effect: abort
+  mutating: true
+  extension_only: false
+  privacy_notes:
+  - Failure detail is bounded and hidden from the counterparty when it would increase inference.
+  related_invariants:
+  - INV-REVEAL-SAFETY
+  - INV-EXPIRY
+  - INV-QUERY-BUDGET
+- id: TR-RETRY-EXACT-OPERATION
+  event: retry_idempotent_operation
+  actor: coordinator
+  from_phase: &id020
+  - UNINITIALIZED
+  - CREATED
+  - PARTICIPANTS_BOUND
+  - COMMITMENTS_PENDING
+  - COMMITTED
+  - EVALUATING
+  - RESULT_ACCEPTED
+  - CONSENT_PENDING
+  - DISCLOSURE_AUTHORIZED
+  - CLOSED
+  - ABORTED
+  - EXPIRED
+  to_phase: SAME
+  guards:
+  - id: G-EXACT-OPERATION-DUPLICATE
+    predicate: exact_actor_scoped_operation_duplicate
+    reads:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    - normalized_operation_responses
+    parameter_reads:
+    - operation_envelope.actor_id
+    - operation_envelope.operation_id
+    - operation_envelope.canonical_operation_digest
+    - operation_envelope.idempotency_key
+    arguments:
+    - same actor operation ID idempotency key and canonical digest
+  effects:
+  - id: E-RETURN-PRIOR-OPERATION
+    operation: return_prior_response
+    writes: []
+    parameter_reads:
+    - operation_envelope.operation_id
+    arguments:
+    - no state sequence budget release disclosure or audit change
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  audit_effect:
+    category: normalized-protocol-lifecycle
+    fields:
+    - event_id
+    - authoritative_timestamp
+    - actor_category_or_pseudonymous_ref
+    - protocol_profile
+    - policy_version
+    - normalized_lifecycle_status
+    - normalized_error_category
+    - opaque_artifact_or_transcript_reference
+    - approved_size_class
+    detail_policy: counterparty receives only the normalized category when detail would increase inference
+  idempotency_behavior: exact operation_envelope duplicate in the actor-scoped domain returns the prior
+    normalized operation response without another state, budget, release, or audit change
+  duplicate_behavior: same actor_id operation_id or idempotency_key with a different canonical operation
+    digest is REPLAY_CONFLICT
+  retry_class: operation-resend
+  failure_code:
+  - REPLAY
+  - REPLAY_CONFLICT
+  terminal_effect: no-state-change
+  mutating: false
+  extension_only: false
+  privacy_notes:
+  - Failure detail is bounded and hidden from the counterparty when it would increase inference.
+  related_invariants:
+  - INV-IDEMPOTENCY
+  - INV-QUERY-BUDGET
+  - INV-EXPIRY
+- id: TR-RETRY-EXACT-PROFILE-CALLBACK
+  event: retry_idempotent_profile_callback
+  actor: selected_integration_profile
+  from_phase: *id020
+  to_phase: SAME
+  guards:
+  - id: G-EXACT-PROFILE-CALLBACK-DUPLICATE
+    predicate: exact_profile_callback_duplicate
+    reads:
+    - accepted_profile_callback_ids
+    - accepted_profile_callback_digests
+    - normalized_profile_callback_responses
+    parameter_reads:
+    - profile_callback_envelope.profile_id
+    - profile_callback_envelope.profile_version
+    - profile_callback_envelope.profile_instance_id
+    - profile_callback_envelope.callback_id
+    - profile_callback_envelope.canonical_callback_digest
+    - profile_callback_envelope.idempotency_key
+    - profile_callback_envelope.session_id
+    - profile_callback_envelope.evaluation_attempt_id
+    arguments:
+    - same profile instance session attempt callback ID idempotency key and canonical digest
+  effects:
+  - id: E-RETURN-PRIOR-PROFILE-CALLBACK
+    operation: return_prior_response
+    writes: []
+    parameter_reads:
+    - profile_callback_envelope.callback_id
+    arguments:
+    - no state sequence budget release disclosure or audit change
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  audit_effect:
+    category: normalized-protocol-lifecycle
+    fields:
+    - event_id
+    - authoritative_timestamp
+    - actor_category_or_pseudonymous_ref
+    - protocol_profile
+    - policy_version
+    - normalized_lifecycle_status
+    - normalized_error_category
+    - opaque_artifact_or_transcript_reference
+    - approved_size_class
+    detail_policy: counterparty receives only the normalized category when detail would increase inference
+  idempotency_behavior: exact profile_callback_envelope duplicate in the profile instance session attempt
+    domain returns the prior normalized callback response without another state, budget, release, disclosure,
+    or audit change
+  duplicate_behavior: same callback_id or idempotency_key with a different canonical callback digest is
+    REPLAY_CONFLICT
+  retry_class: callback-resend
+  failure_code:
+  - REPLAY
+  - REPLAY_CONFLICT
+  terminal_effect: no-state-change
+  mutating: false
+  extension_only: false
+  privacy_notes:
+  - Failure detail is bounded and hidden from the counterparty when it would increase inference.
+  related_invariants:
+  - INV-IDEMPOTENCY
   - INV-QUERY-BUDGET
   - INV-EXPIRY
 invariants:
@@ -3690,26 +5645,27 @@ invariants:
   - disclosure_state
   conditions:
   - *id004
+  - *id007
+  - *id008
+  - *id009
+  - *id010
   - *id011
   - *id012
   - *id013
   - *id014
   - *id015
   - *id016
-  - *id017
-  - *id018
-  - *id019
-  - *id020
   - id: I-DISCLOSURE-COMPLETE
     predicate: implies
     reads:
     - disclosure_state
     arguments:
     - COMPLETED implies all guards
+    parameter_reads: []
   violation_effect: fail closed; no payload disclosure; abort or reject with normalized category
 - id: INV-RESULT-SYMMETRY
-  statement: Both parties accept identical local result values and the same opaque receipt reference;
-    conflict aborts without coordinator plaintext outcome.
+  statement: The global specification observer verifies identical party-local accepted values and one
+    opaque receipt without granting either party peer-entry access or the coordinator a local-result binding.
   state_variables:
   - proposed_result_state
   - accepted_result_state
@@ -3724,6 +5680,7 @@ invariants:
     - accepted_result_state
     arguments:
     - A=B when RESULT_ACCEPTED
+    parameter_reads: []
   - id: I-SYMMETRIC-RECEIPT
     predicate: all_equal
     reads:
@@ -3731,6 +5688,7 @@ invariants:
     - opaque_receipt_ref
     arguments:
     - A.ref=B.ref=opaque_receipt_ref
+    parameter_reads: []
   - id: I-CONFLICT-ABORTS
     predicate: implies
     reads:
@@ -3739,6 +5697,19 @@ invariants:
     - terminal_reason
     arguments:
     - CONFLICT implies ABORTED and RESULT_CONFLICT
+    parameter_reads: []
+  - id: I-ENTRY-SCOPED-RESULTS
+    predicate: entry_visibility_isolated
+    reads:
+    - proposed_result_state
+    - result_ack
+    - accepted_result_state
+    parameter_reads: []
+    arguments:
+    - A reads only A
+    - B reads only B
+    - global invariant observer is not an implementation actor
+    - coordinator projection excludes local result and binding
   violation_effect: ABORTED with RESULT_CONFLICT; neither party result is preferred
 - id: INV-COMMITMENT-IMMUTABILITY
   statement: After evaluation_started becomes true, both commitments, the commitment pair, policy version,
@@ -3760,6 +5731,7 @@ invariants:
     - participant_binding
     arguments:
     - evaluation_started=true
+    parameter_reads: []
   violation_effect: reject COMMITMENT_MUTATION and abort when integrity is uncertain
 - id: INV-SESSION-BINDING
   statement: Every accepted event after creation binds to one session, protocol version, policy version,
@@ -3794,26 +5766,51 @@ invariants:
     - participant_binding
     arguments:
     - (session_id,sender_participant_id)
+    parameter_reads: []
   violation_effect: reject REPLAY or REPLAY_CONFLICT; conflicting duplicates require terminal policy handling
 - id: INV-IDEMPOTENCY
-  statement: Only identical message_id, nonce, and canonical event digest is an exact replay; it returns
-    the prior response without another state or budget change.
+  statement: Each externally delivered class uses its own realizable scoped identity; exact duplicates
+    return the class-specific prior response without another state, budget, release, disclosure, sequence,
+    or audit change.
   state_variables:
   - accepted_message_ids
   - accepted_nonces
   - accepted_event_digests
   - normalized_responses
+  - accepted_operation_ids
+  - accepted_operation_digests
+  - normalized_operation_responses
+  - accepted_profile_callback_ids
+  - accepted_profile_callback_digests
+  - normalized_profile_callback_responses
   - query_budget_state
   - next_sequence
   conditions:
-  - id: I-EXACT-DUPLICATE
+  - id: I-EXACT-PARTY-DUPLICATE
     predicate: exact_duplicate
     reads:
     - accepted_message_ids
     - accepted_nonces
     - accepted_event_digests
+    parameter_reads: []
     arguments:
-    - all three values identical
+    - same sender message_id nonce issued_at and canonical event digest
+  - id: I-EXACT-OPERATION-DUPLICATE
+    predicate: exact_duplicate
+    reads:
+    - accepted_operation_ids
+    - accepted_operation_digests
+    parameter_reads: []
+    arguments:
+    - same actor operation_id idempotency_key and canonical operation digest
+  - id: I-EXACT-CALLBACK-DUPLICATE
+    predicate: exact_duplicate
+    reads:
+    - accepted_profile_callback_ids
+    - accepted_profile_callback_digests
+    parameter_reads: []
+    arguments:
+    - same profile instance session attempt callback_id key and canonical callback digest
   violation_effect: conflicting duplicate is REPLAY_CONFLICT
 - id: INV-ONE-EVALUATION
   statement: A commitment pair receives at most one accepted evaluation; INDETERMINATE, timeout, and failure
@@ -3830,21 +5827,47 @@ invariants:
     - accepted_evaluation_count
     arguments:
     - '1'
+    parameter_reads: []
   violation_effect: current session remains terminal or result-accepted; a new authorized session is required
 - id: INV-EXPIRY
-  statement: EXPIRED, CLOSED, and ABORTED sessions accept no mutating evaluation, result, consent, authorization,
-    or completion transition.
+  statement: Time never rolls back; crossed session, evaluation, or consent deadlines are terminalized
+    atomically, and terminal sessions admit only non-mutating exact delivery responses, bounded rejection,
+    or new-session guidance.
   state_variables:
   - phase
   - authoritative_time
   - session_expires_at
+  - evaluation_deadline
+  - consent
+  - disclosure_state
   conditions:
+  - id: I-TIME-NONDECREASING
+    predicate: monotonic
+    reads:
+    - authoritative_time
+    parameter_reads: []
+    arguments:
+    - next authoritative_time >= current authoritative_time
+  - id: I-DEADLINE-ATOMIC
+    predicate: atomic_deadline_terminalization
+    reads:
+    - phase
+    - authoritative_time
+    - session_expires_at
+    - evaluation_deadline
+    - consent
+    parameter_reads: []
+    arguments:
+    - no live state remains after an active deadline is crossed
   - id: I-TERMINAL-NON-MUTATING
     predicate: terminal_allows_only
     reads:
     - phase
+    parameter_reads: []
     arguments:
     - retry_idempotent_message
+    - retry_idempotent_operation
+    - retry_idempotent_profile_callback
     - request_new_evaluation_session
     - reject_message
   violation_effect: reject with SESSION_EXPIRED, SESSION_CLOSED, or SESSION_ABORTED
@@ -3857,12 +5880,16 @@ invariants:
   - opaque_receipt_ref
   - audit_lifecycle
   - normalized_responses
+  - normalized_operation_responses
+  - normalized_profile_callback_responses
   conditions:
   - id: I-PROHIBITED-DATA-ABSENT
     predicate: absent
     reads:
     - audit_lifecycle
     - normalized_responses
+    - normalized_operation_responses
+    - normalized_profile_callback_responses
     arguments:
     - raw identifiers
     - normalized private inputs
@@ -3872,6 +5899,7 @@ invariants:
     - local secrets
     - actual disclosure payload
     - plaintext decision outcome in coordinator state
+    parameter_reads: []
   violation_effect: reject artifact or transition and require privacy review
 - id: INV-OPAQUE-RECEIPT
   statement: The coordinator-visible receipt reference is profile-defined and non-enumerable; a bare low-entropy
@@ -3886,10 +5914,11 @@ invariants:
     arguments:
     - high entropy or confidential
     - not hash(MATCH|NO_MATCH|INDETERMINATE)
+    parameter_reads: []
   violation_effect: reject RESULT_CONFLICT or profile validation; do not accept a result
 - id: INV-QUERY-BUDGET
-  statement: A coordinator-authoritative reservation exists before evaluation and is consumed atomically
-    on the first start; failure does not create free probing.
+  statement: A coordinator reservation is consumed at first start; an unused reservation is released on
+    close/abort or expired on session expiry, while any started evaluation remains CONSUMED without refund.
   state_variables:
   - query_budget_state
   - evaluation_started
@@ -3902,6 +5931,18 @@ invariants:
     - evaluation_started
     arguments:
     - RESERVED->CONSUMED with first start_evaluation
+    parameter_reads: []
+  - id: I-TERMINAL-BUDGET-DISPOSITION
+    predicate: atomic_terminal_disposition
+    reads:
+    - query_budget_state
+    - evaluation_started
+    - phase
+    parameter_reads: []
+    arguments:
+    - pre-start close or abort RESERVED->RELEASED
+    - pre-start expiry RESERVED->EXPIRED
+    - post-start remains CONSUMED
   violation_effect: reject QUERY_BUDGET_MISSING or QUERY_BUDGET_EXHAUSTED
 - id: INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
   statement: Coordinator state and audit contain an opaque receipt reference and normalized lifecycle
@@ -3920,13 +5961,15 @@ invariants:
     arguments:
     - coordinator
     - plaintext decision outcome
+    parameter_reads: []
   violation_effect: reject the profile or artifact; outcome confidentiality remains unestablished until
     evidenced
 query_budget_semantics:
   authority: coordinator
   reservation_required_before_evaluation: true
   consumption_point: atomically on first accepted start_evaluation
-  failure_refund: none by default; any refund requires an explicit versioned policy and audit event
+  failure_refund: none after evaluation start; pre-evaluation release or expiry is reservation disposition,
+    not a result refund
   idempotent_resend_cost: no additional consumption for an exact duplicate on the same commitment pair
   new_evaluation_requirement:
   - new session or separately reviewed versioned retry transition
@@ -3937,6 +5980,14 @@ query_budget_semantics:
   - client-side counter as sole authority
   - free probing after timeout, failure, or INDETERMINATE
   - more than one accepted evaluation per commitment pair
+  unused_reservation_on_close: RELEASED atomically when evaluation_started=false
+  unused_reservation_on_abort: RELEASED atomically when evaluation_started=false
+  unused_reservation_on_expiry: EXPIRED atomically when evaluation_started=false
+  post_start_terminal_disposition: CONSUMED remains CONSUMED; no result, timeout, failure, conflict, or
+    INDETERMINATE refund
+  authorization_ledger_assumption: reservation release or expiry is atomic with the opaque authorization
+    ledger and emits only a normalized audit category
+  released_reservation_reuse: forbidden in the terminal session; a new session and authorization are required
 result_acceptance_semantics:
   allowed_values:
   - MATCH
@@ -3967,9 +6018,16 @@ consent_semantics:
   - consent nonce
   - consent artifact digest
   match_is_blanket_consent: false
-  withdrawal_before_completion: invalidates authorization in coordinator authoritative ordering
-  withdrawal_after_completion: does not reverse a past disclosure; only later actions are affected
+  withdrawal_before_completion: atomically invalidates authorization and moves the session to ABORTED
+    with CONSENT_WITHDRAWN; a new session is required
+  withdrawal_after_completion: CLOSED rejects the mutation; it does not reverse a past disclosure and
+    any new authorization requires a new session
   core_payload: none; actual payload and transfer are outside private-match-core/v0.1
+  expiry_or_withdrawal_policy: new-session-required
+  replacement_policy: same-session replacement is forbidden after expiry or withdrawal; preserve history
+    and require a new session, result, budget, and consent
+  mixed_generation_policy: old and new consent generations cannot authorize together because v0.1 has
+    no same-session re-consent transition
 clock_and_expiry:
   authoritative_clock: coordinator monotonic transition clock
   client_issued_at: auxiliary information only; never security authority
@@ -3992,6 +6050,18 @@ clock_and_expiry:
     EXPIRED
   clock_rollback: never decreases authoritative_time; rollback or ambiguous time source fails closed and
     is audited
+  time_advance_event: advance_authoritative_time
+  time_advance_parameter: new_authoritative_time and reason_or_source_class
+  maximum_time_jump:
+    type: non-negative policy duration
+    constraint: bounded by policy and finite TimeDomain; no client override
+  evaluation_deadline:
+    type: authoritative timestamp
+    effect: set at start_evaluation; timeout when authoritative_time >= evaluation_deadline
+  stale_message_relation: authoritative_time - message_stale_threshold <= issued_at <= authoritative_time
+    + allowed_clock_skew
+  atomic_deadline_crossing: session expiry, evaluation timeout, or active consent expiry is terminalized
+    atomically with the time update; no live window remains
 replay_and_ordering:
   replay_domain:
   - session_id
@@ -4000,6 +6070,7 @@ replay_and_ordering:
   message_identity:
   - message_id
   - nonce
+  - issued_at
   - canonical event digest
   exact_duplicate: no-op and return prior normalized response
   conflicting_duplicate: REPLAY_CONFLICT; no partial state change and policy-defined abort
@@ -4009,6 +6080,25 @@ replay_and_ordering:
   prior_policy_replay: POLICY_VERSION_MISMATCH
   prior_participant_set_replay: PARTICIPANT_MISMATCH
   transport_buffering: not implemented or specified
+  operation_domain:
+  - actor_id
+  - operation_id
+  operation_identity:
+  - operation_id
+  - idempotency_key
+  - canonical operation digest
+  profile_callback_domain:
+  - profile_id
+  - profile_version
+  - profile_instance_id
+  - session_id
+  - evaluation_attempt_id
+  profile_callback_identity:
+  - callback_id
+  - idempotency_key
+  - canonical callback digest
+  timer_identity: level-triggered authoritative threshold; no message_id or nonce
+  derived_transition_identity: no external delivery or retry identity
 retry_semantics:
   idempotent_resend: exact duplicate; return prior normalized response without budget or sequence change
   transient_message_retry: new message_id and nonce at the expected sequence after correcting a retryable
@@ -4020,6 +6110,14 @@ retry_semantics:
     change
   non_retryable_terminal: closed, aborted, or expired session permits only exact replay, bounded rejection,
     and new-session guidance
+  coordinator_operation_retry: actor-scoped exact operation envelope returns the prior normalized operation
+    response through retry_idempotent_operation
+  profile_callback_retry: profile-instance/session/attempt-scoped exact callback envelope returns the
+    prior normalized callback response through retry_idempotent_profile_callback
+  timer_retry: same threshold is a level-triggered no-op; rollback and out-of-domain jumps reject
+  derived_transition: no external delivery, duplicate, or retry path
+  party_retry_scope: retry_idempotent_message applies only to party_message delivery and never to coordinator
+    commands, profile callbacks, timers, or derived transitions
 failure_taxonomy:
 - code: PARTICIPANT_MISMATCH
   disposition: message-only-rejection
@@ -4211,21 +6309,21 @@ failure_taxonomy:
   description: Fail-closed handling for CONSENT_MISSING; details must not create a counterparty inference
     oracle.
 - code: CONSENT_EXPIRED
-  disposition: message-only-rejection
+  disposition: session-abort
   retryable: false
   requires_new_message: false
-  requires_new_session: false
-  query_budget_effect: unchanged-from-current-state
+  requires_new_session: true
+  query_budget_effect: consumed-no-automatic-refund
   party_error_category: CONSENT_ERROR
   detail_visibility: coordinator-and-approved-audit-only; parties receive normalized category
   description: Fail-closed handling for CONSENT_EXPIRED; details must not create a counterparty inference
     oracle.
 - code: CONSENT_WITHDRAWN
-  disposition: message-only-rejection
+  disposition: session-abort
   retryable: false
   requires_new_message: false
-  requires_new_session: false
-  query_budget_effect: unchanged-from-current-state
+  requires_new_session: true
+  query_budget_effect: consumed-no-automatic-refund
   party_error_category: CONSENT_ERROR
   detail_visibility: coordinator-and-approved-audit-only; parties receive normalized category
   description: Fail-closed handling for CONSENT_WITHDRAWN; details must not create a counterparty inference
@@ -4368,6 +6466,13 @@ formalization:
   - normalized_responses
   - terminal_reason
   - audit_lifecycle
+  - evaluation_deadline
+  - accepted_operation_ids
+  - accepted_operation_digests
+  - normalized_operation_responses
+  - accepted_profile_callback_ids
+  - accepted_profile_callback_digests
+  - normalized_profile_callback_responses
   initial_predicate:
   - variable: phase
     operator: equals
@@ -4461,11 +6566,9 @@ formalization:
   - event: abort_session
     transitions:
     - TR-ABORT
-    - TR-EVALUATION-TIMEOUT
-    - TR-PARTIAL-PARTY-FAILURE
   - event: expire_session
     transitions:
-    - TR-EXPIRE
+    - TR-ADVANCE-TIME-EXPIRE
   - event: close_session
     transitions:
     - TR-CLOSE
@@ -4477,8 +6580,21 @@ formalization:
     transitions:
     - TR-REQUEST-NEW-EVALUATION-SESSION-A
     - TR-REQUEST-NEW-EVALUATION-SESSION-B
-  next_state_relation: disjunction of enabled transition relations; stuttering is limited to exact duplicate,
-    bounded rejection, and new-session guidance
+  - event: advance_authoritative_time
+    transitions:
+    - TR-ADVANCE-TIME-NOOP
+    - TR-ADVANCE-TIME-LIVE
+    - TR-EVALUATION-TIMEOUT
+    - TR-CONSENT-EXPIRED
+  - event: retry_idempotent_operation
+    transitions:
+    - TR-RETRY-EXACT-OPERATION
+  - event: retry_idempotent_profile_callback
+    transitions:
+    - TR-RETRY-EXACT-PROFILE-CALLBACK
+  next_state_relation: disjunction of delivery-class-specific enabled transition relations; explicit advance_authoritative_time/expire_session
+    clock relations prevent rollback or a live post-deadline window; stuttering is limited to realizable
+    exact-envelope responses, timer threshold no-op, derived rejection, and local guidance
   invariant_ids:
   - INV-REVEAL-SAFETY
   - INV-RESULT-SYMMETRY
@@ -4493,7 +6609,8 @@ formalization:
   - INV-QUERY-BUDGET
   - INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
   fairness_candidates:
-  - weak fairness for coordinator expiry when authoritative_time reaches session_expires_at
+  - weak fairness for the authoritative timer relation while a later TimeDomain point exists
+  - weak fairness for atomic expire_session when a proposed timer value reaches session_expires_at
   - weak fairness for accepted contribution processing while a nonterminal evaluation remains enabled
   - no fairness assumption that a participant must respond or consent
   bounded_model_parameters:
@@ -4514,16 +6631,22 @@ formalization:
     constraint: at least 1 and bounded
   - id: TimeDomain
     type: finite ordered set
-    constraint: includes creation, stale, timeout, consent expiry, and session expiry points
+    constraint: finite totally ordered set including creation, same-time no-op, stale/future-message bounds,
+      evaluation deadline, consent expiry, verification expiry, session expiry, and policy-bounded maximum-jump
+      points
   unresolved_nondeterminism:
   - participant response, withdrawal, and failure timing
   - selected integration profile success, timeout, or partial failure
   - authoritative ordering between withdrawal and disclosure completion
   - policy choice of durations, budget limits, minimum set size, and materially changed dataset
   environment_assumptions:
-  - coordinator state transitions are atomic and durable, but persistence is not implemented here
+  - coordinator state, operation/callback dedup, budget, and terminal transitions are atomic and durable,
+    but persistence is not implemented here
+  - coordinator clock/environment may propose a nondecreasing bounded TimeDomain value; client timestamps
+    cannot advance or roll back it
+  - unused reservation release or expiry is atomic with the opaque authorization ledger and never constitutes
+    a post-result refund
   - selected profile eventually supplies valid or invalid verification status without exposing coordinator
     plaintext outcome
   - transport authenticates sender and protects content, but transport is outside this artifact
-  - authoritative_time does not roll backward
   tla_model_status: not created or model-checked in this issue

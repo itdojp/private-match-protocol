@@ -94,18 +94,25 @@ coordinator access, and description for every variable. The principal groups are
 | Session | `session_id`, `protocol_profile`, `policy_binding`, `intended_audience` | Exact versioned context for every accepted event. |
 | Participants | `participant_binding`, `policy_acceptance` | Party and key identities plus policy acceptance. |
 | Commitments | `commitment`, `commitment_pair_id` | Immutable opaque inputs to one evaluation. |
-| Evaluation | `evaluation_started`, `evaluation_attempt_id`, `evaluation_contribution`, `accepted_evaluation_count` | One accepted attempt per commitment pair. |
-| Budget | `query_budget_state` | Coordinator-authoritative reservation and consumption. |
+| Evaluation | `evaluation_started`, `evaluation_attempt_id`, `evaluation_deadline`, `evaluation_contribution`, `accepted_evaluation_count` | One accepted attempt and an explicit authoritative deadline per commitment pair. |
+| Budget | `query_budget_state` | Coordinator-authoritative reservation, consumption, release, or expiry. |
 | Result | `proposed_result_state`, `accepted_result_state`, `opaque_receipt_ref`, `result_ack` | Party-local proposed/accepted values and shared opaque reference. |
 | Consent | `consent`, `disclosure_profile_ref`, `disclosure_state` | Result-bound extension authorization metadata. |
 | Time | `session_created_at`, `session_expires_at`, `authoritative_time`, `allowed_clock_skew`, `message_stale_threshold`, `verification_material_validity` | Coordinator-authoritative ordering and validity. |
-| Replay | `next_sequence`, `accepted_message_ids`, `accepted_nonces`, `accepted_event_digests`, `normalized_responses` | Ordering, duplicate equality, and prior response. |
+| Replay | party message, coordinator operation, and profile callback registries and responses | Delivery-class-specific ordering, duplicate equality, and prior response. |
 
-`proposed_result_state` records the party-local value bound by each receipt
-acknowledgment. `accepted_result_state` is written only after the proposed values
-and opaque references agree. Both are party-local maps whose members are `NONE`,
-`MATCH`, `NO_MATCH`, `INDETERMINATE`, or `CONFLICT`, and both are prohibited from
-coordinator state and visibility. `CONFLICT` is a fail-closed local marker and
+`proposed_result_state`, `result_ack`, and `accepted_result_state` use
+machine-readable entry-scoped visibility. Party A can read only entry A and
+Party B can read only entry B. Before and after acceptance, neither party is
+granted peer local-result or acknowledgment-binding access. The coordinator
+projection for `result_ack` is exactly `opaque_receipt_ref` and
+`normalized_ack_status`; the other two maps have no coordinator projection.
+The selected integration profile's access is profile-dependent and is not an
+unconditional core grant.
+
+The global specification observer may compare A and B to evaluate
+`INV-RESULT-SYMMETRY`. That mathematical observer is not an implementation
+actor and grants no read access. `CONFLICT` is a fail-closed local marker and
 never an accepted decision result.
 
 The coordinator may store `opaque_receipt_ref`, but it must treat the reference
@@ -150,9 +157,26 @@ contributions and defines the opaque receipt construction. The service operator
 and assurance pipeline are not authorities for protocol result meaning.
 
 Each event in the YAML identifies its initiator, verifier, authoritative state
-owner, visibility, prohibited data, audit fields, idempotency behavior,
-conflicting-duplicate behavior, retry class, and default failure. These are
-abstract event parameters, not Protocol Issue #5 wire-message fields.
+owner, visibility, prohibited data, audit fields, delivery class, required
+envelope, deduplication domain, idempotency behavior, conflicting-duplicate
+behavior, retry class, and default failure. These are abstract event parameters,
+not Protocol Issue #5 wire-message fields.
+
+### Delivery and duplicate classes
+
+| Class | Required identity | Exact duplicate behavior |
+| --- | --- | --- |
+| `party_message` | session context plus sender, sequence, `message_id`, nonce, `issued_at`, and canonical event digest | Return the prior normalized message response; do not repeat state, sequence, budget, release, or audit. |
+| `coordinator_command` | actor-scoped `operation_id`, idempotency key, and canonical operation digest | Return the prior normalized operation response through the operation retry path. |
+| `profile_callback` | profile ID/version/instance, session, attempt, callback ID, idempotency key, and canonical callback digest | Return the prior normalized callback response through the callback retry path. |
+| `timer` | bounded authoritative time and source class | Level-triggered; the same threshold is a no-op and has no message ID or nonce. |
+| `derived_transition` | current state predicate | No external delivery or retry identity. |
+| `local_guidance` | current state | Non-mutating guidance only; no external duplicate identity. |
+
+The party-only `retry_idempotent_message` relation never applies to coordinator
+commands or profile callbacks. Those classes have independent actor-scoped
+registries and no-op retry relations. Reusing an operation or callback ID with a
+different canonical digest fails closed as `REPLAY_CONFLICT`.
 
 ## Transition relation
 
@@ -173,17 +197,17 @@ The major transition families are:
 | Receipt | `acknowledge_opaque_receipt_a`, `acknowledge_opaque_receipt_b` | Record party-local binding and shared opaque reference |
 | Result | `accept_symmetric_result` | `RESULT_ACCEPTED` or fail closed to `ABORTED` on conflict |
 | Consent | `grant_consent_a`, `grant_consent_b` | Enter/remain `CONSENT_PENDING` |
-| Withdrawal | `withdraw_consent_a`, `withdraw_consent_b` | Invalidate authorization and return to `RESULT_ACCEPTED` |
+| Withdrawal | `withdraw_consent_a`, `withdraw_consent_b` | Invalidate authorization, enter `ABORTED`, and require a new session |
 | Extension | `authorize_disclosure_extension` | Extension-only transition to `DISCLOSURE_AUTHORIZED` |
 | Completion | `record_disclosure_completion` | Extension-only completion to `CLOSED` |
-| Terminal | `abort_session`, `expire_session`, `close_session` | Enter `ABORTED`, `EXPIRED`, or `CLOSED` |
-| Duplicate | `retry_idempotent_message` | No-op and return the prior normalized response |
+| Clock | `advance_authoritative_time`, `expire_session` | Advance only within the bounded time domain and atomically terminalize crossed deadlines |
+| Terminal | `abort_session`, `expire_session`, `close_session` | Enter `ABORTED`, `EXPIRED`, or `CLOSED` with explicit budget disposition |
+| Duplicate | party, operation, and profile retry events | No-op and return the delivery-class-specific prior normalized response |
 | New evaluation | `request_new_evaluation_session` | No change to current session; require new authorization and binding |
 
-The YAML contains 35 transitions because participant order, first/final binding,
-normal result acceptance, conflict, timeout, partial failure, and extension
-authorization have different guards and effects, while each party has explicit
-exact-replay and new-session guidance transitions.
+The YAML contains 39 transitions. Participant order, first/final binding,
+result acceptance, conflict, deadline crossing, extension authorization, and
+delivery-class retry paths have distinct guards and atomic effects.
 
 ## Normative invariants
 
@@ -274,13 +298,19 @@ sufficient.
 1. Reservation occurs after the session and policy bindings exist and before
    commitment evaluation.
 2. The first accepted `start_evaluation` atomically changes the reservation from
-   `RESERVED` to `CONSUMED`, sets `evaluation_started`, and binds one attempt ID.
+   `RESERVED` to `CONSUMED`, sets `evaluation_started`, binds one attempt ID, and
+   sets `evaluation_deadline` from the reviewed policy parameter.
 3. Timeout, partial failure, conflict, or `INDETERMINATE` does not automatically
    return budget.
 4. An exact duplicate of the same accepted event does not consume budget again.
-5. A refund requires an explicit versioned policy and auditable transition; none
-   exists in v0.1.
-6. A new commitment pair or session requires new authorization.
+5. Before evaluation starts, `close_session` or `abort_session` atomically moves
+   an unused `RESERVED` authorization to `RELEASED`; `expire_session` moves it to
+   `EXPIRED`. These are reservation dispositions, not post-result refunds.
+6. After evaluation starts, terminalization leaves the state `CONSUMED`. Result,
+   timeout, failure, conflict, and `INDETERMINATE` never refund it.
+7. Release or expiry is assumed atomic with the opaque authorization ledger and
+   emits only a normalized audit category. The terminal session cannot reuse it.
+8. A new commitment pair or session requires new authorization.
 
 This choice prevents failure-driven free probing. It does not establish that a
 particular operational budget, minimum set size, or abuse policy is sufficient.
@@ -314,15 +344,26 @@ Consent may be registered only after result acceptance. Each consent binds to:
 - consent nonce; and
 - consent artifact digest.
 
-A withdrawal accepted before completion invalidates the authorization. A
-completion accepted before a later withdrawal is not retroactively reversed.
-The coordinator's monotonic sequence and authoritative event order decide the
-race. No actual identity or private-data payload is modeled in core.
+v0.1 chooses **new session required** after consent expiry or withdrawal. Each
+party consent slot is single-use within the session. An accepted withdrawal
+before completion atomically invalidates authorization, enters `ABORTED`, and
+records `CONSENT_WITHDRAWN`. Crossing any active consent expiry similarly enters
+`ABORTED` with `CONSENT_EXPIRED`. Old and new consent generations cannot be
+mixed because no same-session replacement transition exists.
+
+A completion accepted before a later withdrawal remains historical; `CLOSED`
+does not accept that mutation and the past disclosure is not reversed. A later
+authorization requires a new session, result, budget, and bilateral consent.
+The coordinator's event order decides the completion/withdrawal race. No actual
+identity or private-data payload is modeled in core.
 
 ## Clock and expiry
 
-The coordinator clock is authoritative for transitions. A client `issued_at`
-value is auxiliary and cannot extend validity.
+The coordinator clock is authoritative for transitions. The explicit
+`advance_authoritative_time` timer relation accepts a bounded
+`new_authoritative_time` and source class. It never decreases time. A client
+`issued_at` value is auxiliary and cannot advance, roll back, or extend
+validity.
 
 The following are typed, bounded policy parameters rather than fixed business
 values:
@@ -334,9 +375,21 @@ values:
 - verification-material interval: closed-open validity range; and
 - evaluation timeout: bounded per selected profile and policy.
 
-`timeout` terminates the current evaluation as `ABORTED`; `expiry` terminates the
-whole session as `EXPIRED`. `authoritative_time` never decreases. A rollback or
-ambiguous time source fails closed and is audited.
+For party messages, validity is:
+
+```text
+authoritative_time - message_stale_threshold
+  <= issued_at
+  <= authoritative_time + allowed_clock_skew
+```
+
+`start_evaluation` sets `evaluation_deadline`. A time proposal crossing that
+deadline enters `ABORTED` with `EVALUATION_TIMEOUT`. A proposal crossing session
+expiry atomically updates time, enters `EXPIRED`, invalidates disclosure
+authorization, records `SESSION_EXPIRED`, and applies the budget disposition.
+The live-time relation is disabled at a crossed session, evaluation, or consent
+deadline, so no active post-deadline window exists. A same-time proposal is a
+no-op; rollback, out-of-domain time, and policy-excessive jumps reject.
 
 ## Ordering and retries
 
@@ -344,8 +397,8 @@ Each party has a monotonic `next_sequence`.
 
 | Input condition | Result |
 | --- | --- |
-| Expected sequence, new ID, new nonce | Evaluate guards; accepted event advances the sender sequence. |
-| Exact same ID, nonce, and canonical digest | No-op; return prior normalized response. |
+| Expected sequence, new ID, new nonce, valid `issued_at` | Evaluate guards; accepted event advances the sender sequence. |
+| Exact same ID, nonce, `issued_at`, and canonical digest | No-op; return prior normalized message response. |
 | Same ID or nonce, different digest | `REPLAY_CONFLICT`; no partial state change. |
 | Lower sequence with unknown message | `REPLAY` or `STALE_MESSAGE`; no state change. |
 | Future sequence gap | Retryable `OUT_OF_ORDER`; no buffering or state change. |
@@ -353,10 +406,30 @@ Each party has a monotonic `next_sequence`.
 | Prior policy message | `POLICY_VERSION_MISMATCH`. |
 | Prior participant-set message | `PARTICIPANT_MISMATCH`. |
 
-The machine distinguishes idempotent resend, transient new-message retry,
-continuation of the one bound evaluation, a retry requiring a new attempt ID,
-new-session retry, and non-retryable terminal failure. v0.1 defines no same-pair
-new-attempt transition.
+Coordinator commands use an independent `(actor_id, operation_id)` domain and
+profile callbacks use a profile-instance/session/attempt domain. Exact retries
+are available even after terminalization and write no state, budget, release,
+disclosure, or audit. Timers are level-triggered and derived/local relations
+have no external retry semantics.
+
+The machine distinguishes party resend, coordinator operation resend, profile
+callback resend, timer re-evaluation, transient new-message retry, continuation
+of the one bound evaluation, new-session retry, and non-retryable terminal
+failure. v0.1 defines no same-pair new-attempt transition.
+
+## Generic abort
+
+`abort_session` is a coordinator command, not a participant-controlled failure
+selector. Its `normalized_failure_parameter.failure_code` must exist in the
+declared taxonomy and have `session-abort` disposition. `G-ABORT-REASON` reads
+that event parameter rather than the prior `terminal_reason`.
+
+`E-ABORT` atomically sets `phase = ABORTED`, copies the supplied code to
+`terminal_reason`, invalidates disclosure authorization, applies the unused or
+consumed budget rule, and records the operation envelope once. An undeclared or
+message-only code is rejected. Party-initiated abort requests are deferred to
+the later message-schema work; this draft does not let a party select an
+internal coordinator failure category.
 
 ## Failure taxonomy
 
@@ -372,7 +445,7 @@ normalized category, and restricted detail visibility.
 | Budget | `QUERY_BUDGET_MISSING`, `QUERY_BUDGET_EXHAUSTED` | No evaluation without coordinator authorization. |
 | Verification | `VERIFICATION_MATERIAL_MISSING`, `VERIFICATION_MATERIAL_EXPIRED` | Missing or expired material fails closed. |
 | Evaluation | `EVALUATION_TIMEOUT`, `PARTIAL_PARTY_FAILURE`, `RESULT_CONFLICT` | Abort current session; consumed budget is not automatically returned. |
-| Consent | `CONSENT_MISSING`, `CONSENT_EXPIRED`, `CONSENT_WITHDRAWN` | No disclosure authorization. |
+| Consent | `CONSENT_MISSING`, `CONSENT_EXPIRED`, `CONSENT_WITHDRAWN` | Expiry or withdrawal aborts same-session authorization; a new session is required. |
 | Disclosure | `DISCLOSURE_PROFILE_REQUIRED`, `DISCLOSURE_SCOPE_MISMATCH` | Core remains fail closed. |
 | Session | `SESSION_EXPIRED`, `SESSION_CLOSED`, `SESSION_ABORTED` | No mutating operation. |
 | Unknown | `UNKNOWN_STATE`, `UNKNOWN_EVENT`, `UNKNOWN_VERSION`, `UNKNOWN_FIELD` | Fail closed; do not infer new semantics. |
@@ -412,9 +485,13 @@ The machine-readable artifact supplies:
 - unresolved nondeterminism; and
 - environment assumptions.
 
-Candidate fairness assumptions include weak fairness for authoritative expiry and
-enabled contribution processing. No fairness assumption forces a party to
-respond or consent.
+Candidate fairness assumptions include weak fairness for the authoritative timer
+while a later bounded `TimeDomain` point exists, atomic expiry when the threshold
+is reached, and enabled contribution processing. `TimeDomain` includes same-time
+no-op, stale/future message bounds, evaluation deadline, consent and verification
+expiry, session expiry, and maximum-jump points. The environment supplies only
+nondecreasing policy-bounded clock proposals. No fairness assumption forces a
+party to respond or consent.
 
 The later TLA+ work must not invent different result, receipt, replay, budget,
 consent, or disclosure semantics. Model-checking success is not claimed here.
@@ -425,6 +502,13 @@ This artifact is draft `private-match-core/v0.1`. It makes no compatibility
 commitment. Weakening result symmetry, minimum disclosure, coordinator outcome
 confidentiality, replay, query budget, consent, expiry, or unknown-field handling
 is a breaking protocol change under `GOVERNANCE.md`.
+
+The Schema remains `0.1` for this review hardening because the artifact is still
+Draft, has not been merged or published as a compatibility target, and has no
+external stable reader commitment. The added required fields make the existing
+unpublished draft unambiguous; they do not silently change a stable protocol.
+A later compatibility commitment or accepted external implementation would
+require an explicit version decision.
 
 Schema and unit-test success establish only structural and semantic consistency
 of this draft. They do not establish cryptographic security, endpoint security,

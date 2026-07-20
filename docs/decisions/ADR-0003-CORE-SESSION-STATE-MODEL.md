@@ -35,16 +35,23 @@ The principal choices are:
    one status enum carrying all protocol facts.
 2. Keep actual disclosure out of core. Core defines only result-bound consent and
    fail-closed guards for a separately reviewed versioned extension.
-3. Keep party decision values local and give the coordinator only a
-   profile-defined opaque receipt reference and normalized lifecycle.
+3. Keep each party decision and acknowledgment binding entry-scoped. The global
+   invariant observer may compare A and B, but that observer is not an
+   implementation actor. Give the coordinator only an opaque receipt reference,
+   normalized acknowledgment status, and normalized lifecycle.
 4. Reserve budget before evaluation and atomically consume it at the first
-   accepted `start_evaluation`.
-5. Treat only identical message ID, nonce, and canonical event digest as an
-   idempotent duplicate.
+   accepted `start_evaluation`; release or expire an unused reservation on
+   pre-evaluation terminalization and never refund after evaluation starts.
+5. Use distinct delivery and duplicate identities for party messages,
+   coordinator commands, profile callbacks, timers, derived transitions, and
+   local guidance.
 6. Order withdrawal and disclosure completion by the coordinator's authoritative
-   monotonic event order.
+   monotonic event order and require a new session after consent withdrawal or
+   expiry.
 7. Require a new authorized session for another evaluation after
    `INDETERMINATE`, timeout, failure, or commitment-pair change in v0.1.
+8. Model authoritative time with an explicit bounded monotonic environment/timer
+   relation, an evaluation deadline, and atomic deadline crossing.
 
 ## Options considered
 
@@ -90,6 +97,12 @@ profile must provide a high-entropy or confidentiality property and binding to
 the full session context. This is a requirement, not evidence that outcome
 confidentiality has been achieved.
 
+The selected state representation is entry-scoped: A cannot read B's local
+proposal or acknowledgment and B cannot read A's. The selected integration
+profile's access remains profile-dependent. Formal equality testing is a global
+specification predicate, not permission for an implementation actor to read the
+peer entry.
+
 ### Budget consumption at evaluation start versus result acceptance
 
 **Option A:** Consume budget only when a result is accepted.
@@ -99,20 +112,39 @@ accepted `start_evaluation`.
 
 Option B was selected. Option A permits failures, timeouts, or deliberately
 indeterminate executions to become free probes. Exact duplicate delivery does
-not consume twice. v0.1 provides no automatic refund; a refund would need an
-explicit versioned policy and audit transition.
+not consume twice. If the session closes or aborts before evaluation starts, an
+unused reservation becomes `RELEASED`; on pre-evaluation session expiry it
+becomes `EXPIRED`. After start it remains `CONSUMED`. Release is assumed atomic
+with the opaque authorization ledger and is not a post-result refund.
 
-### Duplicate handling
+### Delivery-class duplicate handling
 
-**Option A:** Treat a repeated message ID or nonce as idempotent regardless of
-payload.
+**Option A:** Apply party-message ID, nonce, and response prose to every event.
 
-**Option B:** Require the same message ID, nonce, and canonical event digest.
+**Option B:** Give each delivery class a realizable identity and retry path.
 
-Option B was selected. An exact duplicate is a no-op returning the prior bounded
-response. Reuse of an ID or nonce with a different digest is
-`REPLAY_CONFLICT`. Future sequence gaps are retryable `OUT_OF_ORDER` and are not
-buffered by this abstract machine.
+Option B was selected. Party messages use sender sequence, message ID, nonce,
+`issued_at`, and canonical event digest. Coordinator commands use an actor-scoped
+operation envelope. Profile callbacks use profile-instance/session/attempt
+scope. Timers are level-triggered without message IDs, and derived/local
+relations have no external retry. An exact envelope duplicate returns its
+class-specific prior response without another state, budget, release,
+disclosure, or audit update. A reused identity with a different canonical digest
+is `REPLAY_CONFLICT`.
+
+### Authoritative time progression
+
+**Option A:** Let future formalization or implementation attach an implicit clock
+update to arbitrary transitions.
+
+**Option B:** Add bounded `advance_authoritative_time` and expiry timer relations,
+an explicit `evaluation_deadline`, and an `issued_at` party-message check.
+
+Option B was selected. The live relation can update only `authoritative_time` and
+stays below all active deadlines. Session expiry, evaluation timeout, and active
+consent expiry are terminalized atomically with the time update. Same-time
+evaluation is a no-op; rollback and policy-excessive jumps reject. This removes
+the need to invent `Tick` semantics during later TLA+ translation.
 
 ### Consent withdrawal ordering
 
@@ -122,9 +154,22 @@ completion.
 **Option B:** Use the coordinator's authoritative monotonic accepted-event order.
 
 Option B was selected. Client time is auxiliary and cannot be the security
-authority. Withdrawal accepted before completion invalidates authorization.
-Withdrawal accepted after completion does not retroactively reverse a past
-disclosure.
+authority. Withdrawal accepted before completion invalidates authorization;
+completion accepted first is not retroactively reversed.
+
+### Consent expiry and replacement
+
+**Option A:** Permit same-session replacement after expiry or withdrawal while
+retaining prior consent history.
+
+**Option B:** Make expiry or withdrawal fail closed and require a new session.
+
+Option B was selected for draft v0.1. It avoids mixed consent generations,
+reauthorization races, and accidental reuse of an old receipt/scope/audience
+binding. Each party consent slot is single-use. Expiry or withdrawal enters
+`ABORTED`; a later authorization requires a new session, result, budget, and
+bilateral consent. `CLOSED` does not accept withdrawal and a past completed
+disclosure is not reversed.
 
 ### `INDETERMINATE` retry semantics
 
@@ -139,8 +184,11 @@ versioned, reviewed transition that preserves query-budget and leakage controls.
 
 ## Security and privacy assumptions
 
-- Coordinator state transitions, sequence, replay, budget, and expiry updates are
-  assumed atomic; no persistence implementation is supplied here.
+- Coordinator state transitions, delivery-class deduplication, budget,
+  reservation release/expiry, and terminal updates are assumed atomic; no
+  persistence implementation is supplied here.
+- The coordinator clock/environment supplies only nondecreasing values in a
+  finite policy-bounded time domain. Client timestamps are not clock authority.
 - The selected integration profile is assumed to verify its own contribution and
   receipt rules; no profile or PET is selected here.
 - Party clients protect their own local inputs, result values, and consent
@@ -174,6 +222,11 @@ Changing accepted transitions, party result semantics, coordinator outcome
 visibility, replay domain, budget consumption, consent binding, terminal
 behavior, or unknown-field/version handling is a breaking change under
 `GOVERNANCE.md` and requires explicit review and versioning.
+
+This review keeps Schema version `0.1`. The artifact remains Draft, has not been
+merged as a compatibility target, and has no stable external-reader commitment.
+These required fields harden the unpublished draft rather than revising a stable
+profile. A future compatibility commitment requires a separate version decision.
 
 ## Deferred decisions
 

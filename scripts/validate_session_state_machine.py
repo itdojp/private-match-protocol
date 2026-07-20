@@ -73,6 +73,9 @@ REQUIRED_EVENTS = {
     "close_session",
     "retry_idempotent_message",
     "request_new_evaluation_session",
+    "advance_authoritative_time",
+    "retry_idempotent_operation",
+    "retry_idempotent_profile_callback",
 }
 REQUIRED_STATE_VARIABLES = {
     "phase",
@@ -85,6 +88,7 @@ REQUIRED_STATE_VARIABLES = {
     "commitment_pair_id",
     "evaluation_started",
     "evaluation_attempt_id",
+    "evaluation_deadline",
     "query_budget_state",
     "proposed_result_state",
     "accepted_result_state",
@@ -99,6 +103,12 @@ REQUIRED_STATE_VARIABLES = {
     "next_sequence",
     "accepted_message_ids",
     "accepted_nonces",
+    "accepted_operation_ids",
+    "accepted_operation_digests",
+    "normalized_operation_responses",
+    "accepted_profile_callback_ids",
+    "accepted_profile_callback_digests",
+    "normalized_profile_callback_responses",
     "terminal_reason",
 }
 REQUIRED_INVARIANTS = {
@@ -213,6 +223,38 @@ REQUIRED_CONSENT_BINDINGS = {
     "expires_at",
     "consent nonce",
     "consent artifact digest",
+}
+
+DELIVERY_CLASSES = {
+    "party_message",
+    "coordinator_command",
+    "profile_callback",
+    "timer",
+    "derived_transition",
+    "local_guidance",
+}
+DELIVERY_ENVELOPES = {
+    "party_message": "replay_envelope",
+    "coordinator_command": "operation_envelope",
+    "profile_callback": "profile_callback_envelope",
+    "timer": "time_advance_parameter",
+    "derived_transition": "none",
+    "local_guidance": "none",
+}
+RESULT_LOCAL_VARIABLES = {
+    "proposed_result_state",
+    "accepted_result_state",
+    "result_ack",
+}
+SESSION_ABORT_CODES = {
+    "REPLAY_CONFLICT",
+    "COMMITMENT_MUTATION",
+    "EVALUATION_TIMEOUT",
+    "PARTIAL_PARTY_FAILURE",
+    "RESULT_CONFLICT",
+    "CONSENT_EXPIRED",
+    "CONSENT_WITHDRAWN",
+    "UNKNOWN_STATE",
 }
 
 
@@ -411,6 +453,172 @@ def disclosure_authorization_guard_failures(
     return sorted(set(failures))
 
 
+def terminal_budget_disposition(
+    query_budget_state: str, evaluation_started: bool, terminal_event: str
+) -> str:
+    """Return the v0.1 terminal disposition for an opaque reservation.
+
+    This models only the normalized state. The authorization ledger is an atomic
+    environment assumption and no budget/refund implementation is supplied here.
+    """
+
+    if query_budget_state == "RESERVED" and not evaluation_started:
+        return "EXPIRED" if terminal_event == "expire" else "RELEASED"
+    return query_budget_state
+
+
+def message_time_failures(
+    authoritative_time: int,
+    issued_at: int,
+    allowed_clock_skew: int,
+    message_stale_threshold: int,
+) -> list[str]:
+    """Evaluate the bounded party-message time relation."""
+
+    if any(
+        not isinstance(value, int) or value < 0
+        for value in (
+            authoritative_time,
+            issued_at,
+            allowed_clock_skew,
+            message_stale_threshold,
+        )
+    ):
+        return ["STALE_MESSAGE"]
+    if issued_at < authoritative_time - message_stale_threshold:
+        return ["STALE_MESSAGE"]
+    if issued_at > authoritative_time + allowed_clock_skew:
+        return ["STALE_MESSAGE"]
+    return []
+
+
+def authoritative_time_transition(
+    state: dict[str, Any], new_authoritative_time: int, maximum_jump: int
+) -> tuple[dict[str, Any], list[str]]:
+    """Apply the abstract bounded coordinator-clock relation to a synthetic state."""
+
+    current = state.get("authoritative_time")
+    if (
+        not isinstance(current, int)
+        or not isinstance(new_authoritative_time, int)
+        or not isinstance(maximum_jump, int)
+        or maximum_jump < 0
+    ):
+        return dict(state), ["TIME_DOMAIN"]
+    if state.get("phase") in TERMINAL_PHASES:
+        return dict(state), ["TERMINAL_STATE"]
+    if new_authoritative_time < current:
+        return dict(state), ["TIME_ROLLBACK"]
+    if new_authoritative_time - current > maximum_jump:
+        return dict(state), ["TIME_JUMP_EXCEEDED"]
+
+    updated = dict(state)
+    updated["authoritative_time"] = new_authoritative_time
+    session_expiry = state.get("session_expires_at")
+    if isinstance(session_expiry, int) and new_authoritative_time >= session_expiry:
+        updated["phase"] = "EXPIRED"
+        updated["terminal_reason"] = "SESSION_EXPIRED"
+        updated["disclosure_state"] = "NONE"
+        updated["query_budget_state"] = terminal_budget_disposition(
+            str(state.get("query_budget_state")),
+            bool(state.get("evaluation_started")),
+            "expire",
+        )
+        return updated, []
+
+    deadline = state.get("evaluation_deadline")
+    if (
+        state.get("phase") == "EVALUATING"
+        and isinstance(deadline, int)
+        and new_authoritative_time >= deadline
+    ):
+        updated["phase"] = "ABORTED"
+        updated["terminal_reason"] = "EVALUATION_TIMEOUT"
+        updated["disclosure_state"] = "NONE"
+        return updated, []
+
+    if state.get("phase") in {"CONSENT_PENDING", "DISCLOSURE_AUTHORIZED"}:
+        consents = state.get("consent", {})
+        expiries = (
+            [
+                consent.get("expires_at")
+                for consent in consents.values()
+                if isinstance(consent, dict) and consent.get("status") == "valid"
+            ]
+            if isinstance(consents, dict)
+            else []
+        )
+        if any(
+            isinstance(expiry, int) and new_authoritative_time >= expiry
+            for expiry in expiries
+        ):
+            updated["phase"] = "ABORTED"
+            updated["terminal_reason"] = "CONSENT_EXPIRED"
+            updated["disclosure_state"] = "NONE"
+    return updated, []
+
+
+def duplicate_delivery_outcome(
+    registry: dict[tuple[str, str, str], str],
+    domain: str,
+    identifier: str,
+    idempotency_key: str,
+    canonical_digest_value: str,
+) -> str:
+    """Classify a scoped operation or callback delivery without mutating state."""
+
+    key = (domain, identifier, idempotency_key)
+    prior = registry.get(key)
+    if prior is None:
+        return "new"
+    if prior == canonical_digest_value:
+        return "exact-duplicate"
+    return "REPLAY_CONFLICT"
+
+
+def generic_abort_guard_failures(
+    model: dict[str, Any], actor: str, failure_code: str
+) -> list[str]:
+    """Validate the supplied generic-abort parameter against the taxonomy."""
+
+    failures: list[str] = []
+    if actor != "coordinator":
+        failures.append("ABORT_AUTHORITY")
+    taxonomy = {
+        item.get("code"): item
+        for item in model.get("failure_taxonomy", [])
+        if isinstance(item, dict)
+    }
+    failure = taxonomy.get(failure_code)
+    if failure is None:
+        failures.append("UNDECLARED_FAILURE")
+    elif failure.get("disposition") != "session-abort":
+        failures.append("NON_ABORT_DISPOSITION")
+    return sorted(failures)
+
+
+def apply_generic_abort(
+    model: dict[str, Any], state: dict[str, Any], actor: str, failure_code: str
+) -> tuple[dict[str, Any], list[str]]:
+    """Apply the parameter-bound generic abort to a synthetic state atomically."""
+
+    failures = generic_abort_guard_failures(model, actor, failure_code)
+    if state.get("phase") in TERMINAL_PHASES:
+        failures = sorted(set(failures + ["TERMINAL_STATE"]))
+    if failures:
+        return dict(state), failures
+    updated = dict(state)
+    updated["phase"] = "ABORTED"
+    updated["terminal_reason"] = failure_code
+    updated["disclosure_state"] = "NONE"
+    updated["query_budget_state"] = terminal_budget_disposition(
+        str(state.get("query_budget_state")),
+        bool(state.get("evaluation_started")),
+        "abort",
+    )
+    return updated, []
+
+
 def schema_findings(model: dict[str, Any], schema: dict[str, Any]) -> list[Finding]:
     findings: list[Finding] = []
     try:
@@ -603,6 +811,19 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                                 f"undefined state variable {variable}",
                             )
                         )
+                event_parameters_for_transition = set(
+                    event_definition.get("parameters", [])
+                )
+                for parameter_read in item.get("parameter_reads", []):
+                    parameter = str(parameter_read).split(".", 1)[0]
+                    if parameter not in event_parameters_for_transition:
+                        findings.append(
+                            _finding(
+                                "reference",
+                                f"{path}.{kind}.{item_index}.parameter_reads",
+                                f"event does not declare parameter {parameter}",
+                            )
+                        )
 
         for from_phase in transition.get("from_phase", []):
             if from_phase not in TERMINAL_PHASES:
@@ -706,27 +927,227 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                     "transition and event duplicate semantics differ",
                 )
             )
+    parameter_catalog = _index(event_parameters)
+    replay_type = str(parameter_catalog.get("replay_envelope", {}).get("type", ""))
+    if "issued_at" not in replay_type:
+        findings.append(
+            _finding(
+                "message-time",
+                "event_parameter_catalog.replay_envelope",
+                "party replay envelope must carry issued_at for stale/future checks",
+            )
+        )
+
     for index, event in enumerate(events):
-        if "prior normalized response" not in event.get("idempotency_behavior", ""):
+        path = f"events.{index}"
+        delivery_class = event.get("delivery_class")
+        if delivery_class not in DELIVERY_CLASSES:
             findings.append(
                 _finding(
-                    "idempotency",
-                    f"events.{index}.idempotency_behavior",
-                    "exact duplicate must return the prior normalized response",
+                    "delivery-class",
+                    f"{path}.delivery_class",
+                    "event has an unknown delivery class",
                 )
             )
-        duplicate = event.get("duplicate_behavior", "")
-        if (
-            "REPLAY_CONFLICT" not in duplicate
-            or "canonical event digest" not in duplicate
-        ):
+            continue
+        expected_envelope = DELIVERY_ENVELOPES[delivery_class]
+        if event.get("required_envelope") != expected_envelope:
             findings.append(
                 _finding(
-                    "idempotency",
-                    f"events.{index}.duplicate_behavior",
-                    "conflicting ID or nonce must compare canonical digest and reject REPLAY_CONFLICT",
+                    "delivery-class",
+                    f"{path}.required_envelope",
+                    f"{delivery_class} requires {expected_envelope}",
                 )
             )
+
+        parameters = set(event.get("parameters", []))
+        idempotency = str(event.get("idempotency_behavior", ""))
+        duplicate = str(event.get("duplicate_behavior", ""))
+        if delivery_class == "party_message":
+            if not {"session_context", "replay_envelope"}.issubset(parameters):
+                findings.append(
+                    _finding(
+                        "delivery-class",
+                        f"{path}.parameters",
+                        "party_message requires session_context and replay_envelope",
+                    )
+                )
+            if not set(event.get("initiator", [])).issubset(
+                {"party_a_client", "party_b_client"}
+            ):
+                findings.append(
+                    _finding(
+                        "delivery-class",
+                        f"{path}.initiator",
+                        "party_message initiator must be a bound party",
+                    )
+                )
+            if (
+                "prior normalized message response" not in idempotency
+                or "canonical event digest" not in duplicate
+                or "REPLAY_CONFLICT" not in duplicate
+            ):
+                findings.append(
+                    _finding(
+                        "idempotency",
+                        path,
+                        "party_message must use replay-envelope exact/conflicting duplicate semantics",
+                    )
+                )
+        elif delivery_class == "coordinator_command":
+            if not {"session_context", "operation_envelope"}.issubset(parameters):
+                findings.append(
+                    _finding(
+                        "delivery-class",
+                        f"{path}.parameters",
+                        "coordinator_command requires session_context and operation_envelope",
+                    )
+                )
+            if event.get("initiator") != ["coordinator"]:
+                findings.append(
+                    _finding(
+                        "delivery-class",
+                        f"{path}.initiator",
+                        "coordinator_command is coordinator-initiated only",
+                    )
+                )
+            if (
+                "prior normalized operation response" not in idempotency
+                or "canonical operation digest" not in duplicate
+                or "REPLAY_CONFLICT" not in duplicate
+            ):
+                findings.append(
+                    _finding(
+                        "idempotency",
+                        path,
+                        "coordinator_command must use actor-scoped operation duplicate semantics",
+                    )
+                )
+        elif delivery_class == "profile_callback":
+            if not {"session_context", "profile_callback_envelope"}.issubset(
+                parameters
+            ):
+                findings.append(
+                    _finding(
+                        "delivery-class",
+                        f"{path}.parameters",
+                        "profile_callback requires session_context and profile_callback_envelope",
+                    )
+                )
+            if (
+                "prior normalized callback response" not in idempotency
+                or "canonical callback digest" not in duplicate
+                or "REPLAY_CONFLICT" not in duplicate
+            ):
+                findings.append(
+                    _finding(
+                        "idempotency",
+                        path,
+                        "profile_callback must use profile/session/attempt-scoped duplicate semantics",
+                    )
+                )
+        elif delivery_class == "timer":
+            if parameters != {"time_advance_parameter"}:
+                findings.append(
+                    _finding(
+                        "delivery-class",
+                        f"{path}.parameters",
+                        "timer accepts only time_advance_parameter",
+                    )
+                )
+            timer_text = f"{idempotency} {duplicate}".lower()
+            if (
+                any(
+                    token in timer_text
+                    for token in (
+                        "message_id",
+                        "nonce",
+                        "prior normalized message response",
+                    )
+                )
+                or "threshold" not in timer_text
+            ):
+                findings.append(
+                    _finding(
+                        "delivery-class",
+                        path,
+                        "timer must be threshold-triggered without message replay prose",
+                    )
+                )
+        else:
+            if expected_envelope != "none" or any(
+                envelope in parameters
+                for envelope in (
+                    "replay_envelope",
+                    "operation_envelope",
+                    "profile_callback_envelope",
+                    "time_advance_parameter",
+                )
+            ):
+                findings.append(
+                    _finding(
+                        "delivery-class",
+                        path,
+                        f"{delivery_class} must not require an external envelope",
+                    )
+                )
+            if (
+                "external delivery" not in idempotency
+                or "not externally" not in duplicate
+            ):
+                findings.append(
+                    _finding(
+                        "idempotency",
+                        path,
+                        f"{delivery_class} must explicitly reject external duplicate/retry semantics",
+                    )
+                )
+
+    for transition in transitions:
+        event = event_index.get(transition.get("event"), {})
+        delivery_class = event.get("delivery_class")
+        guard_ids = _transition_guard_ids(transition)
+        effect_ids = {
+            item.get("id")
+            for item in transition.get("effects", [])
+            if isinstance(item, dict)
+        }
+        if transition.get("mutating") and delivery_class == "party_message":
+            if (
+                not {"G-MESSAGE-TIME-VALID", "G-ORDER-AND-REPLAY"}.issubset(guard_ids)
+                or "E-ACCEPT-MESSAGE" not in effect_ids
+            ):
+                findings.append(
+                    _finding(
+                        "message-time",
+                        transition.get("id", "transition"),
+                        "mutating party_message must validate time/order and atomically record its replay envelope",
+                    )
+                )
+        if transition.get("mutating") and delivery_class == "coordinator_command":
+            if (
+                "G-OPERATION-DEDUP" not in guard_ids
+                or "E-ACCEPT-OPERATION" not in effect_ids
+            ):
+                findings.append(
+                    _finding(
+                        "delivery-class",
+                        transition.get("id", "transition"),
+                        "mutating coordinator command must atomically deduplicate and record its operation envelope",
+                    )
+                )
+        if transition.get("mutating") and delivery_class == "profile_callback":
+            if (
+                "G-PROFILE-CALLBACK-DEDUP" not in guard_ids
+                or "E-ACCEPT-PROFILE-CALLBACK" not in effect_ids
+            ):
+                findings.append(
+                    _finding(
+                        "delivery-class",
+                        transition.get("id", "transition"),
+                        "mutating profile callback must atomically deduplicate and record its callback envelope",
+                    )
+                )
 
     result_values = model.get("artifact", {}).get("decision_output")
     if result_values != ["MATCH", "NO_MATCH", "INDETERMINATE"]:
@@ -811,6 +1232,122 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                     "coordinator must not own or see party-local plaintext results",
                 )
             )
+    expected_entry_visibility = {
+        "A": ["party_a_client"],
+        "B": ["party_b_client"],
+    }
+    for result_variable in sorted(RESULT_LOCAL_VARIABLES):
+        variable = variable_index.get(result_variable, {})
+        if variable.get("visibility") != []:
+            findings.append(
+                _finding(
+                    "result-visibility",
+                    f"state_variables.{result_variable}.visibility",
+                    "party-indexed result state must not grant whole-map actor visibility",
+                )
+            )
+        if variable.get("entry_visibility") != expected_entry_visibility:
+            findings.append(
+                _finding(
+                    "result-visibility",
+                    f"state_variables.{result_variable}.entry_visibility",
+                    "A and B may read only their own entry",
+                )
+            )
+        profile_visibility = variable.get("profile_visibility", {})
+        if profile_visibility.get("status") != "profile-dependent":
+            findings.append(
+                _finding(
+                    "result-visibility",
+                    f"state_variables.{result_variable}.profile_visibility",
+                    "selected integration profile access must remain profile-dependent",
+                )
+            )
+        observer = variable.get("global_invariant_observer", {})
+        if observer != {
+            "may_compare_entries": True,
+            "implementation_actor_access": False,
+        }:
+            findings.append(
+                _finding(
+                    "result-visibility",
+                    f"state_variables.{result_variable}.global_invariant_observer",
+                    "formal comparison must not grant implementation actor access",
+                )
+            )
+        projection = variable.get("coordinator_projection", {})
+        permitted = set(projection.get("permitted_fields", []))
+        prohibited = set(projection.get("prohibited_fields", []))
+        expected_permitted = (
+            {"opaque_receipt_ref", "normalized_ack_status"}
+            if result_variable == "result_ack"
+            else set()
+        )
+        if permitted != expected_permitted or not {
+            "local_result",
+            "local_result_binding",
+        }.issubset(prohibited):
+            findings.append(
+                _finding(
+                    "result-visibility",
+                    f"state_variables.{result_variable}.coordinator_projection",
+                    "coordinator projection must exclude local result values and bindings",
+                )
+            )
+
+    expected_event_visibility = {
+        "acknowledge_opaque_receipt_a": "party_a_client",
+        "acknowledge_opaque_receipt_b": "party_b_client",
+    }
+    for event_id, own_actor in expected_event_visibility.items():
+        event = event_index.get(event_id, {})
+        actors = {item.get("actor") for item in event.get("visibility", [])}
+        peer_actor = (
+            "party_b_client" if own_actor == "party_a_client" else "party_a_client"
+        )
+        own_data = next(
+            (
+                item.get("data", [])
+                for item in event.get("visibility", [])
+                if item.get("actor") == own_actor
+            ),
+            [],
+        )
+        coordinator_data = next(
+            (
+                item.get("data", [])
+                for item in event.get("visibility", [])
+                if item.get("actor") == "coordinator"
+            ),
+            [],
+        )
+        if peer_actor in actors or not any("own" in value for value in own_data):
+            findings.append(
+                _finding(
+                    "result-visibility",
+                    f"events.{event_id}.visibility",
+                    "acknowledgment event must expose only the sender's own result entry",
+                )
+            )
+        if set(coordinator_data) != {"opaque_receipt_ref", "normalized_ack_status"}:
+            findings.append(
+                _finding(
+                    "result-visibility",
+                    f"events.{event_id}.visibility",
+                    "coordinator event projection is limited to opaque receipt and normalized ack status",
+                )
+            )
+        for transition in transitions:
+            if transition.get("event") == event_id and transition.get(
+                "visibility"
+            ) != event.get("visibility"):
+                findings.append(
+                    _finding(
+                        "result-visibility",
+                        transition.get("id", "transition"),
+                        "event and transition result visibility must match",
+                    )
+                )
     for collection_name, items in (("events", events), ("transitions", transitions)):
         for index, item in enumerate(items):
             for visible in item.get("visibility", []):
@@ -830,6 +1367,17 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                             "coordinator-plaintext-outcome",
                             f"{collection_name}.{index}.visibility",
                             "coordinator visibility includes a plaintext outcome",
+                        )
+                    )
+                if visible.get("actor") == "coordinator" and any(
+                    token in data
+                    for token in ("local_result", "local-result", "peer result")
+                ):
+                    findings.append(
+                        _finding(
+                            "result-visibility",
+                            f"{collection_name}.{index}.visibility",
+                            "coordinator visibility includes a local result binding",
                         )
                     )
 
@@ -1099,6 +1647,247 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                 "coordinator reservation and atomic first-start consumption are required",
             )
         )
+    required_budget_semantics = {
+        "unused_reservation_on_close": "RELEASED",
+        "unused_reservation_on_abort": "RELEASED",
+        "unused_reservation_on_expiry": "EXPIRED",
+        "post_start_terminal_disposition": "CONSUMED",
+        "authorization_ledger_assumption": "atomic",
+        "released_reservation_reuse": "forbidden",
+    }
+    for field, token in required_budget_semantics.items():
+        if token not in str(budget.get(field, "")):
+            findings.append(
+                _finding(
+                    "query-budget",
+                    f"query_budget_semantics.{field}",
+                    f"must define the reviewed terminal reservation rule containing {token}",
+                )
+            )
+    budget_type = str(variable_index.get("query_budget_state", {}).get("type", ""))
+    if not {"RELEASED", "EXPIRED"}.issubset(
+        set(budget_type.replace(">", "").split(","))
+    ):
+        findings.append(
+            _finding(
+                "query-budget",
+                "state_variables.query_budget_state.type",
+                "budget state must distinguish RELEASED and EXPIRED reservations",
+            )
+        )
+    for transition_id, expected in (
+        ("TR-CLOSE", "RELEASED"),
+        ("TR-ABORT", "RELEASED"),
+        ("TR-ADVANCE-TIME-EXPIRE", "EXPIRED"),
+    ):
+        transition = transition_index.get(transition_id, {})
+        effect_text = " ".join(
+            argument
+            for item in transition.get("effects", [])
+            for argument in item.get("arguments", [])
+        )
+        if (
+            "query_budget_state" not in _transition_writes(transition)
+            or expected not in effect_text
+            or "CONSUMED remains CONSUMED" not in effect_text
+        ):
+            findings.append(
+                _finding(
+                    "query-budget",
+                    transition_id,
+                    "terminal transition must atomically dispose unused reservation without post-start refund",
+                )
+            )
+
+    # Explicit authoritative-time semantics make expiry and deadline behavior a
+    # literal next-state relation rather than a future TLA+ invention.
+    required_time_transitions = {
+        "TR-ADVANCE-TIME-NOOP",
+        "TR-ADVANCE-TIME-LIVE",
+        "TR-EVALUATION-TIMEOUT",
+        "TR-CONSENT-EXPIRED",
+        "TR-ADVANCE-TIME-EXPIRE",
+    }
+    missing_time_transitions = required_time_transitions - set(transition_index)
+    if missing_time_transitions:
+        findings.append(
+            _finding(
+                "authoritative-time",
+                "transitions",
+                f"missing time relations: {', '.join(sorted(missing_time_transitions))}",
+            )
+        )
+    time_event = event_index.get("advance_authoritative_time", {})
+    expire_event = event_index.get("expire_session", {})
+    for event_id, event in (
+        ("advance_authoritative_time", time_event),
+        ("expire_session", expire_event),
+    ):
+        if event.get("delivery_class") != "timer" or event.get("parameters") != [
+            "time_advance_parameter"
+        ]:
+            findings.append(
+                _finding(
+                    "authoritative-time",
+                    f"events.{event_id}",
+                    "clock event must be a timer with only time_advance_parameter",
+                )
+            )
+    live_time = transition_index.get("TR-ADVANCE-TIME-LIVE", {})
+    if _transition_writes(live_time) != {"authoritative_time"} or not {
+        "G-TIME-MONOTONIC",
+        "G-TIME-DOMAIN",
+        "G-TIME-INCREASES",
+        "G-BEFORE-ALL-ACTIVE-DEADLINES",
+    }.issubset(_transition_guard_ids(live_time)):
+        findings.append(
+            _finding(
+                "authoritative-time",
+                "TR-ADVANCE-TIME-LIVE",
+                "live clock transition must update only time and stay below every active deadline",
+            )
+        )
+    expire_transition = transition_index.get("TR-ADVANCE-TIME-EXPIRE", {})
+    if expire_transition.get("to_phase") != "EXPIRED" or not {
+        "authoritative_time",
+        "phase",
+        "disclosure_state",
+        "terminal_reason",
+        "query_budget_state",
+    }.issubset(_transition_writes(expire_transition)):
+        findings.append(
+            _finding(
+                "authoritative-time",
+                "TR-ADVANCE-TIME-EXPIRE",
+                "expiry crossing must atomically update time and terminal state",
+            )
+        )
+    timeout = transition_index.get("TR-EVALUATION-TIMEOUT", {})
+    if (
+        "G-EVALUATION-DEADLINE-CROSSED" not in _transition_guard_ids(timeout)
+        or timeout.get("to_phase") != "ABORTED"
+        or "EVALUATION_TIMEOUT" not in timeout.get("failure_code", [])
+    ):
+        findings.append(
+            _finding(
+                "authoritative-time",
+                "TR-EVALUATION-TIMEOUT",
+                "evaluation timeout must compare authoritative time to the explicit deadline",
+            )
+        )
+    if "evaluation_deadline" not in _transition_writes(start):
+        findings.append(
+            _finding(
+                "authoritative-time",
+                "TR-START-EVALUATION",
+                "start_evaluation must set evaluation_deadline",
+            )
+        )
+    clock = model.get("clock_and_expiry", {})
+    if (
+        clock.get("time_advance_event") != "advance_authoritative_time"
+        or "authoritative_time" not in str(clock.get("stale_message_relation", ""))
+        or "issued_at" not in str(clock.get("stale_message_relation", ""))
+        or "atomic" not in str(clock.get("atomic_deadline_crossing", ""))
+    ):
+        findings.append(
+            _finding(
+                "authoritative-time",
+                "clock_and_expiry",
+                "clock policy must define event, message-time relation, and atomic deadline crossing",
+            )
+        )
+
+    # Generic abort uses the supplied parameter and only declared abort-disposition
+    # failures. It is never a participant-controlled failure selector.
+    generic_abort = transition_index.get("TR-ABORT", {})
+    abort_guard = next(
+        (
+            item
+            for item in generic_abort.get("guards", [])
+            if item.get("id") == "G-ABORT-REASON"
+        ),
+        {},
+    )
+    abort_effect = next(
+        (
+            item
+            for item in generic_abort.get("effects", [])
+            if item.get("id") == "E-ABORT"
+        ),
+        {},
+    )
+    failure_index = {item.get("code"): item for item in failures}
+    invalid_abort_codes = {
+        code
+        for code in generic_abort.get("failure_code", [])
+        if failure_index.get(code, {}).get("disposition") != "session-abort"
+    }
+    if (
+        event_index.get("abort_session", {}).get("initiator") != ["coordinator"]
+        or generic_abort.get("actor") != "coordinator"
+        or generic_abort.get("to_phase") != "ABORTED"
+        or abort_guard.get("reads")
+        or abort_guard.get("parameter_reads")
+        != ["normalized_failure_parameter.failure_code"]
+        or "terminal_reason" not in abort_effect.get("writes", [])
+        or abort_effect.get("parameter_reads")
+        != ["normalized_failure_parameter.failure_code"]
+        or invalid_abort_codes
+    ):
+        findings.append(
+            _finding(
+                "generic-abort",
+                "TR-ABORT",
+                "generic abort must be coordinator-only and atomically bind a declared abort-disposition event failure",
+            )
+        )
+
+    consent_semantics = model.get("consent_semantics", {})
+    if consent_semantics.get("expiry_or_withdrawal_policy") != "new-session-required":
+        findings.append(
+            _finding(
+                "consent-lifecycle",
+                "consent_semantics.expiry_or_withdrawal_policy",
+                "v0.1 requires a new session after consent expiry or withdrawal",
+            )
+        )
+    for party in ("A", "B"):
+        grant = transition_index.get(f"TR-GRANT-CONSENT-{party}", {})
+        withdrawal = transition_index.get(f"TR-WITHDRAW-CONSENT-{party}", {})
+        if f"G-CONSENT-SLOT-EMPTY-{party}" not in _transition_guard_ids(grant):
+            findings.append(
+                _finding(
+                    "consent-lifecycle",
+                    f"TR-GRANT-CONSENT-{party}",
+                    "same-session consent replacement must be forbidden",
+                )
+            )
+        if (
+            withdrawal.get("to_phase") != "ABORTED"
+            or "CONSENT_WITHDRAWN" not in withdrawal.get("failure_code", [])
+            or "terminal_reason" not in _transition_writes(withdrawal)
+        ):
+            findings.append(
+                _finding(
+                    "consent-lifecycle",
+                    f"TR-WITHDRAW-CONSENT-{party}",
+                    "withdrawal before completion must invalidate authorization and require a new session",
+                )
+            )
+    consent_expiry = transition_index.get("TR-CONSENT-EXPIRED", {})
+    if (
+        consent_expiry.get("to_phase") != "ABORTED"
+        or "CONSENT_EXPIRED" not in consent_expiry.get("failure_code", [])
+        or "G-ACTIVE-CONSENT-EXPIRED" not in _transition_guard_ids(consent_expiry)
+    ):
+        findings.append(
+            _finding(
+                "consent-lifecycle",
+                "TR-CONSENT-EXPIRED",
+                "active consent expiry must atomically terminate same-session authorization",
+            )
+        )
 
     replay = model.get("replay_and_ordering", {})
     if replay.get("replay_domain") != ["session_id", "sender_participant_id"]:
@@ -1112,13 +1901,41 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
     if replay.get("message_identity") != [
         "message_id",
         "nonce",
+        "issued_at",
         "canonical event digest",
     ]:
         findings.append(
             _finding(
                 "idempotency",
                 "replay_and_ordering.message_identity",
-                "exact duplicate identity requires message_id, nonce, and canonical digest",
+                "party message identity requires message_id, nonce, issued_at, and canonical digest",
+            )
+        )
+    if replay.get("operation_domain") != [
+        "actor_id",
+        "operation_id",
+    ] or replay.get("operation_identity") != [
+        "operation_id",
+        "idempotency_key",
+        "canonical operation digest",
+    ]:
+        findings.append(
+            _finding(
+                "delivery-class",
+                "replay_and_ordering.operation_domain",
+                "coordinator operation deduplication must be actor scoped",
+            )
+        )
+    if replay.get("profile_callback_identity") != [
+        "callback_id",
+        "idempotency_key",
+        "canonical callback digest",
+    ]:
+        findings.append(
+            _finding(
+                "delivery-class",
+                "replay_and_ordering.profile_callback_identity",
+                "profile callback deduplication must bind callback ID, key, and digest",
             )
         )
     if "OUT_OF_ORDER" not in str(
@@ -1164,6 +1981,26 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                     "idempotency", retry_id, "exact replay must be a guarded no-op"
                 )
             )
+    for retry_id, guard_id in (
+        ("TR-RETRY-EXACT-OPERATION", "G-EXACT-OPERATION-DUPLICATE"),
+        (
+            "TR-RETRY-EXACT-PROFILE-CALLBACK",
+            "G-EXACT-PROFILE-CALLBACK-DUPLICATE",
+        ),
+    ):
+        retry_transition = transition_index.get(retry_id, {})
+        if (
+            retry_transition.get("mutating") is not False
+            or _transition_writes(retry_transition)
+            or guard_id not in _transition_guard_ids(retry_transition)
+        ):
+            findings.append(
+                _finding(
+                    "idempotency",
+                    retry_id,
+                    "actor-scoped exact duplicate response must be a guarded no-op",
+                )
+            )
 
     for event_id in ("grant_consent_a", "grant_consent_b"):
         for transition in transitions:
@@ -1205,21 +2042,27 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
             )
         )
 
-    for transition_id, code in (
-        ("TR-EVALUATION-TIMEOUT", "EVALUATION_TIMEOUT"),
-        ("TR-PARTIAL-PARTY-FAILURE", "PARTIAL_PARTY_FAILURE"),
+    timeout_transition = transition_index.get("TR-EVALUATION-TIMEOUT", {})
+    if timeout_transition.get(
+        "to_phase"
+    ) != "ABORTED" or "EVALUATION_TIMEOUT" not in timeout_transition.get(
+        "failure_code", []
     ):
-        transition = transition_index.get(transition_id, {})
-        if transition.get("to_phase") != "ABORTED" or code not in transition.get(
-            "failure_code", []
-        ):
-            findings.append(
-                _finding(
-                    "expiry",
-                    transition_id,
-                    f"{code} must terminate the current session as ABORTED",
-                )
+        findings.append(
+            _finding(
+                "expiry",
+                "TR-EVALUATION-TIMEOUT",
+                "EVALUATION_TIMEOUT must terminate the current session as ABORTED",
             )
+        )
+    if "PARTIAL_PARTY_FAILURE" not in generic_abort.get("failure_code", []):
+        findings.append(
+            _finding(
+                "expiry",
+                "TR-ABORT",
+                "generic abort must support declared PARTIAL_PARTY_FAILURE",
+            )
+        )
 
     audit = model.get("audit_policy", {})
     allowed_audit = set(audit.get("allowed_fields", []))
@@ -1308,6 +2151,29 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                 "formalization",
                 "formalization.tla_model_status",
                 "must not claim a TLA+ result",
+            )
+        )
+    fairness_text = " ".join(formal.get("fairness_candidates", [])).lower()
+    environment_text = " ".join(formal.get("environment_assumptions", [])).lower()
+    time_bound = next(
+        (
+            item
+            for item in formal.get("bounded_model_parameters", [])
+            if item.get("id") == "TimeDomain"
+        ),
+        {},
+    )
+    if (
+        "timer" not in fairness_text
+        or "clock" not in environment_text
+        or "evaluation deadline" not in str(time_bound.get("constraint", ""))
+        or "maximum-jump" not in str(time_bound.get("constraint", ""))
+    ):
+        findings.append(
+            _finding(
+                "formalization",
+                "formalization.authoritative_time",
+                "TLA+ readiness must include timer fairness, clock authority, deadline, and bounded jump semantics",
             )
         )
 
