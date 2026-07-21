@@ -1976,6 +1976,51 @@ class SessionStateMachineTests(unittest.TestCase):
             semantics["result_confidentiality"],
         )
 
+    def test_cached_response_validation_order_is_machine_readable(self):
+        replay = self.model_copy["replay_and_ordering"]
+        self.assertEqual(
+            [
+                "strict JSON parse",
+                "strict Schema validation",
+                "canonical bytes and digest recomputation",
+                "replay or idempotency domain lookup",
+                "complete accepted-record identity and digest equality",
+                "recipient-scoped normalized response lookup",
+            ],
+            replay["cached_response_validation_order"],
+        )
+        self.assertIn("stateless", replay["stateless_validator_boundary"])
+        self.assertIn("recipient", replay["cached_response_effect"])
+        mutated = copy.deepcopy(self.model)
+        mutated["replay_and_ordering"]["cached_response_validation_order"] = []
+        self.assertIn("schema", self.schema_codes(mutated))
+
+    def test_timer_precedence_and_maximum_jump_are_machine_readable(self):
+        clock = self.model_copy["clock_and_expiry"]
+        self.assertEqual(
+            [
+                "SESSION_EXPIRY_THRESHOLD",
+                "EVALUATION_DEADLINE",
+                "CONSENT_EXPIRY_THRESHOLD",
+                "COORDINATOR_CLOCK",
+            ],
+            clock["timer_threshold_precedence"],
+        )
+        fields = {
+            field["id"]
+            for parameter in self.model_copy["event_parameter_catalog"]
+            if parameter["id"] == "clock_policy"
+            for field in parameter["fields"]
+        }
+        self.assertIn("maximum_jump", fields)
+        self.assertIn(
+            "maximum_time_jump",
+            {item["id"] for item in self.model_copy["state_variables"]},
+        )
+        mutated = copy.deepcopy(self.model)
+        mutated["clock_and_expiry"]["timer_threshold_precedence"].reverse()
+        self.assertIn("schema", self.schema_codes(mutated))
+
     def test_schema_version_remains_draft_zero_one(self):
         self.assertEqual(self.model["schema_version"], "0.1")
         self.assertEqual(self.model["artifact"]["status"], "draft")

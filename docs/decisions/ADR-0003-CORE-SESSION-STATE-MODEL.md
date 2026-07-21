@@ -187,6 +187,14 @@ an existing ID, a changed ID under an existing key, or a changed digest under
 either index is `REPLAY_CONFLICT`. First acceptance writes both indexes and the
 prior response atomically.
 
+Authoritative duplicate classification occurs after strict parse, Schema, and
+canonical digest validation but before current-head, time, and current-material
+gates. A complete accepted-record match returns the recipient-scoped stored
+response without a new event, including after later terminalization, expiry, or
+material revocation. Otherwise the full current-event gates apply. Stateless
+validation cannot infer an accepted record and therefore cannot grant this
+exception.
+
 ### Authoritative time progression
 
 **Option A:** Let future formalization or implementation attach an implicit clock
@@ -200,6 +208,12 @@ stays below all active deadlines. Session expiry, evaluation timeout, and active
 consent expiry are terminalized atomically with the time update. Same-time
 evaluation is a no-op; rollback and policy-excessive jumps reject. This removes
 the need to invent `Tick` semantics during later TLA+ translation.
+
+The accepted session proposal supplies the typed maximum-jump bound. A timer
+transaction derives one effect with fixed precedence: session expiry,
+evaluation timeout, consent expiry, then live advance. Its reviewed reason must
+match the derived effect. Runner state and transcript head/index are computed on
+copies and committed together only after every guard and digest check succeeds.
 
 Timer input failures use the declared clock-specific taxonomy. Parties receive
 only `CLOCK_ERROR`; raw clock detail remains coordinator/private-assurance-only.

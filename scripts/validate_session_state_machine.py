@@ -3002,6 +3002,57 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
             )
         )
 
+    clock = model.get("clock_and_expiry", {})
+    if clock.get("timer_threshold_precedence") != [
+        "SESSION_EXPIRY_THRESHOLD",
+        "EVALUATION_DEADLINE",
+        "CONSENT_EXPIRY_THRESHOLD",
+        "COORDINATOR_CLOCK",
+    ] or clock.get("timer_reason_effect_binding") != {
+        "TR-ADVANCE-TIME-NOOP": "COORDINATOR_CLOCK",
+        "TR-ADVANCE-TIME-LIVE": "COORDINATOR_CLOCK",
+        "TR-ADVANCE-TIME-EXPIRE": "SESSION_EXPIRY_THRESHOLD",
+        "TR-EVALUATION-TIMEOUT": "EVALUATION_DEADLINE",
+        "TR-CONSENT-EXPIRED": "CONSENT_EXPIRY_THRESHOLD",
+    }:
+        findings.append(
+            _finding(
+                "authoritative-time",
+                "clock_and_expiry.timer_threshold_precedence",
+                "timer transition precedence and reason/effect binding must be complete and deterministic",
+            )
+        )
+    clock_parameter = parameter_catalog.get("clock_policy", {})
+    clock_fields = {item.get("id") for item in clock_parameter.get("fields", [])}
+    if "maximum_jump" not in clock_fields or "maximum_time_jump" not in variable_ids:
+        findings.append(
+            _finding(
+                "authoritative-time",
+                "clock_policy.maximum_jump",
+                "the reviewed maximum jump must be a catalog field and authoritative state variable",
+            )
+        )
+
+    replay = model.get("replay_and_ordering", {})
+    replay_order = replay.get("cached_response_validation_order", [])
+    replay_exemptions = " ".join(
+        replay.get("cached_response_dynamic_gate_exemptions", [])
+    ).lower()
+    if (
+        len(replay_order) < 6
+        or "transcript head" not in replay_exemptions
+        or "material" not in replay_exemptions
+        or "stateless" not in str(replay.get("stateless_validator_boundary", ""))
+        or "recipient" not in str(replay.get("cached_response_effect", ""))
+    ):
+        findings.append(
+            _finding(
+                "replay-ordering",
+                "replay_and_ordering.cached_response_validation_order",
+                "cached responses require strict preflight, authoritative lookup, recipient scope, and a stateless boundary",
+            )
+        )
+
     required_reachable = {
         "CREATED",
         "PARTICIPANTS_BOUND",

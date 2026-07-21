@@ -177,6 +177,27 @@ Use the coordinator's atomic accepted-event order. Party sequence remains
 per-sender and cannot globally order concurrent Party messages. This draft does
 not define a distributed consensus or persistence implementation.
 
+### Delayed exact duplicate versus new-message validation order
+
+Classify a complete match against an authoritative accepted record before the
+current transcript-head, message-time, and current-material gates. Strict parse,
+Schema, canonical digest, replay-domain, identity, and recipient-scope checks
+remain mandatory. The result is a stored-response lookup, not a newly accepted
+event, so later state progress, terminalization, expiry, or material revocation
+does not append the transcript or repeat state, budget, audit, or sequence
+effects. Any mismatch fails as a conflict or follows the ordinary new-message
+path. Stateless file validation cannot assert that accepted history exists.
+
+### Timer digest append versus State Machine transaction
+
+Use a single abstract transaction over copied runner and transcript state. The
+runner validates the session, prior head, monotonic bounded time, terminal
+status, and reviewed reason, then derives one State Machine effect. Threshold
+precedence is session expiry, evaluation timeout, active-consent expiry, then
+live advance; same-time is a no-op. Only after successful effect and digest
+calculation are the runner and transcript committed together. The low-level
+timer digest helper is not an authorization boundary.
+
 ## Security and privacy assumptions
 
 - SHA-256 is a digest identifier here, not a security certification.

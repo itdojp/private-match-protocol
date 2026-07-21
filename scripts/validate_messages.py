@@ -34,6 +34,7 @@ from canonicalize_message import (
     transcript_genesis_digest,
 )
 from strict_yaml import strict_yaml_load
+from validate_session_state_machine import authoritative_time_transition
 
 
 MESSAGE_SCHEMA = Path("schemas/messages/envelope.v0.1.schema.json")
@@ -402,6 +403,13 @@ def semantic_message_findings(
     path: str = "message",
     require_context_prior: bool = True,
 ) -> list[Finding]:
+    """Validate a current-message attempt without authoritative replay state.
+
+    This stateless path deliberately applies current transcript, clock, and
+    verification-material gates.  It must never infer that an input is a
+    historical exact duplicate; that decision belongs to the authoritative
+    accepted-record path in :func:`apply_trace_message_atomically`.
+    """
     findings: list[Finding] = []
     entry = _registry_index(registry).get(str(message.get("message_type")))
     if entry is None:
@@ -773,27 +781,86 @@ def semantic_message_findings(
 
 @dataclass
 class DedupRegistry:
-    party_by_id: dict[tuple[str, str, str], tuple[str, str, str]] = field(
+    """Authoritative accepted-record indexes for cached-response replay.
+
+    Records retain every replay identity field required by the State Machine,
+    the validated material reference, canonical message digest, and a bounded
+    response reference.  The response reference is a conformance-model token,
+    not a transport response or protocol payload.
+    """
+
+    party_by_id: dict[tuple[str, str, str], dict[str, Any]] = field(
         default_factory=dict
     )
-    party_by_nonce: dict[tuple[str, str, str], tuple[str, str, str]] = field(
+    party_by_nonce: dict[tuple[str, str, str], dict[str, Any]] = field(
         default_factory=dict
     )
-    operation_by_id: dict[tuple[str, str], tuple[str, str]] = field(
+    operation_by_id: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
+    operation_by_key: dict[tuple[str, str], dict[str, Any]] = field(
         default_factory=dict
     )
-    operation_by_key: dict[tuple[str, str], tuple[str, str]] = field(
-        default_factory=dict
-    )
-    callback_by_id: dict[tuple[str, ...], tuple[str, str]] = field(default_factory=dict)
-    callback_by_key: dict[tuple[str, ...], tuple[str, str]] = field(
-        default_factory=dict
-    )
+    callback_by_id: dict[tuple[str, ...], dict[str, Any]] = field(default_factory=dict)
+    callback_by_key: dict[tuple[str, ...], dict[str, Any]] = field(default_factory=dict)
+
+    @staticmethod
+    def _response_ref(message: dict[str, Any]) -> str:
+        return "urn:private-match:normalized-response:" + str(
+            message["message_digest"]
+        ).removeprefix("sha256:")
+
+    @classmethod
+    def _party_record(cls, message: dict[str, Any]) -> dict[str, Any]:
+        identity = message["identity"]
+        return {
+            "message_id": identity["message_id"],
+            "nonce": identity["nonce"],
+            "sequence": identity["sequence"],
+            "issued_at": identity["issued_at"],
+            "canonical_message_digest": message["message_digest"],
+            "verification_material_id": message["authentication"][
+                "verification_material_id"
+            ],
+            "recipient_actor": message["sender"]["actor"],
+            "recipient_participant_id": identity["sender_participant_id"],
+            "normalized_response_ref": cls._response_ref(message),
+        }
+
+    @classmethod
+    def _operation_record(cls, message: dict[str, Any]) -> dict[str, Any]:
+        identity = message["identity"]
+        return {
+            "operation_id": identity["operation_id"],
+            "idempotency_key": identity["idempotency_key"],
+            "canonical_message_digest": message["message_digest"],
+            "verification_material_id": message["authentication"][
+                "verification_material_id"
+            ],
+            "recipient_actor": "coordinator",
+            "normalized_response_ref": cls._response_ref(message),
+        }
+
+    @classmethod
+    def _callback_record(cls, message: dict[str, Any]) -> dict[str, Any]:
+        identity = message["identity"]
+        return {
+            "profile_id": identity["profile_id"],
+            "profile_version": identity["profile_version"],
+            "profile_instance_id": identity["profile_instance_id"],
+            "session_id": identity["session_id"],
+            "evaluation_attempt_id": identity["evaluation_attempt_id"],
+            "callback_id": identity["callback_id"],
+            "idempotency_key": identity["idempotency_key"],
+            "canonical_message_digest": message["message_digest"],
+            "verification_material_id": message["authentication"][
+                "verification_material_id"
+            ],
+            "recipient_actor": "selected_integration_profile",
+            "normalized_response_ref": cls._response_ref(message),
+        }
 
     def classify(self, message: dict[str, Any], *, commit: bool = True) -> str:
         delivery = message["delivery_class"]
         identity = message["identity"]
-        digest = message["message_digest"]
         if delivery == "party_message":
             domain = (
                 message["session_context"]["session_id"],
@@ -801,34 +868,32 @@ class DedupRegistry:
             )
             by_id_key = (*domain, identity["message_id"])
             by_nonce_key = (*domain, identity["nonce"])
-            record = (identity["nonce"], identity["issued_at"], digest)
-            inverse = (identity["message_id"], identity["issued_at"], digest)
+            record = self._party_record(message)
             old_id = self.party_by_id.get(by_id_key)
             old_nonce = self.party_by_nonce.get(by_nonce_key)
             if old_id is None and old_nonce is None:
                 if commit:
-                    self.party_by_id[by_id_key] = record
-                    self.party_by_nonce[by_nonce_key] = inverse
+                    self.party_by_id[by_id_key] = copy.deepcopy(record)
+                    self.party_by_nonce[by_nonce_key] = copy.deepcopy(record)
                 return "ACCEPTED"
-            if old_id == record and old_nonce == inverse:
+            if old_id == record and old_nonce == record:
                 return "EXACT_DUPLICATE"
             return "REPLAY_CONFLICT"
         if delivery == "coordinator_command":
             actor = identity["actor_id"]
             id_key = (actor, identity["operation_id"])
             idem_key = (actor, identity["idempotency_key"])
-            id_record = (identity["idempotency_key"], digest)
-            key_record = (identity["operation_id"], digest)
+            record = self._operation_record(message)
             old_id, old_key = (
                 self.operation_by_id.get(id_key),
                 self.operation_by_key.get(idem_key),
             )
             if old_id is None and old_key is None:
                 if commit:
-                    self.operation_by_id[id_key] = id_record
-                    self.operation_by_key[idem_key] = key_record
+                    self.operation_by_id[id_key] = copy.deepcopy(record)
+                    self.operation_by_key[idem_key] = copy.deepcopy(record)
                 return "ACCEPTED"
-            if old_id == id_record and old_key == key_record:
+            if old_id == record and old_key == record:
                 return "EXACT_DUPLICATE"
             return "REPLAY_CONFLICT"
         if delivery == "profile_callback":
@@ -844,22 +909,72 @@ class DedupRegistry:
             )
             id_key = (*domain, identity["callback_id"])
             idem_key = (*domain, identity["idempotency_key"])
-            id_record = (identity["idempotency_key"], digest)
-            key_record = (identity["callback_id"], digest)
+            record = self._callback_record(message)
             old_id, old_key = (
                 self.callback_by_id.get(id_key),
                 self.callback_by_key.get(idem_key),
             )
             if old_id is None and old_key is None:
                 if commit:
-                    self.callback_by_id[id_key] = id_record
-                    self.callback_by_key[idem_key] = key_record
+                    self.callback_by_id[id_key] = copy.deepcopy(record)
+                    self.callback_by_key[idem_key] = copy.deepcopy(record)
                 return "ACCEPTED"
-            if old_id == id_record and old_key == key_record:
+            if old_id == record and old_key == record:
                 return "EXACT_DUPLICATE"
             return "REPLAY_CONFLICT"
         # Derived notices are outbound projections, not accepted mutations.
         return "EXCLUDED"
+
+    def cached_response(
+        self,
+        message: dict[str, Any],
+        *,
+        requester_actor: str,
+        requester_participant_id: str | None = None,
+    ) -> str | None:
+        """Return only the exact accepted record's recipient-scoped response."""
+
+        if self.classify(message, commit=False) != "EXACT_DUPLICATE":
+            return None
+        identity = message["identity"]
+        delivery = message["delivery_class"]
+        if delivery == "party_message":
+            key = (
+                message["session_context"]["session_id"],
+                identity["sender_participant_id"],
+                identity["message_id"],
+            )
+            record = self.party_by_id.get(key)
+            if (
+                record is None
+                or requester_actor != record["recipient_actor"]
+                or requester_participant_id != record["recipient_participant_id"]
+            ):
+                return None
+        elif delivery == "coordinator_command":
+            record = self.operation_by_id.get(
+                (identity["actor_id"], identity["operation_id"])
+            )
+            if record is None or requester_actor != record["recipient_actor"]:
+                return None
+        elif delivery == "profile_callback":
+            domain = tuple(
+                identity[key]
+                for key in (
+                    "profile_id",
+                    "profile_version",
+                    "profile_instance_id",
+                    "session_id",
+                    "evaluation_attempt_id",
+                )
+            )
+            record = self.callback_by_id.get((*domain, identity["callback_id"]))
+            if record is None or requester_actor != record["recipient_actor"]:
+                return None
+        else:
+            return None
+        response = record.get("normalized_response_ref")
+        return response if isinstance(response, str) else None
 
 
 @dataclass
@@ -889,6 +1004,14 @@ class TranscriptState:
         return "ACCEPTED"
 
     def accept_timer(self, event: dict[str, Any], *, mutates: bool = True) -> str:
+        """Append a pre-authorized timer event; use the atomic trace helper.
+
+        This low-level transcript primitive intentionally has no State Machine
+        authority.  Repository validation and vector generation must call
+        :func:`apply_trace_timer_atomically`, which derives and commits runner
+        effects before invoking this method on a candidate copy.
+        """
+
         if not mutates:
             return "NO_OP"
         required = {
@@ -976,9 +1099,29 @@ class AbstractStateRunner:
         default_factory=lambda: {"a": None, "b": None}
     )
     next_sequence: dict[str, int] = field(default_factory=lambda: {"a": 0, "b": 0})
+    authoritative_time: str | None = None
+    session_expires_at: str | None = None
+    evaluation_deadline: str | None = None
+    maximum_time_jump_seconds: int | None = None
+    evaluation_started: bool = False
+    query_budget_state: str = "NONE"
+    disclosure_state: str = "NONE"
+    terminal_failure_code: str = "NONE"
+    party_terminal_category: str = "NONE"
+    audit_lifecycle: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.authoritative_time is None:
+            value = self.base_context.get("authoritative_time")
+            self.authoritative_time = value if isinstance(value, str) else None
+        if self.maximum_time_jump_seconds is None:
+            value = self.base_context.get("maximum_time_jump_seconds")
+            if isinstance(value, int) and not isinstance(value, bool):
+                self.maximum_time_jump_seconds = value
 
     def context(self, prior_head: str) -> dict[str, Any]:
         context = copy.deepcopy(self.base_context)
+        context["authoritative_time"] = self.authoritative_time
         context["prior_transcript_digest"] = prior_head
         session = context["session_context"]
         session["participants"] = copy.deepcopy(self.participants)
@@ -1035,6 +1178,17 @@ class AbstractStateRunner:
                 self.proposal_digest = payload.get("proposal_digest")
                 self.selected_integration_profile = copy.deepcopy(
                     payload.get("selected_integration_profile")
+                )
+                self.session_expires_at = payload.get("session_expires_at")
+                clock_policy = payload.get("clock_policy", {})
+                self.maximum_time_jump_seconds = clock_policy.get(
+                    "maximum_time_jump_seconds"
+                )
+                self.base_context["allowed_clock_skew_seconds"] = clock_policy.get(
+                    "allowed_clock_skew_seconds"
+                )
+                self.base_context["message_stale_threshold_seconds"] = clock_policy.get(
+                    "message_stale_threshold_seconds"
                 )
         elif message_type == "session_acceptance" and party:
             transition = f"TR-ACCEPT-SESSION-{party.upper()}"
@@ -1133,6 +1287,7 @@ class AbstractStateRunner:
             )
             if not findings:
                 self.budget_reserved = True
+                self.query_budget_state = "RESERVED"
                 self.phase = "COMMITMENTS_PENDING"
         elif message_type == "commitment_registration" and party:
             other = "b" if party == "a" else "a"
@@ -1183,6 +1338,9 @@ class AbstractStateRunner:
             )
             if not findings:
                 self.evaluation_attempt_id = payload.get("evaluation_attempt_id")
+                self.evaluation_deadline = payload.get("evaluation_deadline")
+                self.evaluation_started = True
+                self.query_budget_state = "CONSUMED"
                 self.phase = "EVALUATING"
         elif message_type == "evaluation_contribution" and party:
             transition = f"TR-SUBMIT-CONTRIBUTION-{party.upper()}"
@@ -1335,6 +1493,7 @@ class AbstractStateRunner:
                     )
             if not findings:
                 self.consents[party] = copy.deepcopy(payload)
+                self.disclosure_state = "CONSENT_PENDING"
                 self.phase = "CONSENT_PENDING"
         elif message_type == "close_notice":
             transition = "TR-CLOSE"
@@ -1343,6 +1502,12 @@ class AbstractStateRunner:
                 "close requires a live session",
             )
             if not findings:
+                if (
+                    self.query_budget_state == "RESERVED"
+                    and not self.evaluation_started
+                ):
+                    self.query_budget_state = "RELEASED"
+                self.disclosure_state = "NONE"
                 self.phase = "CLOSED"
         else:
             findings.append(
@@ -1378,18 +1543,280 @@ class AbstractStateRunner:
         return sorted(set(findings))
 
 
+def trace_message_preflight_findings(
+    message: dict[str, Any], message_schema: dict[str, Any]
+) -> list[Finding]:
+    """Validate schema and canonical digests before authoritative dedup lookup.
+
+    The caller must have obtained ``message`` through strict JSON parsing.  This
+    preflight intentionally excludes current clock, material-status, phase, and
+    transcript-head gates so an already accepted exact record can reach its
+    cached-response path.  New messages still receive every dynamic check below.
+    """
+
+    findings: list[Finding] = []
+    for error in Draft202012Validator(
+        message_schema, format_checker=FormatChecker()
+    ).iter_errors(message):
+        findings.append(
+            _finding(
+                "message-schema",
+                ".".join(str(item) for item in error.absolute_path) or "message",
+                bounded_error(error.message),
+            )
+        )
+    if findings:
+        return sorted(set(findings))
+    try:
+        canonicalize(message)
+        if message.get("payload_digest") != payload_digest(message.get("payload")):
+            findings.append(
+                _finding("payload-digest", "message.payload_digest", "digest mismatch")
+            )
+        if message.get("message_digest") != message_digest(message):
+            findings.append(
+                _finding("message-digest", "message.message_digest", "digest mismatch")
+            )
+    except CanonicalMessageError as error:
+        findings.append(_finding("canonicalization", "message", bounded_error(error)))
+    return sorted(set(findings))
+
+
+def _epoch_microseconds(value: Any, path: str, findings: list[Finding]) -> int | None:
+    parsed = _parse_time(value, path, findings)
+    return int(parsed.timestamp() * 1_000_000) if parsed is not None else None
+
+
+def apply_timer_to_runner(
+    runner: AbstractStateRunner, event: dict[str, Any]
+) -> tuple[str, str | None, list[Finding]]:
+    """Derive and apply exactly one reviewed timer relation to ``runner``.
+
+    The caller operates on a copy.  Deadline precedence is session expiry,
+    evaluation timeout, consent expiry, then a normal live advance.  A caller's
+    reason class must describe the derived effect and cannot select it.
+    """
+
+    before = copy.deepcopy(runner.__dict__)
+    findings: list[Finding] = []
+    session_id = runner.base_context.get("session_context", {}).get("session_id")
+    if event.get("session_id") != session_id:
+        findings.append(
+            _finding("timer-session", "timer.session_id", "active session mismatch")
+        )
+    current = _epoch_microseconds(
+        runner.authoritative_time, "runner.authoritative_time", findings
+    )
+    proposed = _epoch_microseconds(
+        event.get("new_authoritative_time"),
+        "timer.new_authoritative_time",
+        findings,
+    )
+    expiry = _epoch_microseconds(
+        runner.session_expires_at, "runner.session_expires_at", findings
+    )
+    deadline = (
+        _epoch_microseconds(
+            runner.evaluation_deadline, "runner.evaluation_deadline", findings
+        )
+        if runner.evaluation_deadline is not None
+        else None
+    )
+    maximum_jump = runner.maximum_time_jump_seconds
+    if (
+        not isinstance(maximum_jump, int)
+        or isinstance(maximum_jump, bool)
+        or maximum_jump < 0
+    ):
+        findings.append(
+            _finding(
+                "timer-policy",
+                "runner.maximum_time_jump_seconds",
+                "reviewed non-negative maximum jump is required",
+            )
+        )
+    consent_state: dict[str, dict[str, Any]] = {}
+    for party, consent in runner.consents.items():
+        if not isinstance(consent, dict):
+            continue
+        consent_expiry = _epoch_microseconds(
+            consent.get("expires_at"), f"runner.consent.{party}.expires_at", findings
+        )
+        consent_state[party] = {"status": "valid", "expires_at": consent_expiry}
+    if findings or current is None or proposed is None or expiry is None:
+        runner.__dict__.clear()
+        runner.__dict__.update(before)
+        return "REJECTED", None, sorted(set(findings))
+
+    state = {
+        "authoritative_time": current,
+        "session_expires_at": expiry,
+        "evaluation_deadline": deadline,
+        "phase": runner.phase,
+        "consent": consent_state,
+        "query_budget_state": runner.query_budget_state,
+        "evaluation_started": runner.evaluation_started,
+        "disclosure_state": runner.disclosure_state,
+        "terminal_failure_code": runner.terminal_failure_code,
+        "party_terminal_category": runner.party_terminal_category,
+    }
+    updated, failure_codes = authoritative_time_transition(
+        state, proposed, maximum_jump * 1_000_000
+    )
+    if failure_codes:
+        findings.extend(
+            _finding("timer-state", "timer.new_authoritative_time", code)
+            for code in failure_codes
+        )
+        runner.__dict__.clear()
+        runner.__dict__.update(before)
+        return "REJECTED", None, sorted(set(findings))
+
+    if proposed == current:
+        transition = "TR-ADVANCE-TIME-NOOP"
+        outcome = "NO_OP"
+        expected_reason = "COORDINATOR_CLOCK"
+    elif updated.get("terminal_failure_code") == "SESSION_EXPIRED":
+        transition = "TR-ADVANCE-TIME-EXPIRE"
+        outcome = "ACCEPTED"
+        expected_reason = "SESSION_EXPIRY_THRESHOLD"
+    elif updated.get("terminal_failure_code") == "EVALUATION_TIMEOUT":
+        transition = "TR-EVALUATION-TIMEOUT"
+        outcome = "ACCEPTED"
+        expected_reason = "EVALUATION_DEADLINE"
+    elif updated.get("terminal_failure_code") == "CONSENT_EXPIRED":
+        transition = "TR-CONSENT-EXPIRED"
+        outcome = "ACCEPTED"
+        expected_reason = "CONSENT_EXPIRY_THRESHOLD"
+    else:
+        transition = "TR-ADVANCE-TIME-LIVE"
+        outcome = "ACCEPTED"
+        expected_reason = "COORDINATOR_CLOCK"
+    if event.get("reason_or_source_class") != expected_reason:
+        findings.append(
+            _finding(
+                "timer-reason-effect",
+                "timer.reason_or_source_class",
+                f"derived {transition} requires {expected_reason}",
+            )
+        )
+        runner.__dict__.clear()
+        runner.__dict__.update(before)
+        return "REJECTED", None, sorted(set(findings))
+    if outcome == "NO_OP":
+        runner.__dict__.clear()
+        runner.__dict__.update(before)
+        return outcome, transition, []
+
+    runner.authoritative_time = str(event["new_authoritative_time"])
+    runner.base_context["authoritative_time"] = runner.authoritative_time
+    runner.phase = str(updated.get("phase", runner.phase))
+    runner.query_budget_state = str(
+        updated.get("query_budget_state", runner.query_budget_state)
+    )
+    runner.disclosure_state = str(
+        updated.get("disclosure_state", runner.disclosure_state)
+    )
+    runner.terminal_failure_code = str(
+        updated.get("terminal_failure_code", runner.terminal_failure_code)
+    )
+    runner.party_terminal_category = str(
+        updated.get("party_terminal_category", runner.party_terminal_category)
+    )
+    runner.audit_lifecycle.append(transition)
+    return outcome, transition, []
+
+
+def apply_trace_timer_atomically(
+    runner: AbstractStateRunner,
+    transcript: TranscriptState,
+    event: dict[str, Any],
+    timer_schema: dict[str, Any],
+) -> tuple[str, str | None, list[Finding]]:
+    """Validate and commit runner plus timer transcript as one transaction."""
+
+    findings = [
+        _finding(
+            "timer-schema",
+            ".".join(str(item) for item in error.absolute_path) or "timer",
+            bounded_error(error.message),
+        )
+        for error in Draft202012Validator(
+            timer_schema, format_checker=FormatChecker()
+        ).iter_errors(event)
+    ]
+    if findings:
+        return "REJECTED", None, sorted(set(findings))
+    if event.get("prior_transcript_digest") != transcript.head:
+        return "PRIOR_TRANSCRIPT_MISMATCH", None, []
+
+    candidate_runner = copy.deepcopy(runner)
+    outcome, transition, timer_findings = apply_timer_to_runner(candidate_runner, event)
+    if timer_findings or outcome == "REJECTED":
+        return "REJECTED", transition, timer_findings
+    if outcome == "NO_OP":
+        return outcome, transition, []
+
+    candidate_transcript = copy.deepcopy(transcript)
+    try:
+        transcript_outcome = candidate_transcript.accept_timer(event)
+    except CanonicalMessageError as error:
+        return (
+            "REJECTED",
+            transition,
+            [_finding("timer-canonicalization", "timer", bounded_error(error))],
+        )
+    if transcript_outcome != "ACCEPTED":
+        return transcript_outcome, transition, []
+    runner.__dict__.clear()
+    runner.__dict__.update(candidate_runner.__dict__)
+    transcript.__dict__.clear()
+    transcript.__dict__.update(candidate_transcript.__dict__)
+    return "ACCEPTED", transition, []
+
+
 def apply_trace_message_atomically(
     runner: AbstractStateRunner,
     transcript: TranscriptState,
     message: dict[str, Any],
+    message_schema: dict[str, Any],
     registry: dict[str, Any],
     materials: dict[str, Any],
 ) -> tuple[str, list[Finding]]:
-    """Apply state, dedup, and transcript effects as one abstract transaction."""
+    """Validate in replay-safe order, then apply one abstract transaction.
+
+    Strict parsing occurs at the bytes boundary.  Schema and digest preflight
+    precede authoritative accepted-record lookup.  Exact accepted duplicates
+    bypass current prior-head, time, material, and phase gates and only expose
+    their sender/actor-scoped cached response; conflicts and rejects are no-op.
+    """
+
+    preflight = trace_message_preflight_findings(message, message_schema)
+    if preflight:
+        return "REJECTED", preflight
 
     classification = transcript.dedup.classify(message, commit=False)
-    if classification in {"EXACT_DUPLICATE", "REPLAY_CONFLICT", "EXCLUDED"}:
+    if classification == "EXACT_DUPLICATE":
+        sender = message.get("sender", {})
+        response = transcript.dedup.cached_response(
+            message,
+            requester_actor=str(sender.get("actor")),
+            requester_participant_id=sender.get("participant_id"),
+        )
+        if response is None:
+            return "REPLAY_CONFLICT", []
+        return "EXACT_DUPLICATE", []
+    if classification in {"REPLAY_CONFLICT", "EXCLUDED"}:
         return transcript.accept_message(message), []
+
+    dynamic_findings = semantic_message_findings(
+        message,
+        registry,
+        materials,
+        runner.context(transcript.head),
+    )
+    if dynamic_findings:
+        return "REJECTED", dynamic_findings
     candidate_runner = copy.deepcopy(runner)
     findings = candidate_runner.apply(message, registry, materials)
     if findings:
@@ -1464,6 +1891,7 @@ def registry_findings(
                     "payload.clock_policy.allowed_clock_skew_seconds",
                     "payload.clock_policy.message_stale_threshold_seconds",
                     "payload.clock_policy.evaluation_timeout_seconds",
+                    "payload.clock_policy.maximum_time_jump_seconds",
                 }
             )
         expected_sources = {
@@ -1977,32 +2405,23 @@ def validate_repository(root: Path) -> list[Finding]:
         for index, entry in enumerate(expected.get("entries", []), 1):
             if entry.get("kind") == "message":
                 message = entry["message"]
-                stage_context = runner.context(state.head)
-                message_findings = semantic_message_findings(
+                outcome, trace_findings = apply_trace_message_atomically(
+                    runner,
+                    state,
                     message,
+                    loaded["message_schema"],
                     loaded["registry"],
                     loaded["materials"],
-                    stage_context,
-                    path=f"{EXPECTED_DIGESTS}.entries.{index - 1}.message",
                 )
-                findings.extend(message_findings)
-                if message_findings:
-                    outcome = "REJECTED"
-                else:
-                    outcome, trace_findings = apply_trace_message_atomically(
-                        runner,
-                        state,
-                        message,
-                        loaded["registry"],
-                        loaded["materials"],
-                    )
-                    findings.extend(trace_findings)
+                findings.extend(trace_findings)
             else:
-                outcome = state.accept_timer(entry["timer_event"])
-                if outcome == "ACCEPTED":
-                    runner.base_context["authoritative_time"] = entry["timer_event"][
-                        "new_authoritative_time"
-                    ]
+                outcome, _, timer_findings = apply_trace_timer_atomically(
+                    runner,
+                    state,
+                    entry["timer_event"],
+                    loaded["timer_schema"],
+                )
+                findings.extend(timer_findings)
             if (
                 outcome != "ACCEPTED"
                 or entry.get("expected_head") != state.head

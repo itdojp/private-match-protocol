@@ -9,6 +9,7 @@ import tempfile
 import unittest
 import unicodedata
 from pathlib import Path
+from unittest import mock
 
 import yaml
 from jsonschema import Draft202012Validator
@@ -69,22 +70,27 @@ class MessageContractTests(unittest.TestCase):
         transcript = validator.TranscriptState()
         for entry in self.expected["entries"]:
             if entry["kind"] == "timer":
-                self.assertEqual(
-                    "ACCEPTED", transcript.accept_timer(entry["timer_event"])
+                outcome, _, findings = validator.apply_trace_timer_atomically(
+                    runner, transcript, entry["timer_event"], self.timer_schema
                 )
-                runner.base_context["authoritative_time"] = entry["timer_event"][
-                    "new_authoritative_time"
-                ]
+                self.assertEqual([], findings)
+                self.assertEqual("ACCEPTED", outcome)
                 continue
             message = entry["message"]
             if message["message_type"] == message_type and (
                 actor is None or message["sender"]["actor"] == actor
             ):
                 return runner, transcript, copy.deepcopy(message)
-            self.assertEqual(
-                [], runner.apply(message, self.registry, self.materials), message_type
+            outcome, findings = validator.apply_trace_message_atomically(
+                runner,
+                transcript,
+                message,
+                self.message_schema,
+                self.registry,
+                self.materials,
             )
-            self.assertEqual("ACCEPTED", transcript.accept_message(message))
+            self.assertEqual([], findings, message_type)
+            self.assertEqual("ACCEPTED", outcome)
         self.fail(f"trace message not found: {message_type} {actor}")
 
     def assert_runner_rejects_without_mutation(
@@ -94,12 +100,90 @@ class MessageContractTests(unittest.TestCase):
         before_runner = copy.deepcopy(runner.__dict__)
         before_transcript = copy.deepcopy(transcript.__dict__)
         outcome, findings = validator.apply_trace_message_atomically(
-            runner, transcript, message, self.registry, self.materials
+            runner,
+            transcript,
+            message,
+            self.message_schema,
+            self.registry,
+            self.materials,
         )
         self.assertEqual("REJECTED", outcome)
-        self.assertIn("state-trace", {item.code for item in findings})
+        self.assertTrue(findings)
         self.assertEqual(before_runner, runner.__dict__)
         self.assertEqual(before_transcript, transcript.__dict__)
+
+    def completed_trace(
+        self,
+    ) -> tuple[validator.AbstractStateRunner, validator.TranscriptState]:
+        runner = validator.AbstractStateRunner(copy.deepcopy(self.context))
+        transcript = validator.TranscriptState()
+        for entry in self.expected["entries"]:
+            if entry["kind"] == "timer":
+                outcome, _, findings = validator.apply_trace_timer_atomically(
+                    runner, transcript, entry["timer_event"], self.timer_schema
+                )
+            else:
+                outcome, findings = validator.apply_trace_message_atomically(
+                    runner,
+                    transcript,
+                    entry["message"],
+                    self.message_schema,
+                    self.registry,
+                    self.materials,
+                )
+            self.assertEqual([], findings)
+            self.assertEqual("ACCEPTED", outcome)
+        return runner, transcript
+
+    def trace_before_timer(
+        self,
+    ) -> tuple[validator.AbstractStateRunner, validator.TranscriptState, dict]:
+        runner = validator.AbstractStateRunner(copy.deepcopy(self.context))
+        transcript = validator.TranscriptState()
+        for entry in self.expected["entries"]:
+            if entry["kind"] == "timer":
+                return runner, transcript, copy.deepcopy(entry["timer_event"])
+            outcome, findings = validator.apply_trace_message_atomically(
+                runner,
+                transcript,
+                entry["message"],
+                self.message_schema,
+                self.registry,
+                self.materials,
+            )
+            self.assertEqual([], findings)
+            self.assertEqual("ACCEPTED", outcome)
+        self.fail("authoritative timer entry not found")
+
+    def assert_timer_rejected_without_mutation(
+        self,
+        runner: validator.AbstractStateRunner,
+        transcript: validator.TranscriptState,
+        timer: dict,
+        *,
+        patch_digest: bool = False,
+    ) -> set[str]:
+        before_runner = copy.deepcopy(runner.__dict__)
+        before_transcript = copy.deepcopy(transcript.__dict__)
+        patcher = (
+            mock.patch.object(
+                validator,
+                "timer_event_digest",
+                side_effect=canonical.CanonicalMessageError("synthetic digest failure"),
+            )
+            if patch_digest
+            else mock.patch.object(
+                validator, "timer_event_digest", wraps=validator.timer_event_digest
+            )
+        )
+        with patcher:
+            outcome, _, findings = validator.apply_trace_timer_atomically(
+                runner, transcript, timer, self.timer_schema
+            )
+        self.assertIn(outcome, {"REJECTED", "PRIOR_TRANSCRIPT_MISMATCH"})
+        self.assertEqual(before_runner, runner.__dict__)
+        self.assertEqual(before_transcript, transcript.__dict__)
+        return {finding.code for finding in findings}
 
     def test_repository_message_contract_is_valid(self) -> None:
         self.assertEqual([], validator.validate_repository(ROOT))
@@ -452,10 +536,11 @@ class MessageContractTests(unittest.TestCase):
         seen = []
         for entry in expected["entries"]:
             if entry["kind"] == "timer":
-                self.assertEqual("ACCEPTED", state.accept_timer(entry["timer_event"]))
-                runner.base_context["authoritative_time"] = entry["timer_event"][
-                    "new_authoritative_time"
-                ]
+                outcome, _, findings = validator.apply_trace_timer_atomically(
+                    runner, state, entry["timer_event"], self.timer_schema
+                )
+                self.assertEqual([], findings)
+                self.assertEqual("ACCEPTED", outcome)
                 continue
             message = entry["message"]
             stage = runner.context(state.head)
@@ -465,8 +550,16 @@ class MessageContractTests(unittest.TestCase):
                     message, self.registry, self.materials, stage
                 ),
             )
-            self.assertEqual([], runner.apply(message, self.registry, self.materials))
-            self.assertEqual("ACCEPTED", state.accept_message(message))
+            outcome, findings = validator.apply_trace_message_atomically(
+                runner,
+                state,
+                message,
+                self.message_schema,
+                self.registry,
+                self.materials,
+            )
+            self.assertEqual([], findings)
+            self.assertEqual("ACCEPTED", outcome)
             seen.append(message["message_type"])
         self.assertLess(
             seen.index("session_acceptance"), seen.index("participant_binding")
@@ -1004,6 +1097,457 @@ class MessageContractTests(unittest.TestCase):
                 "revoked-verification-material",
             }.issubset(ids)
         )
+
+    def test_exact_party_duplicate_is_cached_immediately_and_after_later_entries(
+        self,
+    ) -> None:
+        runner, transcript, message = self.runner_before(
+            "session_acceptance", "party_a_client"
+        )
+        outcome, findings = validator.apply_trace_message_atomically(
+            runner,
+            transcript,
+            message,
+            self.message_schema,
+            self.registry,
+            self.materials,
+        )
+        self.assertEqual(("ACCEPTED", []), (outcome, findings))
+        before = (copy.deepcopy(runner.__dict__), copy.deepcopy(transcript.__dict__))
+        outcome, findings = validator.apply_trace_message_atomically(
+            runner,
+            transcript,
+            copy.deepcopy(message),
+            self.message_schema,
+            self.registry,
+            self.materials,
+        )
+        self.assertEqual(("EXACT_DUPLICATE", []), (outcome, findings))
+        self.assertEqual(before, (runner.__dict__, transcript.__dict__))
+
+        delayed_runner, delayed_transcript, _ = self.runner_before(
+            "policy_acceptance", "party_b_client"
+        )
+        delayed_before = (
+            copy.deepcopy(delayed_runner.__dict__),
+            copy.deepcopy(delayed_transcript.__dict__),
+        )
+        outcome, findings = validator.apply_trace_message_atomically(
+            delayed_runner,
+            delayed_transcript,
+            copy.deepcopy(message),
+            self.message_schema,
+            self.registry,
+            self.materials,
+        )
+        self.assertEqual(("EXACT_DUPLICATE", []), (outcome, findings))
+        self.assertEqual(
+            delayed_before, (delayed_runner.__dict__, delayed_transcript.__dict__)
+        )
+
+    def test_delayed_exact_duplicate_bypasses_only_historical_dynamic_gates(
+        self,
+    ) -> None:
+        runner, transcript = self.completed_trace()
+        party = next(
+            message
+            for message in self.trace_messages
+            if message["message_type"] == "session_acceptance"
+            and message["sender"]["actor"] == "party_a_client"
+        )
+        operation = next(
+            message
+            for message in self.trace_messages
+            if message["message_type"] == "session_proposal"
+        )
+        callback = next(
+            message
+            for message in self.trace_messages
+            if message["message_type"] == "result_acceptance_notice"
+        )
+        materials = copy.deepcopy(self.materials)
+        party_material = next(
+            item
+            for item in materials["materials"]
+            if item["verification_material_id"]
+            == party["authentication"]["verification_material_id"]
+        )
+        party_material["status"] = "revoked"
+        party_material["not_after"] = "2026-07-21T00:00:01Z"
+        runner.authoritative_time = "2026-07-21T02:00:00Z"
+        runner.base_context["authoritative_time"] = runner.authoritative_time
+
+        for phase in ("CLOSED", "EXPIRED"):
+            runner.phase = phase
+            for message in (party, operation, callback):
+                with self.subTest(phase=phase, delivery=message["delivery_class"]):
+                    before = (
+                        copy.deepcopy(runner.__dict__),
+                        copy.deepcopy(transcript.__dict__),
+                    )
+                    outcome, findings = validator.apply_trace_message_atomically(
+                        runner,
+                        transcript,
+                        copy.deepcopy(message),
+                        self.message_schema,
+                        self.registry,
+                        materials,
+                    )
+                    self.assertEqual(("EXACT_DUPLICATE", []), (outcome, findings))
+                    self.assertEqual(before, (runner.__dict__, transcript.__dict__))
+
+    def test_duplicate_conflicts_never_mutate_authoritative_trace(self) -> None:
+        runner, transcript = self.completed_trace()
+        party = next(
+            copy.deepcopy(message)
+            for message in self.trace_messages
+            if message["message_type"] == "session_acceptance"
+            and message["sender"]["actor"] == "party_a_client"
+        )
+        operation = next(
+            copy.deepcopy(message)
+            for message in self.trace_messages
+            if message["message_type"] == "session_proposal"
+        )
+        callback = next(
+            copy.deepcopy(message)
+            for message in self.trace_messages
+            if message["message_type"] == "result_acceptance_notice"
+        )
+        cases = []
+        changed_message = copy.deepcopy(party)
+        changed_message["identity"]["nonce"] += ":changed"
+        changed_message["payload"]["acceptance_digest"] = "sha256:" + "c" * 64
+        cases.append(canonical.populate_digests(changed_message))
+        changed_nonce = copy.deepcopy(party)
+        changed_nonce["identity"]["message_id"] += ":changed"
+        changed_nonce["payload"]["acceptance_digest"] = "sha256:" + "d" * 64
+        cases.append(canonical.populate_digests(changed_nonce))
+        changed_operation_key = copy.deepcopy(operation)
+        changed_operation_key["identity"]["idempotency_key"] += ":changed"
+        cases.append(canonical.populate_digests(changed_operation_key))
+        changed_operation_id = copy.deepcopy(operation)
+        changed_operation_id["identity"]["operation_id"] += ":changed"
+        cases.append(canonical.populate_digests(changed_operation_id))
+        changed_callback = copy.deepcopy(callback)
+        changed_callback["payload"]["profile_evidence_ref"] += ":changed"
+        cases.append(canonical.populate_digests(changed_callback))
+        for message in cases:
+            before = (
+                copy.deepcopy(runner.__dict__),
+                copy.deepcopy(transcript.__dict__),
+            )
+            outcome, findings = validator.apply_trace_message_atomically(
+                runner,
+                transcript,
+                message,
+                self.message_schema,
+                self.registry,
+                self.materials,
+            )
+            self.assertEqual([], findings)
+            self.assertEqual("REPLAY_CONFLICT", outcome)
+            self.assertEqual(before, (runner.__dict__, transcript.__dict__))
+
+    def test_cached_party_response_is_sender_scoped_and_stateless_path_is_current(
+        self,
+    ) -> None:
+        runner, transcript = self.completed_trace()
+        party = next(
+            message
+            for message in self.trace_messages
+            if message["message_type"] == "session_acceptance"
+            and message["sender"]["actor"] == "party_a_client"
+        )
+        own = transcript.dedup.cached_response(
+            party,
+            requester_actor="party_a_client",
+            requester_participant_id=party["sender"]["participant_id"],
+        )
+        peer = transcript.dedup.cached_response(
+            party,
+            requester_actor="party_b_client",
+            requester_participant_id="urn:private-match:test:participant:b",
+        )
+        self.assertIsInstance(own, str)
+        self.assertIsNone(peer)
+
+        context = runner.context(transcript.head)
+        context["authoritative_time"] = "2026-07-21T02:00:00Z"
+        _, findings = validator.validate_message_bytes(
+            canonical.canonicalize(party),
+            self.message_schema,
+            self.registry,
+            self.materials,
+            context,
+            path="stateless-delayed-duplicate",
+        )
+        self.assertNotEqual([], findings)
+        self.assertTrue(
+            {"prior-transcript", "message-expired", "verification-material"}
+            & {finding.code for finding in findings}
+        )
+
+    def test_timer_live_noop_and_retry_are_atomic(self) -> None:
+        runner, transcript, timer = self.trace_before_timer()
+        same = copy.deepcopy(timer)
+        same["new_authoritative_time"] = runner.authoritative_time
+        before = (copy.deepcopy(runner.__dict__), copy.deepcopy(transcript.__dict__))
+        outcome, transition, findings = validator.apply_trace_timer_atomically(
+            runner, transcript, same, self.timer_schema
+        )
+        self.assertEqual(
+            ("NO_OP", "TR-ADVANCE-TIME-NOOP", []), (outcome, transition, findings)
+        )
+        self.assertEqual(before, (runner.__dict__, transcript.__dict__))
+
+        outcome, transition, findings = validator.apply_trace_timer_atomically(
+            runner, transcript, timer, self.timer_schema
+        )
+        self.assertEqual(
+            ("ACCEPTED", "TR-ADVANCE-TIME-LIVE", []), (outcome, transition, findings)
+        )
+        self.assertEqual("2026-07-21T00:00:31Z", runner.authoritative_time)
+        self.assertEqual(1, len(runner.audit_lifecycle))
+        index, head = transcript.accepted_event_index, transcript.head
+
+        retry = copy.deepcopy(timer)
+        retry["prior_transcript_digest"] = transcript.head
+        outcome, transition, findings = validator.apply_trace_timer_atomically(
+            runner, transcript, retry, self.timer_schema
+        )
+        self.assertEqual(
+            ("NO_OP", "TR-ADVANCE-TIME-NOOP", []), (outcome, transition, findings)
+        )
+        self.assertEqual(
+            (index, head), (transcript.accepted_event_index, transcript.head)
+        )
+        self.assertEqual(1, len(runner.audit_lifecycle))
+
+    def test_timer_rejects_context_clock_reason_terminal_and_append_failures(
+        self,
+    ) -> None:
+        base_runner, base_transcript, base_timer = self.trace_before_timer()
+        cases: list[
+            tuple[
+                str,
+                validator.AbstractStateRunner,
+                validator.TranscriptState,
+                dict,
+                bool,
+            ]
+        ] = []
+        cross = copy.deepcopy(base_timer)
+        cross["session_id"] += ":other"
+        cases.append(
+            (
+                "cross-session",
+                copy.deepcopy(base_runner),
+                copy.deepcopy(base_transcript),
+                cross,
+                False,
+            )
+        )
+        rollback = copy.deepcopy(base_timer)
+        rollback["new_authoritative_time"] = "2026-07-21T00:00:29Z"
+        cases.append(
+            (
+                "rollback",
+                copy.deepcopy(base_runner),
+                copy.deepcopy(base_transcript),
+                rollback,
+                False,
+            )
+        )
+        jump_runner = copy.deepcopy(base_runner)
+        jump_runner.maximum_time_jump_seconds = 0
+        cases.append(
+            (
+                "maximum-jump",
+                jump_runner,
+                copy.deepcopy(base_transcript),
+                copy.deepcopy(base_timer),
+                False,
+            )
+        )
+        invalid_reason = copy.deepcopy(base_timer)
+        invalid_reason["reason_or_source_class"] = "UNREVIEWED"
+        cases.append(
+            (
+                "invalid-reason",
+                copy.deepcopy(base_runner),
+                copy.deepcopy(base_transcript),
+                invalid_reason,
+                False,
+            )
+        )
+        mismatch = copy.deepcopy(base_timer)
+        mismatch["new_authoritative_time"] = base_runner.session_expires_at
+        mismatch["reason_or_source_class"] = "COORDINATOR_CLOCK"
+        cases.append(
+            (
+                "reason-effect",
+                copy.deepcopy(base_runner),
+                copy.deepcopy(base_transcript),
+                mismatch,
+                False,
+            )
+        )
+        prior = copy.deepcopy(base_timer)
+        prior["prior_transcript_digest"] = "sha256:" + "f" * 64
+        cases.append(
+            (
+                "prior",
+                copy.deepcopy(base_runner),
+                copy.deepcopy(base_transcript),
+                prior,
+                False,
+            )
+        )
+        cases.append(
+            (
+                "digest",
+                copy.deepcopy(base_runner),
+                copy.deepcopy(base_transcript),
+                copy.deepcopy(base_timer),
+                True,
+            )
+        )
+        overflow = copy.deepcopy(base_transcript)
+        overflow.accepted_event_index = 2**64 - 1
+        cases.append(
+            (
+                "overflow",
+                copy.deepcopy(base_runner),
+                overflow,
+                copy.deepcopy(base_timer),
+                False,
+            )
+        )
+        for phase in ("CLOSED", "ABORTED", "EXPIRED"):
+            runner = copy.deepcopy(base_runner)
+            runner.phase = phase
+            cases.append(
+                (
+                    phase,
+                    runner,
+                    copy.deepcopy(base_transcript),
+                    copy.deepcopy(base_timer),
+                    False,
+                )
+            )
+        for name, runner, transcript, timer, patch_digest in cases:
+            with self.subTest(name=name):
+                self.assert_timer_rejected_without_mutation(
+                    runner, transcript, timer, patch_digest=patch_digest
+                )
+
+    def test_timer_derives_deadline_transitions_and_precedence(self) -> None:
+        reserved_runner, reserved_transcript, _ = self.runner_before(
+            "commitment_registration", "party_a_client"
+        )
+        reserved_runner.session_expires_at = "2026-07-21T00:00:31Z"
+        reserved_timer = {
+            "event_type": "authoritative_timer_event",
+            "event_version": "0.1",
+            "delivery_class": "timer",
+            "session_id": reserved_runner.base_context["session_context"]["session_id"],
+            "new_authoritative_time": reserved_runner.session_expires_at,
+            "reason_or_source_class": "SESSION_EXPIRY_THRESHOLD",
+            "prior_transcript_digest": reserved_transcript.head,
+        }
+        outcome, transition, findings = validator.apply_trace_timer_atomically(
+            reserved_runner, reserved_transcript, reserved_timer, self.timer_schema
+        )
+        self.assertEqual(
+            ("ACCEPTED", "TR-ADVANCE-TIME-EXPIRE", []),
+            (outcome, transition, findings),
+        )
+        self.assertEqual("EXPIRED", reserved_runner.phase)
+        self.assertEqual("EXPIRED", reserved_runner.query_budget_state)
+        delayed_party = next(
+            message
+            for message in self.trace_messages
+            if message["message_type"] == "session_acceptance"
+            and message["sender"]["actor"] == "party_a_client"
+        )
+        before = (
+            copy.deepcopy(reserved_runner.__dict__),
+            copy.deepcopy(reserved_transcript.__dict__),
+        )
+        outcome, findings = validator.apply_trace_message_atomically(
+            reserved_runner,
+            reserved_transcript,
+            delayed_party,
+            self.message_schema,
+            self.registry,
+            self.materials,
+        )
+        self.assertEqual(("EXACT_DUPLICATE", []), (outcome, findings))
+        self.assertEqual(
+            before, (reserved_runner.__dict__, reserved_transcript.__dict__)
+        )
+
+        # Session expiry has highest precedence, including a simultaneous
+        # evaluation deadline.
+        eval_runner, eval_transcript, _ = self.runner_before(
+            "evaluation_contribution", "party_a_client"
+        )
+        eval_runner.session_expires_at = eval_runner.evaluation_deadline
+        session_timer = {
+            "event_type": "authoritative_timer_event",
+            "event_version": "0.1",
+            "delivery_class": "timer",
+            "session_id": eval_runner.base_context["session_context"]["session_id"],
+            "new_authoritative_time": eval_runner.session_expires_at,
+            "reason_or_source_class": "SESSION_EXPIRY_THRESHOLD",
+            "prior_transcript_digest": eval_transcript.head,
+        }
+        outcome, transition, findings = validator.apply_trace_timer_atomically(
+            eval_runner, eval_transcript, session_timer, self.timer_schema
+        )
+        self.assertEqual(
+            ("ACCEPTED", "TR-ADVANCE-TIME-EXPIRE", []), (outcome, transition, findings)
+        )
+        self.assertEqual("EXPIRED", eval_runner.phase)
+        self.assertEqual("SESSION_EXPIRED", eval_runner.terminal_failure_code)
+        self.assertEqual("CONSUMED", eval_runner.query_budget_state)
+
+        timeout_runner, timeout_transcript, _ = self.runner_before(
+            "evaluation_contribution", "party_a_client"
+        )
+        timeout_timer = copy.deepcopy(session_timer)
+        timeout_timer["new_authoritative_time"] = timeout_runner.evaluation_deadline
+        timeout_timer["reason_or_source_class"] = "EVALUATION_DEADLINE"
+        timeout_timer["prior_transcript_digest"] = timeout_transcript.head
+        outcome, transition, findings = validator.apply_trace_timer_atomically(
+            timeout_runner, timeout_transcript, timeout_timer, self.timer_schema
+        )
+        self.assertEqual(
+            ("ACCEPTED", "TR-EVALUATION-TIMEOUT", []), (outcome, transition, findings)
+        )
+        self.assertEqual("ABORTED", timeout_runner.phase)
+        self.assertEqual("EVALUATION_TIMEOUT", timeout_runner.terminal_failure_code)
+
+        consent_runner, consent_transcript, _ = self.trace_before_timer()
+        consent_expiry = min(
+            consent["expires_at"]
+            for consent in consent_runner.consents.values()
+            if consent is not None
+        )
+        consent_timer = copy.deepcopy(session_timer)
+        consent_timer["new_authoritative_time"] = consent_expiry
+        consent_timer["reason_or_source_class"] = "CONSENT_EXPIRY_THRESHOLD"
+        consent_timer["prior_transcript_digest"] = consent_transcript.head
+        outcome, transition, findings = validator.apply_trace_timer_atomically(
+            consent_runner, consent_transcript, consent_timer, self.timer_schema
+        )
+        self.assertEqual(
+            ("ACCEPTED", "TR-CONSENT-EXPIRED", []), (outcome, transition, findings)
+        )
+        self.assertEqual("ABORTED", consent_runner.phase)
+        self.assertEqual("CONSENT_EXPIRED", consent_runner.terminal_failure_code)
+        self.assertEqual("NONE", consent_runner.disclosure_state)
 
     def test_rfc8785_dependency_is_exact_and_hash_locked(self) -> None:
         direct = (ROOT / "requirements-dev.in").read_text(encoding="utf-8")

@@ -427,7 +427,9 @@ values:
 - consent TTL: positive and no later than session expiry;
 - stale-message threshold: non-negative;
 - verification-material interval: closed-open validity range; and
-- evaluation timeout: bounded per selected profile and policy.
+- evaluation timeout: bounded per selected profile and policy; and
+- maximum authoritative-time jump: a reviewed finite non-negative bound carried
+  by the accepted session proposal, not a Party-controlled business duration.
 
 For party messages, validity is:
 
@@ -441,6 +443,11 @@ authoritative_time - message_stale_threshold
 deadline enters `ABORTED` with `EVALUATION_TIMEOUT`. A proposal crossing session
 expiry atomically updates time, enters `EXPIRED`, invalidates disclosure
 authorization, records `SESSION_EXPIRED`, and applies the budget disposition.
+When one proposal crosses several thresholds, the machine selects exactly one
+effect in this order: session expiry, evaluation timeout, active-consent expiry,
+then normal live advance. The reviewed reason/source class must match the
+derived effect and cannot select a transition. State effects and the canonical
+transcript append are committed together or not at all.
 The live-time relation is disabled at a crossed session, evaluation, or consent
 deadline, so no active post-deadline window exists. A same-time proposal is a
 no-op. Rollback, out-of-domain time, and policy-excessive jumps reject as
@@ -471,6 +478,14 @@ acceptance writes both indexes and the same prior response atomically. Exact
 retries are available even after terminalization and write no state, budget,
 release, disclosure, or audit. Timers are level-triggered and derived/local
 relations have no external retry semantics.
+
+Before current-head, time, or verification-material gates, an authoritative
+retry handler strictly parses the input, validates its Schema, recomputes its
+canonical digest, identifies the deduplication domain, and looks up an accepted
+record. A complete match returns only the domain/recipient-scoped cached
+response. Later expiry or revocation does not turn that response lookup into a
+new protocol event. Without an accepted record, all current-event gates apply;
+a stateless validator cannot infer or grant this historical duplicate path.
 
 The machine distinguishes party resend, coordinator operation resend, profile
 callback resend, timer re-evaluation, transient new-message retry, continuation

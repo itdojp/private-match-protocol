@@ -1691,7 +1691,10 @@
         "maximum_time_jump",
         "evaluation_deadline",
         "stale_message_relation",
-        "atomic_deadline_crossing"
+        "atomic_deadline_crossing",
+        "timer_threshold_precedence",
+        "timer_reason_effect_binding",
+        "timer_same_time_policy"
       ],
       "properties": {
         "authoritative_clock": {
@@ -1742,6 +1745,35 @@
         },
         "atomic_deadline_crossing": {
           "$ref": "#/$defs/nonEmptyString"
+        },
+        "timer_threshold_precedence": {
+          "const": [
+            "SESSION_EXPIRY_THRESHOLD",
+            "EVALUATION_DEADLINE",
+            "CONSENT_EXPIRY_THRESHOLD",
+            "COORDINATOR_CLOCK"
+          ]
+        },
+        "timer_reason_effect_binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "TR-ADVANCE-TIME-NOOP",
+            "TR-ADVANCE-TIME-LIVE",
+            "TR-ADVANCE-TIME-EXPIRE",
+            "TR-EVALUATION-TIMEOUT",
+            "TR-CONSENT-EXPIRED"
+          ],
+          "properties": {
+            "TR-ADVANCE-TIME-NOOP": { "const": "COORDINATOR_CLOCK" },
+            "TR-ADVANCE-TIME-LIVE": { "const": "COORDINATOR_CLOCK" },
+            "TR-ADVANCE-TIME-EXPIRE": { "const": "SESSION_EXPIRY_THRESHOLD" },
+            "TR-EVALUATION-TIMEOUT": { "const": "EVALUATION_DEADLINE" },
+            "TR-CONSENT-EXPIRED": { "const": "CONSENT_EXPIRY_THRESHOLD" }
+          }
+        },
+        "timer_same_time_policy": {
+          "$ref": "#/$defs/nonEmptyString"
         }
       }
     },
@@ -1768,7 +1800,11 @@
         "derived_transition_identity",
         "message_response_cache",
         "operation_independent_indexes",
-        "profile_callback_independent_indexes"
+        "profile_callback_independent_indexes",
+        "cached_response_validation_order",
+        "cached_response_dynamic_gate_exemptions",
+        "cached_response_effect",
+        "stateless_validator_boundary"
       ],
       "properties": {
         "replay_domain": {
@@ -1870,6 +1906,24 @@
             "callback_by_id",
             "callback_by_key"
           ]
+        },
+        "cached_response_validation_order": {
+          "type": "array",
+          "minItems": 6,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "cached_response_dynamic_gate_exemptions": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "cached_response_effect": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "stateless_validator_boundary": {
+          "$ref": "#/$defs/nonEmptyString"
         }
       }
     },

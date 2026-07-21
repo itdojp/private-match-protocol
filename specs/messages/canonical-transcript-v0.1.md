@@ -139,6 +139,14 @@ are assigned together only after all computations succeed. Invalid timer values,
 malformed digests, prior-head mismatch, and the `uint64` bound leave both fields
 unchanged.
 
+The reference trace path is stricter than the low-level digest append: it copies
+both the abstract State Machine runner and transcript, validates the timer
+schema/session/prior head/clock bound, derives exactly one transition, applies
+its state effects, and computes the append before committing either object.
+Threshold precedence is session expiry, evaluation timeout, active-consent
+expiry, then live advance. The caller-provided reason/source class must agree
+with the derived effect. A same-time no-op commits neither state nor transcript.
+
 ## Included and excluded relations
 
 Included exactly once:
@@ -162,6 +170,16 @@ A rejected or conflicting message does not enter the accepted transcript. An
 exact duplicate returns the prior normalized response and the previous
 transcript head. It cannot consume budget, repeat audit mutation, or append a
 second entry.
+
+An authoritative accepted-record lookup precedes the gates that are meaningful
+only for a new event. After strict parse/Schema/canonical-digest checks, a
+complete sender/operation/callback-domain identity match may return the stored,
+recipient-scoped response even if the current transcript head has advanced or
+the original message/material later expired or was revoked. Any changed ID,
+nonce, idempotency key, callback identity, digest, or domain is a conflict. If
+no accepted record exists, current prior-head, time, material, State Machine,
+and transcript checks all remain mandatory. A stateless file validator cannot
+infer this historical state and does not take the cached-response path.
 
 ## Ordering, omission, and prior binding
 

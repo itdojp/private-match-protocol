@@ -101,6 +101,22 @@ canonical message digest, and session/sender domain. It returns the prior
 normalized response and does not append the transcript. Reusing either identity
 with different data is `REPLAY_CONFLICT`.
 
+Authoritative processing classifies a possible exact duplicate before applying
+the current transcript-head, message-time, or verification-material validity
+gates. It still performs strict JSON and Schema validation, recomputes the
+canonical bytes and digest, resolves the replay domain, and requires a complete
+match against an accepted record. Only that cached-response path may ignore a
+later transcript head or a material/message expiry or revocation that occurred
+after original acceptance. It is not a new authenticated event and cannot
+change state, sequence, nonce, budget, audit, or transcript. A Party receives
+only the cached response in its own `(session_id, sender_participant_id)` domain.
+
+If no accepted record exists, the input follows the ordinary new-message path
+and must satisfy the current transcript, time, material, State Machine, and
+transcript-mutation checks. The stateless `validate_messages.py --file` path has
+no authoritative accepted-record store; it therefore validates the input as a
+current message and never fabricates exact-duplicate success.
+
 ### Coordinator command
 
 A coordinator command carries `actor_id`, `operation_id`, and an independently
@@ -125,6 +141,15 @@ session, and prior transcript. A mutating accepted timer event receives its own
 domain-separated canonical event digest. It has no Party nonce, sequence,
 message ID, or Party-supplied authoritative time. Same-threshold no-op
 re-evaluation does not append the transcript.
+
+The reference trace executor validates and applies the timer State Machine
+transition and the transcript append as one abstract transaction. The selected
+effect is derived from current state and thresholds, not chosen by the caller's
+reason label. The fixed precedence is session expiry, evaluation timeout,
+active-consent expiry, then live clock advance. The reason/source value must
+match that derived effect. Same-time input is a no-op. Any rejected guard,
+canonicalization failure, or transcript bound failure leaves both runner and
+transcript unchanged.
 
 ### Derived transition and local guidance
 

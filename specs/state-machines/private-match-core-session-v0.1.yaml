@@ -277,7 +277,7 @@ event_parameter_catalog:
     description: RFC 8785 and domain-separated message digest derived after complete authentication-input
       validation.
 - id: clock_policy
-  type: record<authoritative_time,session_expiry,allowed_skew,stale_threshold,evaluation_timeout>
+  type: record<authoritative_time,session_expiry,allowed_skew,stale_threshold,evaluation_timeout,maximum_jump>
   description: Typed policy parameters, not fixed business durations.
   fields:
   - id: authoritative_time
@@ -300,6 +300,10 @@ event_parameter_catalog:
     type: positive_duration
     required: true
     description: Evaluation deadline offset.
+  - id: maximum_jump
+    type: nonnegative_duration
+    required: true
+    description: Reviewed finite upper bound for one authoritative-time proposal; clients cannot override it.
 - id: participant_binding_parameter
   type: record<participant_id,key_id>
   description: One party binding for bind_participant_a or bind_participant_b.
@@ -1089,6 +1093,15 @@ state_variables:
   - party_b_client
   coordinator_access: read-write
   description: Maximum accepted age relative to authoritative time.
+- id: maximum_time_jump
+  type: nonnegative_policy_duration
+  initial: POLICY_PARAMETER
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  coordinator_access: read-write
+  description: Reviewed finite bound for one authoritative-time proposal; no Party or timer event can override it.
 - id: verification_material_validity
   type: record<not_before,not_after,status>
   initial: NONE
@@ -2461,6 +2474,7 @@ transitions:
     - clock_policy.allowed_skew
     - clock_policy.authoritative_time
     - clock_policy.evaluation_timeout
+    - clock_policy.maximum_jump
     - clock_policy.session_expiry
     - clock_policy.stale_threshold
   - id: G-OPERATION-TRANSCRIPT-CHAIN
@@ -2487,6 +2501,7 @@ transitions:
     - session_created_at
     - session_expires_at
     - authoritative_time
+    - maximum_time_jump
     - next_sequence
     - accepted_message_ids
     - accepted_nonces
@@ -2506,6 +2521,7 @@ transitions:
     - clock_policy.allowed_skew
     - clock_policy.authoritative_time
     - clock_policy.evaluation_timeout
+    - clock_policy.maximum_jump
     - clock_policy.session_expiry
     - clock_policy.stale_threshold
     - session_context.commitment_pair_id
@@ -8452,6 +8468,18 @@ clock_and_expiry:
     + allowed_clock_skew
   atomic_deadline_crossing: session expiry, evaluation timeout, or active consent expiry is terminalized
     atomically with the time update; no live window remains
+  timer_threshold_precedence:
+  - SESSION_EXPIRY_THRESHOLD
+  - EVALUATION_DEADLINE
+  - CONSENT_EXPIRY_THRESHOLD
+  - COORDINATOR_CLOCK
+  timer_reason_effect_binding:
+    TR-ADVANCE-TIME-NOOP: COORDINATOR_CLOCK
+    TR-ADVANCE-TIME-LIVE: COORDINATOR_CLOCK
+    TR-ADVANCE-TIME-EXPIRE: SESSION_EXPIRY_THRESHOLD
+    TR-EVALUATION-TIMEOUT: EVALUATION_DEADLINE
+    TR-CONSENT-EXPIRED: CONSENT_EXPIRY_THRESHOLD
+  timer_same_time_policy: same authoritative time in a live phase is a no-op with no transcript or audit append
 replay_and_ordering:
   replay_domain:
   - session_id
@@ -8500,6 +8528,19 @@ replay_and_ordering:
   profile_callback_independent_indexes:
   - callback_by_id
   - callback_by_key
+  cached_response_validation_order:
+  - strict JSON parse
+  - strict Schema validation
+  - canonical bytes and digest recomputation
+  - replay or idempotency domain lookup
+  - complete accepted-record identity and digest equality
+  - recipient-scoped normalized response lookup
+  cached_response_dynamic_gate_exemptions:
+  - current transcript head
+  - historical message expiry or staleness
+  - verification material expiry or revocation after original acceptance
+  cached_response_effect: return only the accepted record's prior recipient-scoped response; never mutate state, sequence, nonce, budget, audit, or transcript
+  stateless_validator_boundary: a stateless validator without authoritative accepted-record state validates as a current message and never fabricates exact-duplicate success
 retry_semantics:
   idempotent_resend: exact duplicate; return prior normalized response without budget or sequence change
   transient_message_retry: new message_id and nonce at the expected sequence after correcting a retryable
@@ -8889,6 +8930,7 @@ formalization:
   - authoritative_time
   - allowed_clock_skew
   - message_stale_threshold
+  - maximum_time_jump
   - verification_material_validity
   - next_sequence
   - accepted_message_ids
@@ -9282,6 +9324,7 @@ parameter_flow_contracts:
   - clock_policy.allowed_skew
   - clock_policy.authoritative_time
   - clock_policy.evaluation_timeout
+  - clock_policy.maximum_jump
   - clock_policy.session_expiry
   - clock_policy.stale_threshold
   - session_context.commitment_pair_id
@@ -9433,6 +9476,7 @@ parameter_flow_contracts:
   - clock_policy.allowed_skew
   - clock_policy.authoritative_time
   - clock_policy.evaluation_timeout
+  - clock_policy.maximum_jump
   - clock_policy.session_expiry
   - clock_policy.stale_threshold
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.

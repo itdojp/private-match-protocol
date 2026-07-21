@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,14 +13,19 @@ from typing import Any
 import yaml
 
 from canonicalize_message import (
-    append_transcript,
     canonicalize,
     populate_digests,
-    timer_event_digest,
     transcript_genesis_digest,
 )
 from strict_yaml import strict_yaml_load
-from validate_messages import AbstractStateRunner
+from validate_messages import (
+    MESSAGE_SCHEMA,
+    TIMER_SCHEMA,
+    AbstractStateRunner,
+    TranscriptState,
+    apply_trace_message_atomically,
+    apply_trace_timer_atomically,
+)
 
 
 REGISTRY_PATH = Path("registry/message-types.v0.1.yaml")
@@ -91,6 +97,7 @@ def _payload(message_type: str, party: str | None = None) -> dict[str, Any]:
                 "allowed_clock_skew_seconds": 60,
                 "message_stale_threshold_seconds": 300,
                 "evaluation_timeout_seconds": 600,
+                "maximum_time_jump_seconds": 3600,
             },
         },
         "session_acceptance": {
@@ -296,6 +303,8 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     registry = _load_yaml(root / REGISTRY_PATH)
     context = _load_yaml(root / CONTEXT_PATH)
     materials = _load_yaml(root / MATERIAL_PATH)
+    message_schema = json.loads((root / MESSAGE_SCHEMA).read_text(encoding="utf-8"))
+    timer_schema = json.loads((root / TIMER_SCHEMA).read_text(encoding="utf-8"))
     context["prior_transcript_digest"] = transcript_genesis_digest()
     files: dict[Path, bytes] = {
         CONTEXT_PATH: yaml.safe_dump(context, sort_keys=False).encode()
@@ -322,9 +331,9 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     }
     stage_contexts: dict[tuple[str, str | None], dict[str, Any]] = {}
     stage_runner = AbstractStateRunner(copy.deepcopy(context))
-    stage_head = transcript_genesis_digest()
+    stage_transcript = TranscriptState()
     for stage_index, (message_type, party) in enumerate(POSITIVE_TRACE_SEQUENCE, 1):
-        stage_context = stage_runner.context(stage_head)
+        stage_context = stage_runner.context(stage_transcript.head)
         stage_contexts[(message_type, party)] = copy.deepcopy(stage_context)
         stage_message = build_message(
             registry,
@@ -332,18 +341,22 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             message_type,
             party=party,
             serial=6000 + stage_index,
-            prior=stage_head,
+            prior=stage_transcript.head,
             sequence=stage_runner.next_sequence[party] if party else None,
         )
-        stage_findings = stage_runner.apply(stage_message, registry, materials)
-        if stage_findings:
+        stage_outcome, stage_findings = apply_trace_message_atomically(
+            stage_runner,
+            stage_transcript,
+            stage_message,
+            message_schema,
+            registry,
+            materials,
+        )
+        if stage_findings or stage_outcome != "ACCEPTED":
             raise ValueError(
                 "invalid standalone vector stage: "
                 + "; ".join(map(str, stage_findings))
             )
-        stage_head = append_transcript(
-            stage_head, stage_index, stage_message["message_digest"]
-        )
     full_context["session_context"]["commitment_pair_id"] = (
         stage_runner.commitment_pair_id
     )
@@ -762,32 +775,38 @@ def generated_files(root: Path) -> dict[Path, bytes]:
 
     # Build one authoritative positive chain.  Each message is rebuilt with the
     # actual prior head so routing/policy/authentication input is chain-bound.
-    head = transcript_genesis_digest()
+    transcript = TranscriptState()
     entries = []
     runner = AbstractStateRunner(copy.deepcopy(context))
     for index, (message_type, party) in enumerate(POSITIVE_TRACE_SEQUENCE, 1):
-        stage_context = runner.context(head)
+        stage_context = runner.context(transcript.head)
         message = build_message(
             registry,
             stage_context,
             message_type,
             party=party,
             serial=1000 + index,
-            prior=head,
+            prior=transcript.head,
             sequence=runner.next_sequence[party] if party else None,
         )
-        trace_findings = runner.apply(message, registry, materials)
-        if trace_findings:
+        outcome, trace_findings = apply_trace_message_atomically(
+            runner,
+            transcript,
+            message,
+            message_schema,
+            registry,
+            materials,
+        )
+        if trace_findings or outcome != "ACCEPTED":
             raise ValueError(
                 "invalid generated state trace: " + "; ".join(map(str, trace_findings))
             )
-        head = append_transcript(head, index, message["message_digest"])
         entries.append(
             {
                 "kind": "message",
                 "accepted_event_index": index,
                 "message": message,
-                "expected_head": head,
+                "expected_head": transcript.head,
             }
         )
     timer = {
@@ -797,39 +816,50 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         "session_id": runner.base_context["session_context"]["session_id"],
         "new_authoritative_time": "2026-07-21T00:00:31Z",
         "reason_or_source_class": "COORDINATOR_CLOCK",
-        "prior_transcript_digest": head,
+        "prior_transcript_digest": transcript.head,
     }
     index = len(entries) + 1
-    head = append_transcript(head, index, timer_event_digest(timer))
+    outcome, _, timer_findings = apply_trace_timer_atomically(
+        runner, transcript, timer, timer_schema
+    )
+    if timer_findings or outcome != "ACCEPTED":
+        raise ValueError(
+            "invalid generated timer transition: " + "; ".join(map(str, timer_findings))
+        )
     entries.append(
         {
             "kind": "timer",
             "accepted_event_index": index,
             "timer_event": timer,
-            "expected_head": head,
+            "expected_head": transcript.head,
         }
     )
-    runner.base_context["authoritative_time"] = timer["new_authoritative_time"]
     close_index = len(entries) + 1
     close_message = build_message(
         registry,
-        runner.context(head),
+        runner.context(transcript.head),
         "close_notice",
         serial=1000 + close_index,
-        prior=head,
+        prior=transcript.head,
     )
-    trace_findings = runner.apply(close_message, registry, materials)
-    if trace_findings:
+    close_outcome, trace_findings = apply_trace_message_atomically(
+        runner,
+        transcript,
+        close_message,
+        message_schema,
+        registry,
+        materials,
+    )
+    if trace_findings or close_outcome != "ACCEPTED":
         raise ValueError(
             "invalid generated close transition: " + "; ".join(map(str, trace_findings))
         )
-    head = append_transcript(head, close_index, close_message["message_digest"])
     entries.append(
         {
             "kind": "message",
             "accepted_event_index": close_index,
             "message": close_message,
-            "expected_head": head,
+            "expected_head": transcript.head,
         }
     )
 
@@ -868,7 +898,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         "schema_version": "0.1",
         "genesis_digest": transcript_genesis_digest(),
         "entries": entries,
-        "final_head": head,
+        "final_head": transcript.head,
         "duplicate_vectors": {
             "party_exact": entries[1]["message"],
             "party_changed_payload": party_conflict,

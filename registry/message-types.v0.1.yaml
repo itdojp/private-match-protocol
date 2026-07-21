@@ -94,6 +94,16 @@ messages:
         operation: G-CLOCK-POLICY
       - transition: TR-CREATE
         operation: E-CREATE
+  - source: payload.clock_policy.maximum_time_jump_seconds
+    destination:
+      kind: event-parameter
+      parameter: clock_policy
+      field: maximum_jump
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-CLOCK-POLICY
+      - transition: TR-CREATE
+        operation: E-CREATE
   - source: message.message_digest
     destination:
       kind: event-parameter
