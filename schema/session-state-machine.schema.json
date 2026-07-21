@@ -26,7 +26,10 @@
     "retry_semantics",
     "failure_taxonomy",
     "audit_policy",
-    "formalization"
+    "formalization",
+    "parameter_flow_contracts",
+    "envelope_binding_contracts",
+    "failure_projection_semantics"
   ],
   "properties": {
     "schema_version": {
@@ -123,6 +126,23 @@
     },
     "formalization": {
       "$ref": "#/$defs/formalization"
+    },
+    "parameter_flow_contracts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/parameterFlowContract"
+      }
+    },
+    "envelope_binding_contracts": {
+      "type": "array",
+      "minItems": 6,
+      "items": {
+        "$ref": "#/$defs/envelopeBindingContract"
+      }
+    },
+    "failure_projection_semantics": {
+      "$ref": "#/$defs/failureProjection"
     }
   },
   "$defs": {
@@ -190,7 +210,10 @@
         "UNKNOWN_STATE",
         "UNKNOWN_EVENT",
         "UNKNOWN_VERSION",
-        "UNKNOWN_FIELD"
+        "UNKNOWN_FIELD",
+        "CLOCK_DOMAIN_INVALID",
+        "CLOCK_ROLLBACK",
+        "CLOCK_JUMP_EXCEEDED"
       ]
     },
     "artifact": {
@@ -451,7 +474,8 @@
       "required": [
         "id",
         "type",
-        "description"
+        "description",
+        "fields"
       ],
       "properties": {
         "id": {
@@ -465,6 +489,13 @@
         "description": {
           "type": "string",
           "minLength": 1
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/parameterField"
+          }
         }
       }
     },
@@ -569,6 +600,9 @@
         },
         "global_invariant_observer": {
           "$ref": "#/$defs/globalInvariantObserver"
+        },
+        "recipient_projection": {
+          "$ref": "#/$defs/recipientProjection"
         }
       },
       "allOf": [
@@ -601,6 +635,67 @@
             "properties": {
               "visibility": {
                 "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "normalized_message_responses"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "recipient_projection"
+            ],
+            "properties": {
+              "visibility": {
+                "const": [
+                  "coordinator"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "terminal_failure_code"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "visibility": {
+                "const": [
+                  "coordinator",
+                  "assurance_pipeline"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "party_terminal_category"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "visibility": {
+                "const": [
+                  "coordinator",
+                  "party_a_client",
+                  "party_b_client",
+                  "assurance_pipeline"
+                ]
               }
             }
           }
@@ -1494,7 +1589,10 @@
         "profile_callback_domain",
         "profile_callback_identity",
         "timer_identity",
-        "derived_transition_identity"
+        "derived_transition_identity",
+        "message_response_cache",
+        "operation_independent_indexes",
+        "profile_callback_independent_indexes"
       ],
       "properties": {
         "replay_domain": {
@@ -1509,8 +1607,10 @@
         },
         "message_identity": {
           "const": [
+            "sender_participant_id",
             "message_id",
             "nonce",
+            "sequence",
             "issued_at",
             "canonical event digest"
           ]
@@ -1546,15 +1646,15 @@
         },
         "operation_domain": {
           "const": [
-            "actor_id",
-            "operation_id"
+            "actor_id"
           ]
         },
         "operation_identity": {
           "const": [
             "operation_id",
             "idempotency_key",
-            "canonical operation digest"
+            "canonical operation digest",
+            "current session binding"
           ]
         },
         "profile_callback_domain": {
@@ -1570,7 +1670,8 @@
           "const": [
             "callback_id",
             "idempotency_key",
-            "canonical callback digest"
+            "canonical callback digest",
+            "current profile/session/attempt binding"
           ]
         },
         "timer_identity": {
@@ -1578,6 +1679,21 @@
         },
         "derived_transition_identity": {
           "$ref": "#/$defs/nonEmptyString"
+        },
+        "message_response_cache": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "operation_independent_indexes": {
+          "const": [
+            "operation_by_id",
+            "operation_by_key"
+          ]
+        },
+        "profile_callback_independent_indexes": {
+          "const": [
+            "callback_by_id",
+            "callback_by_key"
+          ]
         }
       }
     },
@@ -1694,7 +1810,8 @@
             "CONSENT_ERROR",
             "DISCLOSURE_ERROR",
             "SESSION_UNAVAILABLE",
-            "UNSUPPORTED"
+            "UNSUPPORTED",
+            "CLOCK_ERROR"
           ]
         },
         "detail_visibility": {
@@ -2008,6 +2125,183 @@
         },
         "implementation_actor_access": {
           "const": false
+        }
+      }
+    },
+    "parameterField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "required",
+        "description"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "type": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "required": {
+          "const": true
+        },
+        "description": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "parameterFlowContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "required_parameter_reads",
+        "description"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_-]*$"
+        },
+        "kind": {
+          "enum": [
+            "predicate",
+            "operation"
+          ]
+        },
+        "required_parameter_reads": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+          }
+        },
+        "description": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "envelopeBindingContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "delivery_class",
+        "parameter_path",
+        "operator",
+        "state_path",
+        "failure_code"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^BIND-[A-Z0-9-]+$"
+        },
+        "delivery_class": {
+          "enum": [
+            "coordinator_command",
+            "profile_callback"
+          ]
+        },
+        "parameter_path": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+        },
+        "operator": {
+          "const": "equals"
+        },
+        "state_path": {
+          "type": "string",
+          "pattern": "^(?:transition|state)\\.[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$"
+        },
+        "failure_code": {
+          "const": "REPLAY_CONFLICT"
+        }
+      }
+    },
+    "recipientProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replay_domain",
+        "recipient_by_sender",
+        "whole_map_party_access",
+        "peer_entry_access"
+      ],
+      "properties": {
+        "replay_domain": {
+          "const": [
+            "session_id",
+            "sender_participant_id"
+          ]
+        },
+        "recipient_by_sender": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "A",
+            "B"
+          ],
+          "properties": {
+            "A": {
+              "const": "party_a_client"
+            },
+            "B": {
+              "const": "party_b_client"
+            }
+          }
+        },
+        "whole_map_party_access": {
+          "const": false
+        },
+        "peer_entry_access": {
+          "const": "forbidden"
+        }
+      }
+    },
+    "failureProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detail_state_variable",
+        "party_state_variable",
+        "mapping_source",
+        "atomic_terminal_projection",
+        "normalized_response_allowed_fields",
+        "normalized_response_prohibited_fields",
+        "public_audit_prohibited_fields",
+        "description"
+      ],
+      "properties": {
+        "detail_state_variable": {
+          "const": "terminal_failure_code"
+        },
+        "party_state_variable": {
+          "const": "party_terminal_category"
+        },
+        "mapping_source": {
+          "const": "failure_taxonomy.party_error_category"
+        },
+        "atomic_terminal_projection": {
+          "const": true
+        },
+        "normalized_response_allowed_fields": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "normalized_response_prohibited_fields": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "public_audit_prohibited_fields": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "description": {
+          "$ref": "#/$defs/nonEmptyString"
         }
       }
     }

@@ -103,13 +103,15 @@ REQUIRED_STATE_VARIABLES = {
     "next_sequence",
     "accepted_message_ids",
     "accepted_nonces",
-    "accepted_operation_ids",
-    "accepted_operation_digests",
-    "normalized_operation_responses",
-    "accepted_profile_callback_ids",
-    "accepted_profile_callback_digests",
-    "normalized_profile_callback_responses",
-    "terminal_reason",
+    "accepted_message_records",
+    "normalized_message_responses",
+    "operation_by_id",
+    "operation_by_key",
+    "callback_by_id",
+    "callback_by_key",
+    "selected_integration_profile_binding",
+    "terminal_failure_code",
+    "party_terminal_category",
 }
 REQUIRED_INVARIANTS = {
     "INV-REVEAL-SAFETY",
@@ -156,6 +158,9 @@ REQUIRED_FAILURE_CODES = {
     "UNKNOWN_EVENT",
     "UNKNOWN_VERSION",
     "UNKNOWN_FIELD",
+    "CLOCK_DOMAIN_INVALID",
+    "CLOCK_ROLLBACK",
+    "CLOCK_JUMP_EXCEEDED",
 }
 REQUIRED_DISCLOSURE_GUARDS = {
     "G-DISCLOSURE-MATCH",
@@ -188,6 +193,7 @@ PROHIBITED_AUDIT_FIELDS = {
     "secret consent payload",
     "local secret",
     "actual disclosure payload",
+    "raw failure code",
 }
 REQUIRED_SCOPE_EXCLUSIONS = {
     "PET selection or cryptographic implementation",
@@ -255,6 +261,65 @@ SESSION_ABORT_CODES = {
     "CONSENT_EXPIRED",
     "CONSENT_WITHDRAWN",
     "UNKNOWN_STATE",
+}
+PARTY_ERROR_CATEGORIES = {
+    "BINDING_ERROR",
+    "VERSION_ERROR",
+    "REPLAY_ERROR",
+    "ORDERING_ERROR",
+    "COMMITMENT_ERROR",
+    "AUTHORIZATION_ERROR",
+    "VERIFICATION_ERROR",
+    "EVALUATION_ERROR",
+    "RESULT_ERROR",
+    "CONSENT_ERROR",
+    "DISCLOSURE_ERROR",
+    "SESSION_UNAVAILABLE",
+    "UNSUPPORTED",
+    "CLOCK_ERROR",
+}
+CLOCK_FAILURE_CODES = {
+    "CLOCK_DOMAIN_INVALID",
+    "CLOCK_ROLLBACK",
+    "CLOCK_JUMP_EXCEEDED",
+}
+AUTHORITATIVE_TIME_FAILURE_CODES = {
+    *CLOCK_FAILURE_CODES,
+    "SESSION_CLOSED",
+    "SESSION_ABORTED",
+    "SESSION_EXPIRED",
+}
+REQUIRED_ENVELOPE_BINDINGS = {
+    (
+        "coordinator_command",
+        "operation_envelope.actor_id",
+        "transition.actor",
+    ),
+    (
+        "profile_callback",
+        "profile_callback_envelope.profile_id",
+        "state.selected_integration_profile_binding.profile_id",
+    ),
+    (
+        "profile_callback",
+        "profile_callback_envelope.profile_version",
+        "state.selected_integration_profile_binding.profile_version",
+    ),
+    (
+        "profile_callback",
+        "profile_callback_envelope.profile_instance_id",
+        "state.selected_integration_profile_binding.profile_instance_id",
+    ),
+    (
+        "profile_callback",
+        "profile_callback_envelope.session_id",
+        "state.session_id",
+    ),
+    (
+        "profile_callback",
+        "profile_callback_envelope.evaluation_attempt_id",
+        "state.evaluation_attempt_id",
+    ),
 }
 
 
@@ -502,22 +567,25 @@ def authoritative_time_transition(
         not isinstance(current, int)
         or not isinstance(new_authoritative_time, int)
         or not isinstance(maximum_jump, int)
+        or current < 0
+        or new_authoritative_time < 0
         or maximum_jump < 0
     ):
-        return dict(state), ["TIME_DOMAIN"]
+        return dict(state), ["CLOCK_DOMAIN_INVALID"]
     if state.get("phase") in TERMINAL_PHASES:
-        return dict(state), ["TERMINAL_STATE"]
+        return dict(state), [f"SESSION_{state['phase']}"]
     if new_authoritative_time < current:
-        return dict(state), ["TIME_ROLLBACK"]
+        return dict(state), ["CLOCK_ROLLBACK"]
     if new_authoritative_time - current > maximum_jump:
-        return dict(state), ["TIME_JUMP_EXCEEDED"]
+        return dict(state), ["CLOCK_JUMP_EXCEEDED"]
 
     updated = dict(state)
     updated["authoritative_time"] = new_authoritative_time
     session_expiry = state.get("session_expires_at")
     if isinstance(session_expiry, int) and new_authoritative_time >= session_expiry:
         updated["phase"] = "EXPIRED"
-        updated["terminal_reason"] = "SESSION_EXPIRED"
+        updated["terminal_failure_code"] = "SESSION_EXPIRED"
+        updated["party_terminal_category"] = "SESSION_UNAVAILABLE"
         updated["disclosure_state"] = "NONE"
         updated["query_budget_state"] = terminal_budget_disposition(
             str(state.get("query_budget_state")),
@@ -533,7 +601,8 @@ def authoritative_time_transition(
         and new_authoritative_time >= deadline
     ):
         updated["phase"] = "ABORTED"
-        updated["terminal_reason"] = "EVALUATION_TIMEOUT"
+        updated["terminal_failure_code"] = "EVALUATION_TIMEOUT"
+        updated["party_terminal_category"] = "EVALUATION_ERROR"
         updated["disclosure_state"] = "NONE"
         return updated, []
 
@@ -553,9 +622,107 @@ def authoritative_time_transition(
             for expiry in expiries
         ):
             updated["phase"] = "ABORTED"
-            updated["terminal_reason"] = "CONSENT_EXPIRED"
+            updated["terminal_failure_code"] = "CONSENT_EXPIRED"
+            updated["party_terminal_category"] = "CONSENT_ERROR"
             updated["disclosure_state"] = "NONE"
     return updated, []
+
+
+def message_response_outcome(
+    registry: dict[tuple[str, str, str], dict[str, Any]],
+    session_id: str,
+    sender_participant_id: str,
+    message_id: str,
+    nonce: str,
+    sequence: int,
+    issued_at: int,
+    canonical_digest_value: str,
+) -> tuple[str, str | None]:
+    """Classify a sender-scoped message retry without peer-domain access."""
+
+    prior = registry.get((session_id, sender_participant_id, message_id))
+    if prior is None:
+        return "new", None
+    identity = {
+        "nonce": nonce,
+        "sequence": sequence,
+        "issued_at": issued_at,
+        "canonical_digest": canonical_digest_value,
+    }
+    if all(prior.get(key) == value for key, value in identity.items()):
+        response = prior.get("normalized_response")
+        return "exact-duplicate", response if isinstance(response, str) else None
+    return "REPLAY_CONFLICT", None
+
+
+def independent_idempotency_outcome(
+    by_id: dict[tuple[str, str], dict[str, str]],
+    by_key: dict[tuple[str, str], dict[str, str]],
+    domain: str,
+    identifier: str,
+    idempotency_key: str,
+    canonical_digest_value: str,
+) -> tuple[str, str | None]:
+    """Check ID and idempotency-key indexes independently and fail closed."""
+
+    prior_by_id = by_id.get((domain, identifier))
+    prior_by_key = by_key.get((domain, idempotency_key))
+    if prior_by_id is None and prior_by_key is None:
+        return "new", None
+    if prior_by_id is None or prior_by_key is None:
+        return "REPLAY_CONFLICT", None
+    expected_by_id = {
+        "idempotency_key": idempotency_key,
+        "canonical_digest": canonical_digest_value,
+    }
+    expected_by_key = {
+        "identifier": identifier,
+        "canonical_digest": canonical_digest_value,
+    }
+    if not all(prior_by_id.get(key) == value for key, value in expected_by_id.items()):
+        return "REPLAY_CONFLICT", None
+    if not all(
+        prior_by_key.get(key) == value for key, value in expected_by_key.items()
+    ):
+        return "REPLAY_CONFLICT", None
+    response_by_id = prior_by_id.get("normalized_response")
+    response_by_key = prior_by_key.get("normalized_response")
+    if response_by_id != response_by_key or not isinstance(response_by_id, str):
+        return "REPLAY_CONFLICT", None
+    return "exact-duplicate", response_by_id
+
+
+def operation_envelope_failures(
+    transition_actor: str, envelope: dict[str, Any]
+) -> list[str]:
+    """Fail closed when a coordinator operation claims another actor domain."""
+
+    if (
+        transition_actor != "coordinator"
+        or envelope.get("actor_id") != transition_actor
+    ):
+        return ["REPLAY_CONFLICT"]
+    return []
+
+
+def profile_callback_binding_failures(
+    state: dict[str, Any], envelope: dict[str, Any]
+) -> list[str]:
+    """Compare a callback envelope to the current abstract profile/session/attempt."""
+
+    selected = state.get("selected_integration_profile_binding")
+    if not isinstance(selected, dict):
+        return ["REPLAY_CONFLICT"]
+    expected = {
+        "profile_id": selected.get("profile_id"),
+        "profile_version": selected.get("profile_version"),
+        "profile_instance_id": selected.get("profile_instance_id"),
+        "session_id": state.get("session_id"),
+        "evaluation_attempt_id": state.get("evaluation_attempt_id"),
+    }
+    if any(envelope.get(key) != value for key, value in expected.items()):
+        return ["REPLAY_CONFLICT"]
+    return []
 
 
 def duplicate_delivery_outcome(
@@ -565,15 +732,24 @@ def duplicate_delivery_outcome(
     idempotency_key: str,
     canonical_digest_value: str,
 ) -> str:
-    """Classify a scoped operation or callback delivery without mutating state."""
+    """Deprecated compatibility classifier for the earlier draft test surface."""
 
-    key = (domain, identifier, idempotency_key)
-    prior = registry.get(key)
+    prior = registry.get((domain, identifier, idempotency_key))
     if prior is None:
         return "new"
     if prior == canonical_digest_value:
         return "exact-duplicate"
     return "REPLAY_CONFLICT"
+
+
+def party_error_category(model: dict[str, Any], failure_code: str) -> str | None:
+    """Return only the reviewed Party projection for a detailed failure."""
+
+    for failure in model.get("failure_taxonomy", []):
+        if failure.get("code") == failure_code:
+            category = failure.get("party_error_category")
+            return category if category in PARTY_ERROR_CATEGORIES else None
+    return None
 
 
 def generic_abort_guard_failures(
@@ -609,7 +785,8 @@ def apply_generic_abort(
         return dict(state), failures
     updated = dict(state)
     updated["phase"] = "ABORTED"
-    updated["terminal_reason"] = failure_code
+    updated["terminal_failure_code"] = failure_code
+    updated["party_terminal_category"] = party_error_category(model, failure_code)
     updated["disclosure_state"] = "NONE"
     updated["query_budget_state"] = terminal_budget_disposition(
         str(state.get("query_budget_state")),
@@ -736,6 +913,75 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
     transition_index = _index(transitions)
     variable_index = _index(variables)
 
+    # Event parameters are field catalogs, and predicate/operation contracts
+    # make every incoming value consumed by the state relation explicit.
+    parameter_catalog = _index(event_parameters)
+    parameter_paths: set[str] = set()
+    for parameter_id, parameter in parameter_catalog.items():
+        fields = parameter.get("fields", [])
+        field_ids = [item.get("id", "") for item in fields if isinstance(item, dict)]
+        for duplicate in _duplicates(field_ids):
+            findings.append(
+                _finding(
+                    "parameter-flow",
+                    f"event_parameter_catalog.{parameter_id}.fields",
+                    f"duplicate field {duplicate}",
+                )
+            )
+        for field_id in field_ids:
+            parameter_paths.add(f"{parameter_id}.{field_id}")
+
+    flow_contracts = model.get("parameter_flow_contracts", [])
+    contract_index: dict[tuple[str, str], dict[str, Any]] = {}
+    for index, contract in enumerate(flow_contracts):
+        key = (str(contract.get("kind", "")), str(contract.get("id", "")))
+        if key in contract_index:
+            findings.append(
+                _finding(
+                    "parameter-flow",
+                    f"parameter_flow_contracts.{index}",
+                    f"duplicate contract {key[0]} {key[1]}",
+                )
+            )
+        contract_index[key] = contract
+        unknown = set(contract.get("required_parameter_reads", [])) - parameter_paths
+        if unknown:
+            findings.append(
+                _finding(
+                    "parameter-flow",
+                    f"parameter_flow_contracts.{index}.required_parameter_reads",
+                    f"unknown parameter paths: {', '.join(sorted(unknown))}",
+                )
+            )
+
+    envelope_bindings = model.get("envelope_binding_contracts", [])
+    actual_envelope_bindings = {
+        (
+            str(item.get("delivery_class", "")),
+            str(item.get("parameter_path", "")),
+            str(item.get("state_path", "")),
+        )
+        for item in envelope_bindings
+        if isinstance(item, dict)
+        and item.get("operator") == "equals"
+        and item.get("failure_code") == "REPLAY_CONFLICT"
+    }
+    missing_envelope_bindings = REQUIRED_ENVELOPE_BINDINGS - actual_envelope_bindings
+    if missing_envelope_bindings:
+        findings.append(
+            _finding(
+                "envelope-binding",
+                "envelope_binding_contracts",
+                "missing exact bindings: "
+                + ", ".join(
+                    sorted(
+                        f"{delivery}:{parameter}->{state}"
+                        for delivery, parameter, state in missing_envelope_bindings
+                    )
+                ),
+            )
+        )
+
     for phase_id in REQUIRED_PHASES:
         phase = phase_index.get(phase_id, {})
         expected_terminal = phase_id in TERMINAL_PHASES
@@ -814,7 +1060,8 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                 event_parameters_for_transition = set(
                     event_definition.get("parameters", [])
                 )
-                for parameter_read in item.get("parameter_reads", []):
+                parameter_reads = set(item.get("parameter_reads", []))
+                for parameter_read in parameter_reads:
                     parameter = str(parameter_read).split(".", 1)[0]
                     if parameter not in event_parameters_for_transition:
                         findings.append(
@@ -822,6 +1069,28 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                                 "reference",
                                 f"{path}.{kind}.{item_index}.parameter_reads",
                                 f"event does not declare parameter {parameter}",
+                            )
+                        )
+                    if parameter_read not in parameter_paths:
+                        findings.append(
+                            _finding(
+                                "parameter-flow",
+                                f"{path}.{kind}.{item_index}.parameter_reads",
+                                f"unknown parameter field {parameter_read}",
+                            )
+                        )
+                contract_kind = "predicate" if kind == "guards" else "operation"
+                contract = contract_index.get((contract_kind, str(item.get("id", ""))))
+                if contract:
+                    required_reads = set(contract.get("required_parameter_reads", []))
+                    missing_reads = required_reads - parameter_reads
+                    if missing_reads:
+                        findings.append(
+                            _finding(
+                                "parameter-flow",
+                                f"{path}.{kind}.{item_index}.parameter_reads",
+                                "missing contract fields: "
+                                + ", ".join(sorted(missing_reads)),
                             )
                         )
 
@@ -874,6 +1143,29 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                             f"undefined state variable {variable}",
                         )
                     )
+            parameter_reads = set(condition.get("parameter_reads", []))
+            unknown = parameter_reads - parameter_paths
+            if unknown:
+                findings.append(
+                    _finding(
+                        "parameter-flow",
+                        f"{path}.conditions.{condition_index}.parameter_reads",
+                        f"unknown parameter fields: {', '.join(sorted(unknown))}",
+                    )
+                )
+            contract = contract_index.get(("predicate", str(condition.get("id", ""))))
+            if contract:
+                missing = (
+                    set(contract.get("required_parameter_reads", [])) - parameter_reads
+                )
+                if missing:
+                    findings.append(
+                        _finding(
+                            "parameter-flow",
+                            f"{path}.conditions.{condition_index}.parameter_reads",
+                            f"missing contract fields: {', '.join(sorted(missing))}",
+                        )
+                    )
 
     for event_id in sorted(event_ids):
         if not any(transition.get("event") == event_id for transition in transitions):
@@ -900,6 +1192,24 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                         f"undefined abstract event parameter {parameter}",
                     )
                 )
+        used_parameters = {
+            parameter_read.split(".", 1)[0]
+            for transition in transitions
+            if transition.get("event") == event.get("id")
+            for collection in ("guards", "effects")
+            for item in transition.get(collection, [])
+            for parameter_read in item.get("parameter_reads", [])
+        }
+        unused_parameters = set(event.get("parameters", [])) - used_parameters
+        if unused_parameters:
+            findings.append(
+                _finding(
+                    "parameter-flow",
+                    f"events.{index}.parameters",
+                    "declared required parameters are unused: "
+                    + ", ".join(sorted(unused_parameters)),
+                )
+            )
         unexpected_audit = set(event.get("audit_fields", [])) - REQUIRED_AUDIT_FIELDS
         if unexpected_audit:
             findings.append(
@@ -1149,6 +1459,79 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                     )
                 )
 
+        for guard_item in transition.get("guards", []):
+            if guard_item.get("id") == "G-OPERATION-DEDUP":
+                if (
+                    set(guard_item.get("reads", []))
+                    != {
+                        "operation_by_id",
+                        "operation_by_key",
+                    }
+                    or guard_item.get("predicate")
+                    != "new_or_exact_actor_scoped_operation"
+                    or "operation_envelope.actor_id"
+                    not in guard_item.get("parameter_reads", [])
+                ):
+                    findings.append(
+                        _finding(
+                            "independent-idempotency-key",
+                            transition.get("id", "transition"),
+                            "operation dedup must check actor-bound ID and key indexes independently",
+                        )
+                    )
+            if guard_item.get("id") == "G-PROFILE-CALLBACK-DEDUP":
+                if (
+                    not {
+                        "callback_by_id",
+                        "callback_by_key",
+                        "selected_integration_profile_binding",
+                        "session_id",
+                        "evaluation_attempt_id",
+                    }.issubset(set(guard_item.get("reads", [])))
+                    or guard_item.get("predicate") != "new_or_exact_profile_callback"
+                ):
+                    findings.append(
+                        _finding(
+                            "independent-idempotency-key",
+                            transition.get("id", "transition"),
+                            "callback dedup must check both indexes and current profile/session/attempt binding",
+                        )
+                    )
+        for effect_item in transition.get("effects", []):
+            if effect_item.get("id") == "E-ACCEPT-OPERATION" and set(
+                effect_item.get("writes", [])
+            ) != {"operation_by_id", "operation_by_key"}:
+                findings.append(
+                    _finding(
+                        "independent-idempotency-key",
+                        transition.get("id", "transition"),
+                        "first operation acceptance must atomically write both indexes",
+                    )
+                )
+            if effect_item.get("id") == "E-ACCEPT-PROFILE-CALLBACK" and set(
+                effect_item.get("writes", [])
+            ) != {"callback_by_id", "callback_by_key"}:
+                findings.append(
+                    _finding(
+                        "independent-idempotency-key",
+                        transition.get("id", "transition"),
+                        "first callback acceptance must atomically write both indexes",
+                    )
+                )
+
+        if transition.get("to_phase") in {"ABORTED", "EXPIRED"}:
+            writes = _transition_writes(transition)
+            if not {"terminal_failure_code", "party_terminal_category"}.issubset(
+                writes
+            ):
+                findings.append(
+                    _finding(
+                        "failure-projection",
+                        transition.get("id", "transition"),
+                        "terminal detail and Party category must be written atomically",
+                    )
+                )
+
     result_values = model.get("artifact", {}).get("decision_output")
     if result_values != ["MATCH", "NO_MATCH", "INDETERMINATE"]:
         findings.append(
@@ -1275,9 +1658,9 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                     "formal comparison must not grant implementation actor access",
                 )
             )
-        projection = variable.get("coordinator_projection", {})
-        permitted = set(projection.get("permitted_fields", []))
-        prohibited = set(projection.get("prohibited_fields", []))
+        coordinator_projection = variable.get("coordinator_projection", {})
+        permitted = set(coordinator_projection.get("permitted_fields", []))
+        prohibited = set(coordinator_projection.get("prohibited_fields", []))
         expected_permitted = (
             {"opaque_receipt_ref", "normalized_ack_status"}
             if result_variable == "result_ack"
@@ -1292,6 +1675,116 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                     "result-visibility",
                     f"state_variables.{result_variable}.coordinator_projection",
                     "coordinator projection must exclude local result values and bindings",
+                )
+            )
+
+    message_cache = variable_index.get("normalized_message_responses", {})
+    expected_recipient_projection = {
+        "replay_domain": ["session_id", "sender_participant_id"],
+        "recipient_by_sender": {
+            "A": "party_a_client",
+            "B": "party_b_client",
+        },
+        "whole_map_party_access": False,
+        "peer_entry_access": "forbidden",
+    }
+    if (
+        message_cache.get("visibility") != ["coordinator"]
+        or message_cache.get("recipient_projection") != expected_recipient_projection
+    ):
+        findings.append(
+            _finding(
+                "message-response-scope",
+                "state_variables.normalized_message_responses",
+                "message responses require coordinator-only whole-map access and own-sender recipient projections",
+            )
+        )
+    accepted_records = variable_index.get("accepted_message_records", {})
+    accepted_record_type = str(accepted_records.get("type", ""))
+    if not {
+        "replay_domain",
+        "message_id",
+        "nonce",
+        "sequence",
+        "issued_at",
+        "canonical_event_digest",
+    }.issubset(
+        set(accepted_record_type.replace("<", ",").replace(">", ",").split(","))
+    ):
+        findings.append(
+            _finding(
+                "message-response-scope",
+                "state_variables.accepted_message_records",
+                "accepted message identity must persist domain, ID, nonce, sequence, issued_at, and canonical digest",
+            )
+        )
+
+    operation_variables = {"operation_by_id", "operation_by_key"}
+    callback_variables = {"callback_by_id", "callback_by_key"}
+    if not operation_variables.issubset(variable_ids):
+        findings.append(
+            _finding(
+                "independent-idempotency-key",
+                "state_variables",
+                "coordinator operations require independent ID and key indexes",
+            )
+        )
+    if not callback_variables.issubset(variable_ids):
+        findings.append(
+            _finding(
+                "independent-idempotency-key",
+                "state_variables",
+                "profile callbacks require independent ID and key indexes",
+            )
+        )
+
+    detailed_failure = variable_index.get("terminal_failure_code", {})
+    party_failure = variable_index.get("party_terminal_category", {})
+    if detailed_failure.get("visibility") != ["coordinator", "assurance_pipeline"]:
+        findings.append(
+            _finding(
+                "failure-projection",
+                "state_variables.terminal_failure_code.visibility",
+                "detailed failure code is coordinator/private-assurance only",
+            )
+        )
+    if not {
+        "party_a_client",
+        "party_b_client",
+    }.issubset(set(party_failure.get("visibility", []))):
+        findings.append(
+            _finding(
+                "failure-projection",
+                "state_variables.party_terminal_category.visibility",
+                "both Parties require only the reviewed normalized category projection",
+            )
+        )
+    projection = model.get("failure_projection_semantics", {})
+    if (
+        projection.get("detail_state_variable") != "terminal_failure_code"
+        or projection.get("party_state_variable") != "party_terminal_category"
+        or projection.get("mapping_source") != "failure_taxonomy.party_error_category"
+        or projection.get("atomic_terminal_projection") is not True
+        or not {
+            "terminal_failure_code",
+            "raw failure_code",
+            "private failure detail",
+        }.issubset(set(projection.get("normalized_response_prohibited_fields", [])))
+    ):
+        findings.append(
+            _finding(
+                "failure-projection",
+                "failure_projection_semantics",
+                "raw detail must be separated from the taxonomy-derived Party projection and normalized response",
+            )
+        )
+    for failure in failures:
+        if failure.get("party_error_category") not in PARTY_ERROR_CATEGORIES:
+            findings.append(
+                _finding(
+                    "failure-projection",
+                    f"failure_taxonomy.{failure.get('code')}.party_error_category",
+                    "unknown Party error category",
                 )
             )
 
@@ -1733,6 +2226,54 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                     "clock event must be a timer with only time_advance_parameter",
                 )
             )
+        if event.get("default_failure_code") != "CLOCK_DOMAIN_INVALID":
+            findings.append(
+                _finding(
+                    "clock-taxonomy",
+                    f"events.{event_id}.default_failure_code",
+                    "timer default must use the clock-specific declared taxonomy",
+                )
+            )
+    if not AUTHORITATIVE_TIME_FAILURE_CODES.issubset(failure_code_ids):
+        findings.append(
+            _finding(
+                "clock-taxonomy",
+                "failure_taxonomy",
+                "authoritative-time helper outcomes must all be declared",
+            )
+        )
+    for code in CLOCK_FAILURE_CODES:
+        failure = next((item for item in failures if item.get("code") == code), {})
+        if failure.get(
+            "party_error_category"
+        ) != "CLOCK_ERROR" or "coordinator" not in str(
+            failure.get("detail_visibility", "")
+        ):
+            findings.append(
+                _finding(
+                    "clock-taxonomy",
+                    f"failure_taxonomy.{code}",
+                    "clock detail must map to CLOCK_ERROR and remain coordinator/private-assurance only",
+                )
+            )
+    for transition in transitions:
+        if transition.get("event") not in {
+            "advance_authoritative_time",
+            "expire_session",
+        }:
+            continue
+        failures_for_transition = set(transition.get("failure_code", []))
+        if (
+            "STALE_MESSAGE" in failures_for_transition
+            or not CLOCK_FAILURE_CODES.issubset(failures_for_transition)
+        ):
+            findings.append(
+                _finding(
+                    "clock-taxonomy",
+                    transition.get("id", "transition"),
+                    "timer failures must declare clock codes and never reuse STALE_MESSAGE",
+                )
+            )
     live_time = transition_index.get("TR-ADVANCE-TIME-LIVE", {})
     if _transition_writes(live_time) != {"authoritative_time"} or not {
         "G-TIME-MONOTONIC",
@@ -1752,7 +2293,8 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
         "authoritative_time",
         "phase",
         "disclosure_state",
-        "terminal_reason",
+        "terminal_failure_code",
+        "party_terminal_category",
         "query_budget_state",
     }.issubset(_transition_writes(expire_transition)):
         findings.append(
@@ -1830,7 +2372,9 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
         or abort_guard.get("reads")
         or abort_guard.get("parameter_reads")
         != ["normalized_failure_parameter.failure_code"]
-        or "terminal_reason" not in abort_effect.get("writes", [])
+        or not {"terminal_failure_code", "party_terminal_category"}.issubset(
+            set(abort_effect.get("writes", []))
+        )
         or abort_effect.get("parameter_reads")
         != ["normalized_failure_parameter.failure_code"]
         or invalid_abort_codes
@@ -1866,7 +2410,9 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
         if (
             withdrawal.get("to_phase") != "ABORTED"
             or "CONSENT_WITHDRAWN" not in withdrawal.get("failure_code", [])
-            or "terminal_reason" not in _transition_writes(withdrawal)
+            or not {"terminal_failure_code", "party_terminal_category"}.issubset(
+                _transition_writes(withdrawal)
+            )
         ):
             findings.append(
                 _finding(
@@ -1899,8 +2445,10 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
             )
         )
     if replay.get("message_identity") != [
+        "sender_participant_id",
         "message_id",
         "nonce",
+        "sequence",
         "issued_at",
         "canonical event digest",
     ]:
@@ -1908,17 +2456,24 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
             _finding(
                 "idempotency",
                 "replay_and_ordering.message_identity",
-                "party message identity requires message_id, nonce, issued_at, and canonical digest",
+                "party message identity requires sender, message ID, nonce, sequence, issued_at, and canonical digest",
             )
         )
-    if replay.get("operation_domain") != [
-        "actor_id",
-        "operation_id",
-    ] or replay.get("operation_identity") != [
-        "operation_id",
-        "idempotency_key",
-        "canonical operation digest",
-    ]:
+    if (
+        replay.get("operation_domain") != ["actor_id"]
+        or replay.get("operation_identity")
+        != [
+            "operation_id",
+            "idempotency_key",
+            "canonical operation digest",
+            "current session binding",
+        ]
+        or replay.get("operation_independent_indexes")
+        != [
+            "operation_by_id",
+            "operation_by_key",
+        ]
+    ):
         findings.append(
             _finding(
                 "delivery-class",
@@ -1930,6 +2485,10 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
         "callback_id",
         "idempotency_key",
         "canonical callback digest",
+        "current profile/session/attempt binding",
+    ] or replay.get("profile_callback_independent_indexes") != [
+        "callback_by_id",
+        "callback_by_key",
     ]:
         findings.append(
             _finding(
@@ -1971,14 +2530,44 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
     for party in ("A", "B"):
         retry_id = f"TR-RETRY-EXACT-DUPLICATE-{party}"
         retry = transition_index.get(retry_id, {})
+        exact_guard = next(
+            (
+                item
+                for item in retry.get("guards", [])
+                if item.get("id") == f"G-EXACT-DUPLICATE-{party}"
+            ),
+            {},
+        )
+        prior_guard = next(
+            (
+                item
+                for item in retry.get("guards", [])
+                if item.get("id") == f"G-PRIOR-RESPONSE-{party}"
+            ),
+            {},
+        )
         if (
             retry.get("mutating") is not False
             or _transition_writes(retry)
             or f"G-EXACT-DUPLICATE-{party}" not in _transition_guard_ids(retry)
+            or "accepted_message_records" not in exact_guard.get("reads", [])
+            or "normalized_message_responses" not in prior_guard.get("reads", [])
+            or set(exact_guard.get("parameter_reads", []))
+            != {
+                "session_context.session_id",
+                "replay_envelope.sender_participant_id",
+                "replay_envelope.message_id",
+                "replay_envelope.nonce",
+                "replay_envelope.sequence",
+                "replay_envelope.issued_at",
+                "replay_envelope.canonical_event_digest",
+            }
         ):
             findings.append(
                 _finding(
-                    "idempotency", retry_id, "exact replay must be a guarded no-op"
+                    "message-response-scope",
+                    retry_id,
+                    "exact replay must be a sender/session-scoped guarded no-op",
                 )
             )
     for retry_id, guard_id in (
@@ -1989,10 +2578,30 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
         ),
     ):
         retry_transition = transition_index.get(retry_id, {})
+        exact_guard = next(
+            (
+                item
+                for item in retry_transition.get("guards", [])
+                if item.get("id") == guard_id
+            ),
+            {},
+        )
+        expected_reads = (
+            {"operation_by_id", "operation_by_key"}
+            if retry_id == "TR-RETRY-EXACT-OPERATION"
+            else {
+                "callback_by_id",
+                "callback_by_key",
+                "selected_integration_profile_binding",
+                "session_id",
+                "evaluation_attempt_id",
+            }
+        )
         if (
             retry_transition.get("mutating") is not False
             or _transition_writes(retry_transition)
             or guard_id not in _transition_guard_ids(retry_transition)
+            or not expected_reads.issubset(set(exact_guard.get("reads", [])))
         ):
             findings.append(
                 _finding(
@@ -2032,6 +2641,7 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
         "intended_audience",
         "commitment_pair_id",
         "evaluation_attempt_id",
+        "selected_integration_profile_binding",
     }
     if set(context_guard.get("reads", [])) != expected_context:
         findings.append(

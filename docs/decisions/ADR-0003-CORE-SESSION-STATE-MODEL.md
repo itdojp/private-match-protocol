@@ -44,7 +44,8 @@ The principal choices are:
    pre-evaluation terminalization and never refund after evaluation starts.
 5. Use distinct delivery and duplicate identities for party messages,
    coordinator commands, profile callbacks, timers, derived transitions, and
-   local guidance.
+   local guidance. Scope message responses to the sender replay domain and index
+   operation/callback IDs and idempotency keys independently.
 6. Order withdrawal and disclosure completion by the coordinator's authoritative
    monotonic event order and require a new session after consent withdrawal or
    expiry.
@@ -52,6 +53,15 @@ The principal choices are:
    `INDETERMINATE`, timeout, failure, or commitment-pair change in v0.1.
 8. Model authoritative time with an explicit bounded monotonic environment/timer
    relation, an evaluation deadline, and atomic deadline crossing.
+9. Keep detailed terminal failures coordinator/private-assurance-only and derive
+   the Party projection from `failure_taxonomy.party_error_category`.
+10. Catalog every abstract event-parameter field and require field-level
+    `parameter_reads` contracts for every parameter-dependent predicate and
+    operation, with separate equality contracts for operation actor and callback
+    profile/session/attempt binding.
+11. Keep Party-message `STALE_MESSAGE` separate from timer failures by declaring
+    `CLOCK_DOMAIN_INVALID`, `CLOCK_ROLLBACK`, and `CLOCK_JUMP_EXCEEDED`, all
+    projected to Parties as `CLOCK_ERROR`.
 
 ## Options considered
 
@@ -132,6 +142,14 @@ class-specific prior response without another state, budget, release,
 disclosure, or audit update. A reused identity with a different canonical digest
 is `REPLAY_CONFLICT`.
 
+Party response caches are keyed by session, sender, and message ID. Each Party
+receives only its own sender-domain entry. Coordinator operations have separate
+ID and idempotency-key indexes in the actor domain; profile callbacks have the
+same two-index rule in the profile/session/attempt domain. A changed key under
+an existing ID, a changed ID under an existing key, or a changed digest under
+either index is `REPLAY_CONFLICT`. First acceptance writes both indexes and the
+prior response atomically.
+
 ### Authoritative time progression
 
 **Option A:** Let future formalization or implementation attach an implicit clock
@@ -145,6 +163,37 @@ stays below all active deadlines. Session expiry, evaluation timeout, and active
 consent expiry are terminalized atomically with the time update. Same-time
 evaluation is a no-op; rollback and policy-excessive jumps reject. This removes
 the need to invent `Tick` semantics during later TLA+ translation.
+
+Timer input failures use the declared clock-specific taxonomy. Parties receive
+only `CLOCK_ERROR`; raw clock detail remains coordinator/private-assurance-only.
+A terminal timer recheck maps to the corresponding session-unavailable code.
+`STALE_MESSAGE` remains exclusively a Party-message `issued_at` failure.
+
+### Failure detail versus Party projection
+
+**Option A:** Store one terminal failure code visible to the coordinator and both
+Parties.
+
+**Option B:** Store a detailed `terminal_failure_code` visible only to the
+coordinator and private assurance pipeline, plus a
+`party_terminal_category` derived from the reviewed taxonomy.
+
+Option B was selected. Terminal transitions write detail and category atomically.
+Normalized responses and public-safe audit projections prohibit the raw code.
+Several detail codes may intentionally map to one reviewed category to reduce a
+counterparty inference channel.
+
+### Event-parameter flow
+
+**Option A:** Leave the input value used by each guard or effect in prose.
+
+**Option B:** Define field-level parameter catalogs and required
+`parameter_reads` contracts.
+
+Option B was selected. The validator rejects missing paths, undeclared fields,
+wrong substitutions, and required event parameters that are never consumed. The
+catalog remains an abstract state-relation interface, not a wire schema or a
+canonical encoding decision.
 
 ### Consent withdrawal ordering
 
@@ -184,7 +233,8 @@ versioned, reviewed transition that preserves query-budget and leakage controls.
 
 ## Security and privacy assumptions
 
-- Coordinator state transitions, delivery-class deduplication, budget,
+- Coordinator state transitions, independently indexed delivery-class
+  deduplication, sender-scoped response storage, budget,
   reservation release/expiry, and terminal updates are assumed atomic; no
   persistence implementation is supplied here.
 - The coordinator clock/environment supplies only nondecreasing values in a
@@ -208,7 +258,8 @@ versioned, reviewed transition that preserves query-budget and leakage controls.
 - Strict YAML artifact and Draft 2020-12 JSON Schema.
 - Local-only semantic validator.
 - Positive, negative, replay, expiry, malformed-input, disclosure-guard, and
-  terminal-state unit tests.
+  terminal-state unit tests, including response-domain, independent-key,
+  failure-projection, parameter-flow, and clock-taxonomy cases.
 - Existing privacy leakage contract and actor/trust-boundary specification.
 
 This evidence establishes draft consistency only. It does not establish

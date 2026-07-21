@@ -22,10 +22,15 @@ from scripts.validate_session_state_machine import (
     disclosure_authorization_guard_failures,
     duplicate_delivery_outcome,
     generic_abort_guard_failures,
+    independent_idempotency_outcome,
     load_json,
     load_yaml,
     main,
     message_time_failures,
+    message_response_outcome,
+    operation_envelope_failures,
+    party_error_category,
+    profile_callback_binding_failures,
     schema_findings,
     semantic_findings,
     terminal_budget_disposition,
@@ -56,6 +61,16 @@ class SessionStateMachineTests(unittest.TestCase):
     def invariant(self, invariant_id, model=None):
         source = model or self.model_copy
         return next(item for item in source["invariants"] if item["id"] == invariant_id)
+
+    def relation_item(self, kind, item_id, model=None):
+        source = model or self.model_copy
+        collection = "guards" if kind == "predicate" else "effects"
+        return next(
+            item
+            for transition in source["transitions"]
+            for item in transition[collection]
+            if item["id"] == item_id
+        )
 
     def semantic_codes(self, model=None):
         return {finding.code for finding in semantic_findings(model or self.model_copy)}
@@ -772,7 +787,8 @@ class SessionStateMachineTests(unittest.TestCase):
             "evaluation_deadline": None,
             "query_budget_state": "RESERVED",
             "disclosure_state": "NONE",
-            "terminal_reason": "NONE",
+            "terminal_failure_code": "NONE",
+            "party_terminal_category": "NONE",
             "consent": {"A": None, "B": None},
         }
         state.update(overrides)
@@ -795,25 +811,26 @@ class SessionStateMachineTests(unittest.TestCase):
 
     def test_authoritative_time_rollback_is_rejected(self):
         state, failures = authoritative_time_transition(self.time_state(), 99, 20)
-        self.assertEqual(failures, ["TIME_ROLLBACK"])
+        self.assertEqual(failures, ["CLOCK_ROLLBACK"])
         self.assertEqual(state["authoritative_time"], 100)
 
     def test_terminal_phase_rejects_time_mutation(self):
         original = self.time_state(phase="CLOSED")
         state, failures = authoritative_time_transition(original, 110, 20)
-        self.assertEqual(failures, ["TERMINAL_STATE"])
+        self.assertEqual(failures, ["SESSION_CLOSED"])
         self.assertEqual(state, original)
 
     def test_authoritative_time_jump_is_bounded(self):
         _, failures = authoritative_time_transition(self.time_state(), 150, 20)
-        self.assertEqual(failures, ["TIME_JUMP_EXCEEDED"])
+        self.assertEqual(failures, ["CLOCK_JUMP_EXCEEDED"])
 
     def test_session_expiry_crossing_is_atomic(self):
         state, failures = authoritative_time_transition(self.time_state(), 200, 100)
         self.assertEqual(failures, [])
         self.assertEqual(state["authoritative_time"], 200)
         self.assertEqual(state["phase"], "EXPIRED")
-        self.assertEqual(state["terminal_reason"], "SESSION_EXPIRED")
+        self.assertEqual(state["terminal_failure_code"], "SESSION_EXPIRED")
+        self.assertEqual(state["party_terminal_category"], "SESSION_UNAVAILABLE")
         self.assertEqual(state["query_budget_state"], "EXPIRED")
 
     def test_evaluation_deadline_crossing_aborts(self):
@@ -826,7 +843,8 @@ class SessionStateMachineTests(unittest.TestCase):
         state, failures = authoritative_time_transition(original, 120, 20)
         self.assertEqual(failures, [])
         self.assertEqual(state["phase"], "ABORTED")
-        self.assertEqual(state["terminal_reason"], "EVALUATION_TIMEOUT")
+        self.assertEqual(state["terminal_failure_code"], "EVALUATION_TIMEOUT")
+        self.assertEqual(state["party_terminal_category"], "EVALUATION_ERROR")
         self.assertEqual(state["query_budget_state"], "CONSUMED")
 
     def test_consent_expiry_after_time_advance_aborts(self):
@@ -840,7 +858,8 @@ class SessionStateMachineTests(unittest.TestCase):
         state, failures = authoritative_time_transition(original, 110, 20)
         self.assertEqual(failures, [])
         self.assertEqual(state["phase"], "ABORTED")
-        self.assertEqual(state["terminal_reason"], "CONSENT_EXPIRED")
+        self.assertEqual(state["terminal_failure_code"], "CONSENT_EXPIRED")
+        self.assertEqual(state["party_terminal_category"], "CONSENT_ERROR")
 
     def test_verification_material_expiry_is_decidable_after_time_advance(self):
         original = self.time_state(
@@ -999,7 +1018,8 @@ class SessionStateMachineTests(unittest.TestCase):
         )
         self.assertEqual(failures, [])
         self.assertEqual(state["phase"], "ABORTED")
-        self.assertEqual(state["terminal_reason"], "PARTIAL_PARTY_FAILURE")
+        self.assertEqual(state["terminal_failure_code"], "PARTIAL_PARTY_FAILURE")
+        self.assertEqual(state["party_terminal_category"], "EVALUATION_ERROR")
         self.assertEqual(state["query_budget_state"], "RELEASED")
 
     def test_generic_abort_undeclared_failure_is_rejected(self):
@@ -1018,20 +1038,21 @@ class SessionStateMachineTests(unittest.TestCase):
             ["NON_ABORT_DISPOSITION"],
         )
 
-    def test_generic_abort_never_leaves_terminal_reason_none(self):
+    def test_generic_abort_never_leaves_terminal_failure_code_none(self):
         state, failures = apply_generic_abort(
             self.model, self.time_state(), "coordinator", "RESULT_CONFLICT"
         )
         self.assertEqual(failures, [])
-        self.assertNotEqual(state["terminal_reason"], "NONE")
-        self.assertEqual(state["terminal_reason"], "RESULT_CONFLICT")
+        self.assertNotEqual(state["terminal_failure_code"], "NONE")
+        self.assertEqual(state["terminal_failure_code"], "RESULT_CONFLICT")
+        self.assertEqual(state["party_terminal_category"], "RESULT_ERROR")
 
-    def test_generic_abort_guard_cannot_read_old_terminal_reason(self):
+    def test_generic_abort_guard_cannot_read_old_terminal_failure_code(self):
         transition = self.transition("TR-ABORT")
         guard = next(
             item for item in transition["guards"] if item["id"] == "G-ABORT-REASON"
         )
-        guard["reads"] = ["terminal_reason"]
+        guard["reads"] = ["terminal_failure_code"]
         guard["parameter_reads"] = []
         self.assertIn("generic-abort", self.semantic_codes())
 
@@ -1189,6 +1210,537 @@ class SessionStateMachineTests(unittest.TestCase):
                 ]
             }
             self.assertIn(f"G-CONSENT-SLOT-EMPTY-{party}", guards)
+
+    @staticmethod
+    def message_registry():
+        return {
+            ("session-1", "party-a", "same-id"): {
+                "nonce": "nonce-a",
+                "sequence": 1,
+                "issued_at": 100,
+                "canonical_digest": "digest-a",
+                "normalized_response": "response-a",
+            },
+            ("session-1", "party-b", "same-id"): {
+                "nonce": "nonce-b",
+                "sequence": 1,
+                "issued_at": 101,
+                "canonical_digest": "digest-b",
+                "normalized_response": "response-b",
+            },
+        }
+
+    def test_equal_message_ids_are_independent_between_parties(self):
+        registry = self.message_registry()
+        outcome_a = message_response_outcome(
+            registry, "session-1", "party-a", "same-id", "nonce-a", 1, 100, "digest-a"
+        )
+        outcome_b = message_response_outcome(
+            registry, "session-1", "party-b", "same-id", "nonce-b", 1, 101, "digest-b"
+        )
+        self.assertEqual(outcome_a, ("exact-duplicate", "response-a"))
+        self.assertEqual(outcome_b, ("exact-duplicate", "response-b"))
+
+    def test_party_a_retry_cannot_return_party_b_response(self):
+        registry = self.message_registry()
+        outcome = message_response_outcome(
+            registry, "session-1", "party-a", "same-id", "nonce-b", 1, 101, "digest-b"
+        )
+        self.assertEqual(outcome, ("REPLAY_CONFLICT", None))
+
+    def test_party_b_retry_cannot_return_party_a_response(self):
+        registry = self.message_registry()
+        outcome = message_response_outcome(
+            registry, "session-1", "party-b", "same-id", "nonce-a", 1, 100, "digest-a"
+        )
+        self.assertEqual(outcome, ("REPLAY_CONFLICT", None))
+
+    def test_message_response_peer_visibility_is_rejected(self):
+        variable = next(
+            item
+            for item in self.model_copy["state_variables"]
+            if item["id"] == "normalized_message_responses"
+        )
+        variable["recipient_projection"]["peer_entry_access"] = "allowed"
+        self.assertIn("message-response-scope", self.semantic_codes())
+
+    def test_same_sender_exact_duplicate_returns_prior_response(self):
+        self.assertEqual(
+            message_response_outcome(
+                self.message_registry(),
+                "session-1",
+                "party-a",
+                "same-id",
+                "nonce-a",
+                1,
+                100,
+                "digest-a",
+            ),
+            ("exact-duplicate", "response-a"),
+        )
+
+    def test_same_sender_changed_digest_is_replay_conflict(self):
+        outcome = message_response_outcome(
+            self.message_registry(),
+            "session-1",
+            "party-a",
+            "same-id",
+            "nonce-a",
+            1,
+            100,
+            "changed",
+        )
+        self.assertEqual(outcome, ("REPLAY_CONFLICT", None))
+
+    def test_same_sender_changed_issued_at_is_replay_conflict(self):
+        outcome = message_response_outcome(
+            self.message_registry(),
+            "session-1",
+            "party-a",
+            "same-id",
+            "nonce-a",
+            1,
+            101,
+            "digest-a",
+        )
+        self.assertEqual(outcome, ("REPLAY_CONFLICT", None))
+
+    def test_cross_session_same_message_id_is_a_separate_domain(self):
+        outcome = message_response_outcome(
+            self.message_registry(),
+            "session-2",
+            "party-a",
+            "same-id",
+            "nonce-a",
+            1,
+            100,
+            "digest-a",
+        )
+        self.assertEqual(outcome, ("new", None))
+
+    def test_terminal_retry_returns_only_correct_sender_response(self):
+        transition = self.transition("TR-RETRY-EXACT-DUPLICATE-A", self.model)
+        self.assertIn("CLOSED", transition["from_phase"])
+        self.assertEqual(
+            transition["visibility"],
+            [
+                {"actor": "coordinator", "data": ["authoritative replay-domain cache"]},
+                {
+                    "actor": "party_a_client",
+                    "data": ["own sender-domain normalized response"],
+                },
+            ],
+        )
+
+    @staticmethod
+    def operation_registries():
+        by_id = {
+            ("coordinator", "operation-1"): {
+                "idempotency_key": "key-1",
+                "canonical_digest": "digest-1",
+                "normalized_response": "ok",
+            }
+        }
+        by_key = {
+            ("coordinator", "key-1"): {
+                "identifier": "operation-1",
+                "canonical_digest": "digest-1",
+                "normalized_response": "ok",
+            }
+        }
+        return by_id, by_key
+
+    def test_exact_operation_duplicate_requires_both_indexes(self):
+        self.assertEqual(
+            independent_idempotency_outcome(
+                *self.operation_registries(),
+                "coordinator",
+                "operation-1",
+                "key-1",
+                "digest-1",
+            ),
+            ("exact-duplicate", "ok"),
+        )
+
+    def test_same_operation_id_with_different_key_conflicts_independently(self):
+        outcome = independent_idempotency_outcome(
+            *self.operation_registries(),
+            "coordinator",
+            "operation-1",
+            "key-2",
+            "digest-1",
+        )
+        self.assertEqual(outcome, ("REPLAY_CONFLICT", None))
+
+    def test_same_operation_key_with_different_id_conflicts_independently(self):
+        outcome = independent_idempotency_outcome(
+            *self.operation_registries(),
+            "coordinator",
+            "operation-2",
+            "key-1",
+            "digest-1",
+        )
+        self.assertEqual(outcome, ("REPLAY_CONFLICT", None))
+
+    def test_same_operation_key_with_different_digest_conflicts(self):
+        outcome = independent_idempotency_outcome(
+            *self.operation_registries(),
+            "coordinator",
+            "operation-1",
+            "key-1",
+            "digest-2",
+        )
+        self.assertEqual(outcome, ("REPLAY_CONFLICT", None))
+
+    def test_operation_actor_mismatch_is_replay_conflict(self):
+        self.assertEqual(
+            operation_envelope_failures("coordinator", {"actor_id": "party_a_client"}),
+            ["REPLAY_CONFLICT"],
+        )
+
+    def test_exact_profile_callback_requires_both_indexes(self):
+        by_id = {
+            ("profile-domain", "callback-1"): {
+                "idempotency_key": "key-1",
+                "canonical_digest": "digest-1",
+                "normalized_response": "ok",
+            }
+        }
+        by_key = {
+            ("profile-domain", "key-1"): {
+                "identifier": "callback-1",
+                "canonical_digest": "digest-1",
+                "normalized_response": "ok",
+            }
+        }
+        self.assertEqual(
+            independent_idempotency_outcome(
+                by_id, by_key, "profile-domain", "callback-1", "key-1", "digest-1"
+            ),
+            ("exact-duplicate", "ok"),
+        )
+        self.assertEqual(
+            independent_idempotency_outcome(
+                by_id, by_key, "profile-domain", "callback-1", "key-2", "digest-1"
+            )[0],
+            "REPLAY_CONFLICT",
+        )
+        self.assertEqual(
+            independent_idempotency_outcome(
+                by_id, by_key, "profile-domain", "callback-2", "key-1", "digest-1"
+            )[0],
+            "REPLAY_CONFLICT",
+        )
+        self.assertEqual(
+            independent_idempotency_outcome(
+                by_id, by_key, "profile-domain", "callback-1", "key-1", "changed"
+            )[0],
+            "REPLAY_CONFLICT",
+        )
+
+    def test_profile_callback_binding_mismatches_fail_closed(self):
+        state = {
+            "selected_integration_profile_binding": {
+                "profile_id": "profile",
+                "profile_version": "v0.1",
+                "profile_instance_id": "instance",
+            },
+            "session_id": "session",
+            "evaluation_attempt_id": "attempt",
+        }
+        envelope = {
+            "profile_id": "profile",
+            "profile_version": "v0.1",
+            "profile_instance_id": "instance",
+            "session_id": "session",
+            "evaluation_attempt_id": "attempt",
+        }
+        self.assertEqual(profile_callback_binding_failures(state, envelope), [])
+        for field_name in (
+            "profile_id",
+            "profile_version",
+            "profile_instance_id",
+            "session_id",
+            "evaluation_attempt_id",
+        ):
+            with self.subTest(field=field_name):
+                changed = dict(envelope)
+                changed[field_name] = "wrong"
+                self.assertEqual(
+                    profile_callback_binding_failures(state, changed),
+                    ["REPLAY_CONFLICT"],
+                )
+
+    def test_envelope_binding_contracts_are_machine_readable(self):
+        contracts = {
+            (item["parameter_path"], item["state_path"])
+            for item in self.model["envelope_binding_contracts"]
+        }
+        self.assertIn(("operation_envelope.actor_id", "transition.actor"), contracts)
+        self.assertIn(
+            (
+                "profile_callback_envelope.session_id",
+                "state.session_id",
+            ),
+            contracts,
+        )
+        self.assertIn(
+            (
+                "profile_callback_envelope.evaluation_attempt_id",
+                "state.evaluation_attempt_id",
+            ),
+            contracts,
+        )
+
+    def test_missing_current_state_callback_binding_is_rejected(self):
+        self.model_copy["envelope_binding_contracts"] = [
+            item
+            for item in self.model_copy["envelope_binding_contracts"]
+            if item["id"] != "BIND-CALLBACK-SESSION"
+        ]
+        self.assertIn("envelope-binding", self.semantic_codes())
+
+    def test_conflicting_duplicate_does_not_write_state_budget_or_audit(self):
+        for transition_id in (
+            "TR-RETRY-EXACT-OPERATION",
+            "TR-RETRY-EXACT-PROFILE-CALLBACK",
+        ):
+            transition = self.transition(transition_id, self.model)
+            self.assertFalse(transition["mutating"])
+            self.assertEqual(
+                {
+                    value
+                    for effect in transition["effects"]
+                    for value in effect["writes"]
+                },
+                set(),
+            )
+
+    def test_detailed_failure_codes_are_not_party_visible(self):
+        variable = next(
+            item
+            for item in self.model_copy["state_variables"]
+            if item["id"] == "terminal_failure_code"
+        )
+        variable["visibility"].append("party_a_client")
+        self.assertIn("failure-projection", self.semantic_codes())
+
+    def test_coordinator_and_assurance_can_retain_failure_detail(self):
+        variable = next(
+            item
+            for item in self.model["state_variables"]
+            if item["id"] == "terminal_failure_code"
+        )
+        self.assertEqual(variable["visibility"], ["coordinator", "assurance_pipeline"])
+
+    def test_party_failure_category_matches_taxonomy(self):
+        self.assertEqual(
+            party_error_category(self.model, "RESULT_CONFLICT"), "RESULT_ERROR"
+        )
+        self.assertEqual(
+            party_error_category(self.model, "CONSENT_EXPIRED"), "CONSENT_ERROR"
+        )
+        self.assertIsNone(party_error_category(self.model, "UNKNOWN_FIXTURE"))
+
+    def test_unknown_party_category_is_rejected(self):
+        self.model_copy["failure_taxonomy"][0]["party_error_category"] = "DETAIL_LEAK"
+        self.assertIn("failure-projection", self.semantic_codes())
+
+    def test_raw_failure_code_is_forbidden_in_normalized_response(self):
+        prohibited = self.model_copy["failure_projection_semantics"][
+            "normalized_response_prohibited_fields"
+        ]
+        prohibited.remove("raw failure_code")
+        self.assertIn("failure-projection", self.semantic_codes())
+
+    def test_raw_failure_code_is_forbidden_in_public_safe_audit(self):
+        self.model_copy["audit_policy"]["prohibited_fields"].remove("raw failure code")
+        self.assertIn("audit-policy", self.semantic_codes())
+
+    def test_multiple_detail_codes_can_share_reviewed_party_category(self):
+        self.assertEqual(party_error_category(self.model, "REPLAY"), "REPLAY_ERROR")
+        self.assertEqual(
+            party_error_category(self.model, "REPLAY_CONFLICT"), "REPLAY_ERROR"
+        )
+
+    def test_terminal_transition_writes_detail_and_category_atomically(self):
+        transition = self.transition("TR-RESULT-CONFLICT")
+        effect = next(
+            item
+            for item in transition["effects"]
+            if "terminal_failure_code" in item["writes"]
+        )
+        effect["writes"].remove("party_terminal_category")
+        self.assertIn("failure-projection", self.semantic_codes())
+
+    def test_parameter_flow_catalog_declares_all_required_fields(self):
+        parameters = {
+            item["id"]: item for item in self.model["event_parameter_catalog"]
+        }
+        expected = {
+            "session_context": "session_id",
+            "replay_envelope": "issued_at",
+            "participant_binding_parameter": "key_id",
+            "policy_acceptance_parameter": "acceptance_digest",
+            "commitment_parameter": "opaque_commitment",
+            "evaluation_attempt_parameter": "evaluation_attempt_id",
+            "evaluation_contribution_parameter": "contribution_ref",
+            "local_result_parameter": "local_result",
+            "opaque_receipt_parameter": "opaque_receipt_ref",
+            "consent_binding_parameter": "consent_artifact_digest",
+            "normalized_failure_parameter": "failure_code",
+            "time_advance_parameter": "reason_or_source_class",
+        }
+        for parameter_id, field_id in expected.items():
+            with self.subTest(parameter=parameter_id, field=field_id):
+                self.assertIn(
+                    field_id,
+                    {item["id"] for item in parameters[parameter_id]["fields"]},
+                )
+
+    def test_parameter_flow_missing_major_fields_is_rejected(self):
+        cases = (
+            ("predicate", "G-CONTEXT-BINDING", "session_context.session_id"),
+            ("predicate", "G-CONTEXT-BINDING", "session_context.policy_binding"),
+            (
+                "predicate",
+                "G-ORDER-AND-REPLAY",
+                "replay_envelope.sender_participant_id",
+            ),
+            ("predicate", "G-ORDER-AND-REPLAY", "replay_envelope.message_id"),
+            ("predicate", "G-ORDER-AND-REPLAY", "replay_envelope.nonce"),
+            ("predicate", "G-ORDER-AND-REPLAY", "replay_envelope.sequence"),
+            ("predicate", "G-MESSAGE-TIME-VALID", "replay_envelope.issued_at"),
+            ("operation", "E-ACCEPT-MESSAGE", "replay_envelope.canonical_event_digest"),
+            ("operation", "E-BIND-A", "participant_binding_parameter.participant_id"),
+            ("operation", "E-BIND-A", "participant_binding_parameter.key_id"),
+            (
+                "operation",
+                "E-ACCEPT-POLICY-A",
+                "policy_acceptance_parameter.acceptance_digest",
+            ),
+            ("operation", "E-COMMIT-A", "commitment_parameter.opaque_commitment"),
+            (
+                "operation",
+                "E-START-EVALUATION",
+                "evaluation_attempt_parameter.evaluation_attempt_id",
+            ),
+            (
+                "operation",
+                "E-CONTRIBUTION-A",
+                "evaluation_contribution_parameter.contribution_ref",
+            ),
+            ("operation", "E-ACK-RECEIPT-A", "local_result_parameter.local_result"),
+            (
+                "operation",
+                "E-ACK-RECEIPT-A",
+                "opaque_receipt_parameter.opaque_receipt_ref",
+            ),
+            ("operation", "E-GRANT-CONSENT-A", "consent_binding_parameter.scope"),
+            (
+                "operation",
+                "E-GRANT-CONSENT-A",
+                "consent_binding_parameter.disclosure_profile_id",
+            ),
+            ("operation", "E-GRANT-CONSENT-A", "consent_binding_parameter.audience"),
+            (
+                "operation",
+                "E-GRANT-CONSENT-A",
+                "consent_binding_parameter.consent_nonce",
+            ),
+            (
+                "operation",
+                "E-GRANT-CONSENT-A",
+                "consent_binding_parameter.consent_artifact_digest",
+            ),
+            ("operation", "E-ABORT", "normalized_failure_parameter.failure_code"),
+            (
+                "predicate",
+                "G-TIME-DOMAIN",
+                "time_advance_parameter.new_authoritative_time",
+            ),
+            (
+                "predicate",
+                "G-TIME-DOMAIN",
+                "time_advance_parameter.reason_or_source_class",
+            ),
+        )
+        for kind, identifier, field_path in cases:
+            with self.subTest(kind=kind, identifier=identifier, field=field_path):
+                model = copy.deepcopy(self.model)
+                item = self.relation_item(kind, identifier, model)
+                item["parameter_reads"].remove(field_path)
+                self.assertIn("parameter-flow", self.semantic_codes(model))
+
+    def test_parameter_flow_wrong_substitution_is_rejected(self):
+        item = self.relation_item("operation", "E-COMMIT-A")
+        item["parameter_reads"] = ["local_result_parameter.local_result"]
+        self.assertIn("parameter-flow", self.semantic_codes())
+
+    def test_required_event_parameter_cannot_be_declared_but_unused(self):
+        for transition in self.model_copy["transitions"]:
+            if transition["event"] != "register_commitment_a":
+                continue
+            for item in (*transition["guards"], *transition["effects"]):
+                item["parameter_reads"] = [
+                    value
+                    for value in item["parameter_reads"]
+                    if not value.startswith("commitment_parameter.")
+                ]
+        self.assertIn("parameter-flow", self.semantic_codes())
+
+    def test_clock_failure_codes_are_declared_and_distinct_from_stale_message(self):
+        taxonomy = {item["code"]: item for item in self.model["failure_taxonomy"]}
+        for code in ("CLOCK_DOMAIN_INVALID", "CLOCK_ROLLBACK", "CLOCK_JUMP_EXCEEDED"):
+            self.assertEqual(taxonomy[code]["party_error_category"], "CLOCK_ERROR")
+        for transition in self.model["transitions"]:
+            if transition["event"] in {"advance_authoritative_time", "expire_session"}:
+                self.assertNotIn("STALE_MESSAGE", transition["failure_code"])
+
+    def test_invalid_clock_domain_uses_declared_failure(self):
+        _, failures = authoritative_time_transition(self.time_state(), -1, 20)
+        self.assertEqual(failures, ["CLOCK_DOMAIN_INVALID"])
+
+    def test_each_terminal_clock_recheck_uses_phase_specific_failure(self):
+        for phase in ("CLOSED", "ABORTED", "EXPIRED"):
+            with self.subTest(phase=phase):
+                _, failures = authoritative_time_transition(
+                    self.time_state(phase=phase), 110, 20
+                )
+                self.assertEqual(failures, [f"SESSION_{phase}"])
+
+    def test_clock_helper_failures_all_exist_in_taxonomy(self):
+        taxonomy = {item["code"] for item in self.model["failure_taxonomy"]}
+        cases = (
+            authoritative_time_transition(self.time_state(), 99, 20)[1],
+            authoritative_time_transition(self.time_state(), 150, 20)[1],
+            authoritative_time_transition(self.time_state(), -1, 20)[1],
+            authoritative_time_transition(self.time_state(phase="CLOSED"), 110, 20)[1],
+        )
+        for failures in cases:
+            self.assertTrue(set(failures).issubset(taxonomy))
+
+    def test_clock_default_and_transition_taxonomy_are_aligned(self):
+        events = {item["id"]: item for item in self.model["events"]}
+        self.assertEqual(
+            events["advance_authoritative_time"]["default_failure_code"],
+            "CLOCK_DOMAIN_INVALID",
+        )
+        transition = self.transition("TR-ADVANCE-TIME-LIVE", self.model)
+        self.assertTrue(
+            {"CLOCK_DOMAIN_INVALID", "CLOCK_ROLLBACK", "CLOCK_JUMP_EXCEEDED"}.issubset(
+                transition["failure_code"]
+            )
+        )
+
+    def test_raw_clock_failure_is_not_party_visible(self):
+        variable = next(
+            item
+            for item in self.model_copy["state_variables"]
+            if item["id"] == "terminal_failure_code"
+        )
+        variable["visibility"].append("party_b_client")
+        self.assertIn("failure-projection", self.semantic_codes())
 
     def test_schema_version_remains_draft_zero_one(self):
         self.assertEqual(self.model["schema_version"], "0.1")

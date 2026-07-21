@@ -90,7 +90,7 @@ coordinator access, and description for every variable. The principal groups are
 
 | Group | Variables | Normative purpose |
 | --- | --- | --- |
-| Lifecycle | `phase`, `terminal_reason`, `audit_lifecycle` | Normalized state and bounded audit outcome. |
+| Lifecycle | `phase`, `terminal_failure_code`, `party_terminal_category`, `audit_lifecycle` | Private failure detail, reviewed Party projection, and bounded audit outcome. |
 | Session | `session_id`, `protocol_profile`, `policy_binding`, `intended_audience` | Exact versioned context for every accepted event. |
 | Participants | `participant_binding`, `policy_acceptance` | Party and key identities plus policy acceptance. |
 | Commitments | `commitment`, `commitment_pair_id` | Immutable opaque inputs to one evaluation. |
@@ -99,7 +99,7 @@ coordinator access, and description for every variable. The principal groups are
 | Result | `proposed_result_state`, `accepted_result_state`, `opaque_receipt_ref`, `result_ack` | Party-local proposed/accepted values and shared opaque reference. |
 | Consent | `consent`, `disclosure_profile_ref`, `disclosure_state` | Result-bound extension authorization metadata. |
 | Time | `session_created_at`, `session_expires_at`, `authoritative_time`, `allowed_clock_skew`, `message_stale_threshold`, `verification_material_validity` | Coordinator-authoritative ordering and validity. |
-| Replay | party message, coordinator operation, and profile callback registries and responses | Delivery-class-specific ordering, duplicate equality, and prior response. |
+| Replay | `accepted_message_records`, `normalized_message_responses`, `operation_by_id`, `operation_by_key`, `callback_by_id`, `callback_by_key` | Sender-scoped responses plus independently indexed delivery identity and idempotency keys. |
 
 `proposed_result_state`, `result_ack`, and `accepted_result_state` use
 machine-readable entry-scoped visibility. Party A can read only entry A and
@@ -176,7 +176,33 @@ not Protocol Issue #5 wire-message fields.
 The party-only `retry_idempotent_message` relation never applies to coordinator
 commands or profile callbacks. Those classes have independent actor-scoped
 registries and no-op retry relations. Reusing an operation or callback ID with a
-different canonical digest fails closed as `REPLAY_CONFLICT`.
+different key or digest, or reusing a key with a different ID or digest, fails
+closed as `REPLAY_CONFLICT`. The coordinator operation actor must be
+`coordinator`. A callback must match the selected profile ID, version, instance,
+session, and evaluation attempt already held in state.
+
+Party message responses are cached under
+`(session_id, sender_participant_id, message_id)`. The accepted record also
+stores nonce, sequence, `issued_at`, and canonical event digest. Party A can
+retrieve only Party A's sender-domain response and Party B can retrieve only
+Party B's. The coordinator may hold the authoritative whole map; neither Party
+has whole-map or peer-entry access.
+
+### Machine-readable event-parameter flow
+
+All 17 abstract event-parameter records have field-level catalogs. The YAML also
+contains 72 predicate/operation contracts that list each required
+`parameter_reads` path. This makes session and policy context, sender identity,
+message replay identity, participant/key binding, policy acceptance digest,
+commitment, attempt, contribution, local result, receipt, consent, extension,
+abort reason, operation/callback envelope, and authoritative-time flow explicit.
+Six additional equality contracts bind the operation actor and callback profile,
+instance, session, and attempt fields to the current transition/state.
+
+The validator rejects an unknown field path, a field not declared by the event,
+a missing contract field, a wrong parameter substitution, or a required event
+parameter that is declared but unused. These are abstract state-relation inputs;
+wire names and canonical encoding remain deferred to Protocol Issue #5.
 
 ## Transition relation
 
@@ -253,10 +279,11 @@ The replay domain is:
 (session_id, sender_participant_id)
 ```
 
-A nonce is unique in that domain. An exact duplicate requires the same
-`message_id`, nonce, and canonical event digest. It returns the prior bounded
-response without changing state or consuming budget again. Reusing either ID or
-nonce with a different digest is `REPLAY_CONFLICT`.
+A nonce is unique in that domain. An exact duplicate requires the same sender,
+session, `message_id`, nonce, sequence, `issued_at`, and canonical event digest.
+It returns only that sender's prior bounded response without changing state or
+consuming budget again. Reusing either ID or nonce with a different identity
+field or digest is `REPLAY_CONFLICT`.
 
 ### `INV-ONE-EVALUATION`
 
@@ -389,7 +416,11 @@ expiry atomically updates time, enters `EXPIRED`, invalidates disclosure
 authorization, records `SESSION_EXPIRED`, and applies the budget disposition.
 The live-time relation is disabled at a crossed session, evaluation, or consent
 deadline, so no active post-deadline window exists. A same-time proposal is a
-no-op; rollback, out-of-domain time, and policy-excessive jumps reject.
+no-op. Rollback, out-of-domain time, and policy-excessive jumps reject as
+`CLOCK_ROLLBACK`, `CLOCK_DOMAIN_INVALID`, and `CLOCK_JUMP_EXCEEDED`. Parties
+receive only `CLOCK_ERROR`. A timer recheck in a terminal phase maps to
+`SESSION_CLOSED`, `SESSION_ABORTED`, or `SESSION_EXPIRED`; `STALE_MESSAGE`
+remains exclusive to Party `issued_at` validation.
 
 ## Ordering and retries
 
@@ -398,7 +429,7 @@ Each party has a monotonic `next_sequence`.
 | Input condition | Result |
 | --- | --- |
 | Expected sequence, new ID, new nonce, valid `issued_at` | Evaluate guards; accepted event advances the sender sequence. |
-| Exact same ID, nonce, `issued_at`, and canonical digest | No-op; return prior normalized message response. |
+| Exact same sender-domain ID, nonce, sequence, `issued_at`, and canonical digest | No-op; return only the sender's prior normalized message response. |
 | Same ID or nonce, different digest | `REPLAY_CONFLICT`; no partial state change. |
 | Lower sequence with unknown message | `REPLAY` or `STALE_MESSAGE`; no state change. |
 | Future sequence gap | Retryable `OUT_OF_ORDER`; no buffering or state change. |
@@ -406,11 +437,13 @@ Each party has a monotonic `next_sequence`.
 | Prior policy message | `POLICY_VERSION_MISMATCH`. |
 | Prior participant-set message | `PARTICIPANT_MISMATCH`. |
 
-Coordinator commands use an independent `(actor_id, operation_id)` domain and
-profile callbacks use a profile-instance/session/attempt domain. Exact retries
-are available even after terminalization and write no state, budget, release,
-disclosure, or audit. Timers are level-triggered and derived/local relations
-have no external retry semantics.
+Coordinator operations maintain independent `(actor_id, operation_id)` and
+`(actor_id, idempotency_key)` indexes. Profile callbacks maintain independent ID
+and key indexes inside the profile-instance/session/attempt domain. First
+acceptance writes both indexes and the same prior response atomically. Exact
+retries are available even after terminalization and write no state, budget,
+release, disclosure, or audit. Timers are level-triggered and derived/local
+relations have no external retry semantics.
 
 The machine distinguishes party resend, coordinator operation resend, profile
 callback resend, timer re-evaluation, transient new-message retry, continuation
@@ -422,14 +455,15 @@ failure. v0.1 defines no same-pair new-attempt transition.
 `abort_session` is a coordinator command, not a participant-controlled failure
 selector. Its `normalized_failure_parameter.failure_code` must exist in the
 declared taxonomy and have `session-abort` disposition. `G-ABORT-REASON` reads
-that event parameter rather than the prior `terminal_reason`.
+that event parameter rather than prior terminal state.
 
 `E-ABORT` atomically sets `phase = ABORTED`, copies the supplied code to
-`terminal_reason`, invalidates disclosure authorization, applies the unused or
-consumed budget rule, and records the operation envelope once. An undeclared or
-message-only code is rejected. Party-initiated abort requests are deferred to
-the later message-schema work; this draft does not let a party select an
-internal coordinator failure category.
+`terminal_failure_code`, derives `party_terminal_category` from the taxonomy,
+invalidates disclosure authorization, applies the unused or consumed budget
+rule, and records both operation indexes once. An undeclared or message-only
+code is rejected. Party-initiated abort requests are deferred to the later
+message-schema work; this draft does not let a party select an internal
+coordinator failure category.
 
 ## Failure taxonomy
 
@@ -448,11 +482,15 @@ normalized category, and restricted detail visibility.
 | Consent | `CONSENT_MISSING`, `CONSENT_EXPIRED`, `CONSENT_WITHDRAWN` | Expiry or withdrawal aborts same-session authorization; a new session is required. |
 | Disclosure | `DISCLOSURE_PROFILE_REQUIRED`, `DISCLOSURE_SCOPE_MISMATCH` | Core remains fail closed. |
 | Session | `SESSION_EXPIRED`, `SESSION_CLOSED`, `SESSION_ABORTED` | No mutating operation. |
+| Clock | `CLOCK_DOMAIN_INVALID`, `CLOCK_ROLLBACK`, `CLOCK_JUMP_EXCEEDED` | Reject timer input; Party projection is only `CLOCK_ERROR`. |
 | Unknown | `UNKNOWN_STATE`, `UNKNOWN_EVENT`, `UNKNOWN_VERSION`, `UNKNOWN_FIELD` | Fail closed; do not infer new semantics. |
 
-Detailed failure information is restricted to the coordinator and approved audit
-when revealing it would increase counterparty inference. Parties receive a
-bounded category.
+`terminal_failure_code` is visible only to the coordinator and private assurance
+pipeline. `party_terminal_category` is derived from the declared taxonomy and is
+the only terminal failure projection available to either Party. Normalized
+responses and public-safe audit projections prohibit raw failure codes and
+private detail. Multiple detail codes may intentionally collapse to the same
+reviewed category to reduce inference.
 
 ## Audit and visibility
 
@@ -484,6 +522,10 @@ The machine-readable artifact supplies:
 - bounded participant, session, message, nonce, budget, and time parameters;
 - unresolved nondeterminism; and
 - environment assumptions.
+
+The current model has 12 phases, 42 state variables, 17 parameter catalogs, 72
+parameter-flow contracts, 6 envelope-binding contracts, 27 events, 39
+transitions, 12 invariants, and 33 failure codes.
 
 Candidate fairness assumptions include weak fairness for the authoritative timer
 while a later bounded `TimeDomain` point exists, atomic expiry when the threshold
