@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/itdojp/private-match-protocol/schemas/registry/verification-materials.v0.1.schema.json",
+  "title": "Synthetic message verification-material registry v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_status",
+    "scope",
+    "materials"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "artifact_status": {
+      "const": "test-only"
+    },
+    "scope": {
+      "const": "synthetic conformance vectors only; no production algorithm or key is selected"
+    },
+    "materials": {
+      "type": "array",
+      "minItems": 4,
+      "items": {
+        "$ref": "#/$defs/material"
+      }
+    }
+  },
+  "$defs": {
+    "material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verification_material_id",
+        "mode",
+        "algorithm_id",
+        "key_id",
+        "status",
+        "not_before",
+        "not_after",
+        "test_only",
+        "subject_binding_id",
+        "subject"
+      ],
+      "properties": {
+        "verification_material_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+        },
+        "mode": {
+          "enum": [
+            "signature",
+            "mac",
+            "profile-attestation"
+          ]
+        },
+        "algorithm_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "expired",
+            "revoked"
+          ]
+        },
+        "not_before": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "not_after": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "test_only": {
+          "const": true
+        },
+        "subject_binding_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+        },
+        "subject": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "actor",
+                "participant_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "party"
+                },
+                "actor": {
+                  "enum": [
+                    "party_a_client",
+                    "party_b_client"
+                  ]
+                },
+                "participant_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "actor"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "coordinator"
+                },
+                "actor": {
+                  "const": "coordinator"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "actor",
+                "profile_id",
+                "profile_version",
+                "profile_instance_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "integration-profile"
+                },
+                "actor": {
+                  "const": "selected_integration_profile"
+                },
+                "profile_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                },
+                "profile_version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                },
+                "profile_instance_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

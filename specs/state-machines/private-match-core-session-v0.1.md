@@ -183,15 +183,18 @@ session, and evaluation attempt already held in state.
 
 Party message responses are cached under
 `(session_id, sender_participant_id, message_id)`. The accepted record also
-stores nonce, sequence, `issued_at`, and canonical event digest. Party A can
-retrieve only Party A's sender-domain response and Party B can retrieve only
-Party B's. The coordinator may hold the authoritative whole map; neither Party
-has whole-map or peer-entry access.
+stores nonce, sequence, `issued_at`, semantic digest, full canonical-wire digest,
+verification material, original authenticated subject, recipient binding, and a
+bounded response reference. Raw `authentication.value` is not stored. Party A
+can retrieve only a response bound to Party A's exact participant, key, material,
+and subject; Party B has the symmetric restriction. Authorization comes from an
+independent authenticated requester projection, never from the replayed sender.
+Without it, exact classification is possible but no response is released.
 
 ### Machine-readable event-parameter flow
 
-All 17 abstract event-parameter records have field-level catalogs. The YAML also
-contains 72 predicate/operation contracts that list each required
+All 21 abstract event-parameter records have field-level catalogs. The YAML also
+contains 92 predicate/operation contracts that list each required
 `parameter_reads` path. This makes session and policy context, sender identity,
 message replay identity, participant/key binding, policy acceptance digest,
 commitment, attempt, contribution, local result, receipt, consent, extension,
@@ -202,7 +205,8 @@ instance, session, and attempt fields to the current transition/state.
 The validator rejects an unknown field path, a field not declared by the event,
 a missing contract field, a wrong parameter substitution, or a required event
 parameter that is declared but unused. These are abstract state-relation inputs;
-wire names and canonical encoding remain deferred to Protocol Issue #5.
+the Issue #5 registry now defines their canonical message sources; transport-specific
+framing remains outside both drafts.
 
 ## Transition relation
 
@@ -215,7 +219,7 @@ The major transition families are:
 
 | Stage | Events | Phase effect |
 | --- | --- | --- |
-| Creation | `create_session` | `UNINITIALIZED` to `CREATED` |
+| Creation and acceptance | `create_session`, `accept_session_a`, `accept_session_b` | Create, then record Party-specific exact-proposal acceptance |
 | Participant binding | `bind_participant_a`, `bind_participant_b` | Remain `CREATED` until both are bound, then `PARTICIPANTS_BOUND` |
 | Policy and budget | `accept_policy`, `reserve_query_budget` | Reserve only after both accept; then `COMMITMENTS_PENDING` |
 | Commitment | `register_commitment_a`, `register_commitment_b` | Bind once; then `COMMITTED` |
@@ -231,7 +235,13 @@ The major transition families are:
 | Duplicate | party, operation, and profile retry events | No-op and return the delivery-class-specific prior normalized response |
 | New evaluation | `request_new_evaluation_session` | No change to current session; require new authorization and binding |
 
-The YAML contains 39 transitions. Participant order, first/final binding,
+Session acceptance stores the trusted participant, key, subject-binding, and
+verification-material identity produced after material validation. Participant
+binding must equal that immutable Party-specific acceptance record; a different
+active material or key requires a new session because v0.1 has no rotation
+transition.
+
+The YAML contains 41 transitions. Proposal acceptance, participant order, first/final binding,
 result acceptance, conflict, deadline crossing, extension authorization, and
 delivery-class retry paths have distinct guards and atomic effects.
 
@@ -263,6 +273,14 @@ automatic fallback are forbidden. Conflict moves to `ABORTED` with normalized
 
 After `evaluation_started` becomes true, neither commitment, the commitment pair,
 policy/version binding, nor participant/key binding can change.
+
+The pair identifier is never Party supplied. On the second Party commitment the
+coordinator atomically derives `sha256:<64 lowercase hex>` from RFC 8785 bytes in
+fixed A/B slot order under `private-match-commitment-pair/v0.1`. The canonical
+input includes protocol profile, policy, session, participant bindings, selected
+integration profile, and both opaque commitments. Before the second commitment
+the identifier remains `NONE`. This construction binds identity only; it does
+not prove commitment truth, input completeness, or PET security.
 
 ### `INV-SESSION-BINDING`
 
@@ -347,8 +365,13 @@ particular operational budget, minimum set size, or abuse policy is sufficient.
 The parties derive their local result under a selected profile and acknowledge
 the profile-defined opaque receipt. Acceptance requires:
 
+- both profile contribution records exist;
 - both acknowledgments exist;
 - both reference exactly the same opaque receipt;
+- each Party status is `ACKNOWLEDGED` and the profile callback status is
+  `BOTH_ACKNOWLEDGED`;
+- the callback evidence and identity bind the current profile, session, and
+  evaluation attempt;
 - both local result values are identical and in the three-value result set;
 - no result has already been accepted for the commitment pair;
 - verification material exists and is current; and
@@ -370,6 +393,13 @@ Consent may be registered only after result acceptance. Each consent binds to:
 - `issued_at` and `expires_at`;
 - consent nonce; and
 - consent artifact digest.
+
+The abstract executor checks these values across messages rather than only
+checking phase prerequisites. A consent receipt must equal the accepted receipt;
+the bilateral profile ID/version, scope, and audience must match exactly; the
+coordinator-authoritative time must be inside the consent interval; and each
+Party nonce/digest slot is immutable. Failed cross-message guards are atomic and
+do not update state, dedup indexes, transcript, query budget, or audit state.
 
 v0.1 chooses **new session required** after consent expiry or withdrawal. Each
 party consent slot is single-use within the session. An accepted withdrawal
@@ -400,7 +430,9 @@ values:
 - consent TTL: positive and no later than session expiry;
 - stale-message threshold: non-negative;
 - verification-material interval: closed-open validity range; and
-- evaluation timeout: bounded per selected profile and policy.
+- evaluation timeout: bounded per selected profile and policy; and
+- maximum authoritative-time jump: a reviewed finite non-negative bound carried
+  by the accepted session proposal, not a Party-controlled business duration.
 
 For party messages, validity is:
 
@@ -414,6 +446,11 @@ authoritative_time - message_stale_threshold
 deadline enters `ABORTED` with `EVALUATION_TIMEOUT`. A proposal crossing session
 expiry atomically updates time, enters `EXPIRED`, invalidates disclosure
 authorization, records `SESSION_EXPIRED`, and applies the budget disposition.
+When one proposal crosses several thresholds, the machine selects exactly one
+effect in this order: session expiry, evaluation timeout, active-consent expiry,
+then normal live advance. The reviewed reason/source class must match the
+derived effect and cannot select a transition. State effects and the canonical
+transcript append are committed together or not at all.
 The live-time relation is disabled at a crossed session, evaluation, or consent
 deadline, so no active post-deadline window exists. A same-time proposal is a
 no-op. Rollback, out-of-domain time, and policy-excessive jumps reject as
@@ -445,10 +482,43 @@ retries are available even after terminalization and write no state, budget,
 release, disclosure, or audit. Timers are level-triggered and derived/local
 relations have no external retry semantics.
 
+Before current-head, time, or verification-material gates, an authoritative
+retry handler strictly parses the input, validates its Schema, recomputes its
+semantic and complete-wire digests, identifies the deduplication domain, and
+looks up an accepted record. A complete match returns only the
+domain/recipient-scoped cached response to an independently authenticated exact
+recipient. Later expiry or revocation does not turn that response lookup into a
+new protocol event. Without an accepted record, all current-event gates apply;
+a stateless validator cannot infer or grant this historical duplicate path.
+
 The machine distinguishes party resend, coordinator operation resend, profile
 callback resend, timer re-evaluation, transient new-message retry, continuation
 of the one bound evaluation, new-session retry, and non-retryable terminal
 failure. v0.1 defines no same-pair new-attempt transition.
+
+## Canonical accepted transcript
+
+Issue #5 adds `accepted_event_index` and `canonical_transcript_head` as
+coordinator-authoritative orthogonal variables. The genesis head, domain labels,
+JCS rules, authentication input, and append formula are defined in the
+[canonical transcript contract](../messages/canonical-transcript-v0.1.md).
+
+Each mutating Party message, coordinator command, profile callback, or timer
+transition checks that its supplied prior head equals the current head. The
+validated canonical message or timer-event digest is then appended atomically
+with the state mutation and the event index increments by exactly one. Party
+senders cannot choose the authoritative event index.
+
+The following do not append: rejected input, conflicting duplicate input, exact
+duplicate resend, derived outbound notice, local guidance, and same-threshold
+timer no-op. `INV-CANONICAL-TRANSCRIPT` and the semantic validator enforce this
+classification. The transcript does not replace sender sequence, nonce, dual
+operation/callback indexes, query-budget, or audit controls.
+
+Coordinator-readable transcript inputs contain opaque receipt and normalized
+lifecycle data, never the plaintext decision. Bare hashes of the three decision
+values remain prohibited. This is a structural requirement and not evidence
+that an unselected integration profile achieves outcome confidentiality.
 
 ## Generic abort
 
@@ -523,9 +593,17 @@ The machine-readable artifact supplies:
 - unresolved nondeterminism; and
 - environment assumptions.
 
-The current model has 12 phases, 42 state variables, 17 parameter catalogs, 72
-parameter-flow contracts, 6 envelope-binding contracts, 27 events, 39
-transitions, 12 invariants, and 33 failure codes.
+The current model has 12 phases, 46 state variables, 20 parameter catalogs, 84
+parameter-flow contracts, 6 envelope-binding contracts, 29 events, 41
+transitions, 14 invariants, and 33 failure codes.
+
+`create_session` binds one `session_proposal_digest` and the abstract reviewed
+integration-profile binding supplied by that proposal. Both are unbound in the
+pre-create state. Party A and Party B then use separate acceptance events to bind
+their own immutable proposal and acceptance digests. Every participant-binding
+transition has a Party-specific exact-proposal-acceptance guard. One Party cannot
+satisfy the other Party's prerequisite, and an acceptance for another proposal
+cannot bind a slot.
 
 Candidate fairness assumptions include weak fairness for the authoritative timer
 while a later bounded `TimeDomain` point exists, atomic expiry when the threshold

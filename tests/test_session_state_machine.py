@@ -93,6 +93,8 @@ class SessionStateMachineTests(unittest.TestCase):
     def base_result_trace(self):
         return [
             "TR-CREATE",
+            "TR-ACCEPT-SESSION-A",
+            "TR-ACCEPT-SESSION-B",
             "TR-BIND-A-FIRST",
             "TR-BIND-B-COMPLETE",
             "TR-ACCEPT-POLICY-A",
@@ -107,6 +109,99 @@ class SessionStateMachineTests(unittest.TestCase):
             "TR-ACK-RECEIPT-B",
             "TR-ACCEPT-SYMMETRIC-RESULT",
         ]
+
+    def test_session_acceptance_is_distinct_and_required_before_binding(self):
+        acceptance_a = self.transition("TR-ACCEPT-SESSION-A")
+        acceptance_b = self.transition("TR-ACCEPT-SESSION-B")
+        self.assertEqual("accept_session_a", acceptance_a["event"])
+        self.assertEqual("accept_session_b", acceptance_b["event"])
+        for party in ("A", "B"):
+            for suffix in ("FIRST", "COMPLETE"):
+                binding = self.transition(f"TR-BIND-{party}-{suffix}")
+                guards = {item["id"] for item in binding["guards"]}
+                self.assertIn(f"G-SESSION-ACCEPTED-{party}", guards)
+        invariant = self.invariant("INV-SESSION-ACCEPTANCE")
+        self.assertIn("session_acceptance", invariant["state_variables"])
+        self.assertIn("session_proposal_digest", invariant["state_variables"])
+
+    def test_session_proposal_and_party_acceptance_are_immutable_bindings(self):
+        create = self.transition("TR-CREATE")
+        create_effect = next(
+            item for item in create["effects"] if item["id"] == "E-CREATE"
+        )
+        self.assertIn(
+            "session_proposal_parameter.proposal_digest",
+            create_effect["parameter_reads"],
+        )
+        self.assertIn(
+            "session_proposal_parameter.selected_integration_profile_binding",
+            create_effect["parameter_reads"],
+        )
+        for party in ("A", "B"):
+            transition = self.transition(f"TR-ACCEPT-SESSION-{party}")
+            effect = next(
+                item
+                for item in transition["effects"]
+                if item["id"] == f"E-ACCEPT-SESSION-{party}"
+            )
+            self.assertEqual(
+                {
+                    "session_acceptance_parameter.proposal_digest",
+                    "session_acceptance_parameter.acceptance_digest",
+                    "authenticated_subject_parameter.actor",
+                    "authenticated_subject_parameter.participant_id",
+                    "authenticated_subject_parameter.key_id",
+                    "authenticated_subject_parameter.subject_binding_id",
+                    "authenticated_subject_parameter.verification_material_id",
+                },
+                set(effect["parameter_reads"]),
+            )
+
+    def test_session_acceptance_binding_requires_trusted_subject_identity(self):
+        required = {
+            "authenticated_subject_parameter.actor",
+            "authenticated_subject_parameter.participant_id",
+            "authenticated_subject_parameter.key_id",
+            "authenticated_subject_parameter.subject_binding_id",
+            "authenticated_subject_parameter.verification_material_id",
+            "participant_binding_parameter.participant_id",
+            "participant_binding_parameter.key_id",
+        }
+        for party in ("A", "B"):
+            for suffix in ("FIRST", "COMPLETE"):
+                transition = self.transition(f"TR-BIND-{party}-{suffix}")
+                guard = next(
+                    item
+                    for item in transition["guards"]
+                    if item["id"] == f"G-SESSION-ACCEPTED-{party}"
+                )
+                self.assertEqual(required, set(guard["parameter_reads"]))
+
+    def test_commitment_pair_derivation_is_machine_readable_and_fail_closed(self):
+        semantics = self.model["commitment_pair_derivation"]
+        self.assertEqual("private-match-commitment-pair/v0.1", semantics["domain"])
+        self.assertEqual(["party_a", "party_b"], semantics["slot_order"])
+        self.assertEqual("forbidden", semantics["party_supplied_identifier"])
+        for transition_id in (
+            "TR-COMMIT-A-COMPLETE",
+            "TR-COMMIT-B-COMPLETE",
+        ):
+            guard = next(
+                item
+                for item in self.transition(transition_id)["guards"]
+                if item["id"] == "G-COMMITMENT-PAIR-CONTEXT"
+            )
+            self.assertIn("commitment_pair_id", guard["reads"])
+
+    def test_cross_message_binding_rules_are_complete_and_catalogued(self):
+        semantics = self.model["cross_message_binding_semantics"]
+        self.assertEqual(5, len(semantics["rules"]))
+        self.assertIn("no state", semantics["atomic_failure_rule"])
+        mutated = copy.deepcopy(self.model)
+        mutated["cross_message_binding_semantics"]["rules"][0][
+            "required_parameter_paths"
+        ][0] = "unknown_parameter.unknown_field"
+        self.assertIn("cross-message-binding", self.semantic_codes(mutated))
 
     def synthetic_disclosure_state(self):
         participants = {
@@ -1741,6 +1836,223 @@ class SessionStateMachineTests(unittest.TestCase):
         )
         variable["visibility"].append("party_b_client")
         self.assertIn("failure-projection", self.semantic_codes())
+
+    def test_transcript_state_has_declared_genesis_and_zero_index(self):
+        variables = {item["id"]: item for item in self.model_copy["state_variables"]}
+        semantics = self.model_copy["canonical_transcript_semantics"]
+        self.assertEqual("0", variables["accepted_event_index"]["initial"])
+        self.assertEqual(
+            semantics["genesis_digest"],
+            variables["canonical_transcript_head"]["initial"],
+        )
+        self.assertEqual("coordinator", semantics["ordering_authority"])
+
+    def test_every_mutating_delivery_appends_transcript_exactly_once(self):
+        events = {item["id"]: item for item in self.model_copy["events"]}
+        expected = {
+            "party_message": (
+                "G-PARTY-TRANSCRIPT-CHAIN",
+                "E-APPEND-PARTY-TRANSCRIPT",
+            ),
+            "coordinator_command": (
+                "G-OPERATION-TRANSCRIPT-CHAIN",
+                "E-APPEND-OPERATION-TRANSCRIPT",
+            ),
+            "profile_callback": (
+                "G-CALLBACK-TRANSCRIPT-CHAIN",
+                "E-APPEND-CALLBACK-TRANSCRIPT",
+            ),
+            "timer": ("G-TIMER-TRANSCRIPT-CHAIN", "E-APPEND-TIMER-TRANSCRIPT"),
+        }
+        for transition in self.model_copy["transitions"]:
+            if not transition["mutating"]:
+                continue
+            guard_id, effect_id = expected[
+                events[transition["event"]]["delivery_class"]
+            ]
+            self.assertIn(guard_id, {item["id"] for item in transition["guards"]})
+            self.assertEqual(
+                1,
+                sum(item["id"] == effect_id for item in transition["effects"]),
+                transition["id"],
+            )
+            self.assertIn("INV-CANONICAL-TRANSCRIPT", transition["related_invariants"])
+
+    def test_nonmutating_relations_never_append_transcript(self):
+        transcript_ids = {
+            "G-PARTY-TRANSCRIPT-CHAIN",
+            "E-APPEND-PARTY-TRANSCRIPT",
+            "G-OPERATION-TRANSCRIPT-CHAIN",
+            "E-APPEND-OPERATION-TRANSCRIPT",
+            "G-CALLBACK-TRANSCRIPT-CHAIN",
+            "E-APPEND-CALLBACK-TRANSCRIPT",
+            "G-TIMER-TRANSCRIPT-CHAIN",
+            "E-APPEND-TIMER-TRANSCRIPT",
+        }
+        for transition in self.model_copy["transitions"]:
+            if transition["mutating"]:
+                continue
+            relation_ids = {
+                item["id"] for key in ("guards", "effects") for item in transition[key]
+            }
+            self.assertFalse(relation_ids & transcript_ids, transition["id"])
+
+    def test_removing_transcript_guard_fails_semantic_validation(self):
+        transition = self.transition("TR-BIND-A-FIRST")
+        transition["guards"] = [
+            item
+            for item in transition["guards"]
+            if item["id"] != "G-PARTY-TRANSCRIPT-CHAIN"
+        ]
+        self.assertIn("canonical-transcript", self.semantic_codes())
+
+    def test_removing_transcript_effect_fails_semantic_validation(self):
+        transition = self.transition("TR-START-EVALUATION")
+        transition["effects"] = [
+            item
+            for item in transition["effects"]
+            if item["id"] != "E-APPEND-OPERATION-TRANSCRIPT"
+        ]
+        self.assertIn("canonical-transcript", self.semantic_codes())
+
+    def test_exact_duplicate_cannot_gain_transcript_effect(self):
+        transition = self.transition("TR-RETRY-EXACT-DUPLICATE-A")
+        transition["effects"].append(
+            copy.deepcopy(self.relation_item("operation", "E-APPEND-PARTY-TRANSCRIPT"))
+        )
+        self.assertIn("canonical-transcript", self.semantic_codes())
+
+    def test_message_envelopes_bind_prior_head_and_canonical_digest(self):
+        catalog = {
+            item["id"]: {field["id"] for field in item["fields"]}
+            for item in self.model_copy["event_parameter_catalog"]
+        }
+        self.assertTrue(
+            {"prior_transcript_digest", "canonical_message_digest"}.issubset(
+                catalog["replay_envelope"]
+            )
+        )
+        self.assertTrue(
+            {"prior_transcript_digest", "canonical_message_digest"}.issubset(
+                catalog["operation_envelope"]
+            )
+        )
+        self.assertTrue(
+            {"prior_transcript_digest", "canonical_message_digest"}.issubset(
+                catalog["profile_callback_envelope"]
+            )
+        )
+        self.assertTrue(
+            {"prior_transcript_digest", "canonical_event_digest"}.issubset(
+                catalog["time_advance_parameter"]
+            )
+        )
+
+    def test_unknown_transcript_digest_source_fails_schema(self):
+        self.model_copy["canonical_transcript_semantics"]["timer_digest_source"] = (
+            "unknown.parameter"
+        )
+        self.assertIn("schema", self.schema_codes())
+
+    def test_transcript_invariant_forbids_duplicate_and_rejected_append(self):
+        invariant = self.invariant("INV-CANONICAL-TRANSCRIPT")
+        text = (
+            invariant["statement"]
+            + " "
+            + " ".join(
+                argument
+                for condition in invariant["conditions"]
+                for argument in condition["arguments"]
+            )
+        ).lower()
+        for token in ("rejected", "exact duplicate", "conflict", "no-op"):
+            self.assertIn(token, text)
+
+    def test_transcript_semantics_do_not_expose_plaintext_outcome(self):
+        semantics = self.model_copy["canonical_transcript_semantics"]
+        self.assertIn("no bare hash", semantics["result_confidentiality"])
+        self.assertIn(
+            "no coordinator-readable plaintext result",
+            semantics["result_confidentiality"],
+        )
+
+    def test_cached_response_validation_order_is_machine_readable(self):
+        replay = self.model_copy["replay_and_ordering"]
+        self.assertEqual(
+            [
+                "strict JSON parse",
+                "strict Schema validation",
+                "RFC 8785 canonical wire bytes and semantic and full-wire digest recomputation",
+                "replay or idempotency domain lookup",
+                "complete accepted-record identity semantic digest full-wire digest material and subject equality",
+                "independent authenticated requester and recipient-binding equality",
+                "recipient-scoped normalized response lookup or no-response outcome",
+            ],
+            replay["cached_response_validation_order"],
+        )
+        self.assertIn("stateless", replay["stateless_validator_boundary"])
+        self.assertIn("recipient", replay["cached_response_effect"])
+        mutated = copy.deepcopy(self.model)
+        mutated["replay_and_ordering"]["cached_response_validation_order"] = []
+        self.assertIn("schema", self.schema_codes(mutated))
+
+    def test_wire_fingerprint_and_independent_requester_are_machine_readable(self):
+        replay = self.model_copy["replay_and_ordering"]
+        wire = replay["canonical_wire_fingerprint"]
+        self.assertEqual("private-match-wire-message/v0.1", wire["domain"])
+        self.assertIn("authentication.value", wire["canonicalization"])
+        self.assertIn("not retained", wire["stored_value"])
+        self.assertIn(
+            "canonical wire digest", " ".join(replay["accepted_record_equality"])
+        )
+        requester = replay["authenticated_requester_contract"]
+        self.assertIn("never copied from replayed message", requester["source"])
+        self.assertIn("exact equality", requester["eligibility"])
+        self.assertIn("no cached response", requester["no_requester_behavior"])
+
+        for mutate in (
+            lambda model: model["replay_and_ordering"][
+                "canonical_wire_fingerprint"
+            ].__setitem__("domain", "private-match-message/v0.1"),
+            lambda model: model["replay_and_ordering"][
+                "accepted_record_equality"
+            ].remove("canonical wire digest"),
+            lambda model: model["replay_and_ordering"][
+                "authenticated_requester_contract"
+            ].__setitem__("source", "replayed message sender"),
+        ):
+            changed = copy.deepcopy(self.model)
+            mutate(changed)
+            self.assertTrue(
+                {"schema", "replay-ordering"}
+                & (self.schema_codes(changed) | self.semantic_codes(changed))
+            )
+
+    def test_timer_precedence_and_maximum_jump_are_machine_readable(self):
+        clock = self.model_copy["clock_and_expiry"]
+        self.assertEqual(
+            [
+                "SESSION_EXPIRY_THRESHOLD",
+                "EVALUATION_DEADLINE",
+                "CONSENT_EXPIRY_THRESHOLD",
+                "COORDINATOR_CLOCK",
+            ],
+            clock["timer_threshold_precedence"],
+        )
+        fields = {
+            field["id"]
+            for parameter in self.model_copy["event_parameter_catalog"]
+            if parameter["id"] == "clock_policy"
+            for field in parameter["fields"]
+        }
+        self.assertIn("maximum_jump", fields)
+        self.assertIn(
+            "maximum_time_jump",
+            {item["id"] for item in self.model_copy["state_variables"]},
+        )
+        mutated = copy.deepcopy(self.model)
+        mutated["clock_and_expiry"]["timer_threshold_precedence"].reverse()
+        self.assertIn("schema", self.schema_codes(mutated))
 
     def test_schema_version_remains_draft_zero_one(self):
         self.assertEqual(self.model["schema_version"], "0.1")

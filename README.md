@@ -46,6 +46,9 @@ The following belong in private repositories:
 - [Core session and disclosure state machine](specs/state-machines/private-match-core-session-v0.1.md)
   and its
   [machine-readable artifact](specs/state-machines/private-match-core-session-v0.1.yaml)
+- [Core versioned message contract](specs/messages/private-match-core-messages-v0.1.md),
+  [message registry](registry/message-types.v0.1.yaml), and
+  [canonical transcript contract](specs/messages/canonical-transcript-v0.1.md)
 
 ## Maturity
 

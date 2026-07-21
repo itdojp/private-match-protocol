@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/itdojp/private-match-protocol/schemas/messages/timer-event.v0.1.schema.json",
+  "title": "Private Match authoritative timer event v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_type",
+    "event_version",
+    "delivery_class",
+    "session_id",
+    "new_authoritative_time",
+    "reason_or_source_class",
+    "prior_transcript_digest"
+  ],
+  "properties": {
+    "event_type": {
+      "const": "authoritative_timer_event"
+    },
+    "event_version": {
+      "type": "string",
+      "const": "0.1"
+    },
+    "delivery_class": {
+      "const": "timer"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+    },
+    "new_authoritative_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reason_or_source_class": {
+      "type": "string",
+      "enum": [
+        "COORDINATOR_CLOCK",
+        "SESSION_EXPIRY_THRESHOLD",
+        "EVALUATION_DEADLINE",
+        "CONSENT_EXPIRY_THRESHOLD"
+      ]
+    },
+    "prior_transcript_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

@@ -62,6 +62,21 @@ The principal choices are:
 11. Keep Party-message `STALE_MESSAGE` separate from timer failures by declaring
     `CLOCK_DOMAIN_INVALID`, `CLOCK_ROLLBACK`, and `CLOCK_JUMP_EXCEEDED`, all
     projected to Parties as `CLOCK_ERROR`.
+12. Bind one session proposal digest at creation and require each Party to accept
+    that exact digest through a Party-specific immutable transition before its
+    participant slot can be bound. Acceptance and binding are not interchangeable
+    paths.
+13. Bind each Party acceptance to the trusted participant, key, subject-binding,
+    and verification-material projection created after material validation. The
+    later participant binding must match that record exactly; v0.1 has no
+    in-session key-rotation transition.
+14. Derive `commitment_pair_id` only after both commitments exist, using fixed
+    A/B slot order, RFC 8785, SHA-256, and the
+    `private-match-commitment-pair/v0.1` domain over the complete versioned
+    context. Party-supplied pair identifiers are forbidden.
+15. Execute policy, contribution, receipt/callback, and consent cross-message
+    bindings in the abstract conformance runner. A failed guard leaves state,
+    replay indexes, transcript, budget, and audit unchanged.
 
 ## Options considered
 
@@ -113,6 +128,28 @@ profile's access remains profile-dependent. Formal equality testing is a global
 specification predicate, not permission for an implementation actor to read the
 peer entry.
 
+### Acceptance subject binding and commitment-pair authority
+
+**Option A:** Treat a Party role label or a later binding payload as sufficient
+to associate session acceptance with a participant/key.
+
+**Option B:** Store the validated material subject with each Party acceptance
+and require the later participant binding to match participant, key,
+subject-binding ID, and material ID exactly.
+
+Option B was selected. The event parameter is a trusted post-validation
+projection, not a wire-controlled claim. A second active key with the same role
+does not inherit the prior acceptance. Because v0.1 defines no rotation
+transition, a different key or material requires a new session.
+
+For the pair identifier, a Party claim or equality between two Party claims was
+rejected because neither construction proves binding to the accepted
+commitments. The coordinator instead derives the identifier on the second
+commitment using canonical A/B slots and the complete protocol, policy, session,
+participant, selected-profile, and commitment context. The construction is an
+identity binding only and is not evidence of PET security, commitment truth, or
+input completeness.
+
 ### Budget consumption at evaluation start versus result acceptance
 
 **Option A:** Consume budget only when a result is accepted.
@@ -142,13 +179,25 @@ class-specific prior response without another state, budget, release,
 disclosure, or audit update. A reused identity with a different canonical digest
 is `REPLAY_CONFLICT`.
 
-Party response caches are keyed by session, sender, and message ID. Each Party
-receives only its own sender-domain entry. Coordinator operations have separate
+Party response caches are keyed by session, sender, and message ID. Each record
+also binds the semantic digest, full-wire digest, material, original authenticated
+subject, and response recipient. The coordinator returns it only when an
+independent channel/service/profile requester projection exactly matches that
+recipient; the replayed sender never authorizes release. Coordinator operations have separate
 ID and idempotency-key indexes in the actor domain; profile callbacks have the
 same two-index rule in the profile/session/attempt domain. A changed key under
 an existing ID, a changed ID under an existing key, or a changed digest under
 either index is `REPLAY_CONFLICT`. First acceptance writes both indexes and the
 prior response atomically.
+
+Authoritative duplicate classification occurs after strict parse, Schema, and
+semantic plus full-wire digest validation but before current-head, time, and
+current-material gates. A complete accepted-record match can return the
+recipient-scoped stored response only to an independently authenticated exact
+recipient, including after later terminalization, expiry, or
+material revocation. Otherwise the full current-event gates apply. Stateless
+validation cannot infer an accepted record and therefore cannot grant this
+exception.
 
 ### Authoritative time progression
 
@@ -163,6 +212,12 @@ stays below all active deadlines. Session expiry, evaluation timeout, and active
 consent expiry are terminalized atomically with the time update. Same-time
 evaluation is a no-op; rollback and policy-excessive jumps reject. This removes
 the need to invent `Tick` semantics during later TLA+ translation.
+
+The accepted session proposal supplies the typed maximum-jump bound. A timer
+transaction derives one effect with fixed precedence: session expiry,
+evaluation timeout, consent expiry, then live advance. Its reviewed reason must
+match the derived effect. Runner state and transcript head/index are computed on
+copies and committed together only after every guard and digest check succeeds.
 
 Timer input failures use the declared clock-specific taxonomy. Parties receive
 only `CLOCK_ERROR`; raw clock detail remains coordinator/private-assurance-only.
@@ -265,6 +320,20 @@ versioned, reviewed transition that preserves query-budget and leakage controls.
 This evidence establishes draft consistency only. It does not establish
 cryptographic or implementation security.
 
+## Issue #5 canonical transcript amendment
+
+ADR-0004 adds a draft RFC 8785/SHA-256 message and accepted transcript contract
+without changing the decisions above. The state vector gains
+`accepted_event_index` and `canonical_transcript_head`. Every accepted mutating
+delivery relation atomically appends its validated canonical event digest.
+Rejects, conflicts, exact duplicates, derived notices, local guidance, and
+timer no-op remain nonmutating and do not append.
+
+This amendment preserves Party-local result visibility, coordinator outcome
+confidentiality, query-budget disposition, consent replacement, failure
+projection, and extension-only disclosure. It does not select authentication,
+PET, transport, persistence, or production semantics.
+
 ## Compatibility impact
 
 This adds the first session state-machine artifact for
@@ -283,7 +352,7 @@ profile. A future compatibility commitment requires a separate version decision.
 
 - concrete PET and threat profile;
 - opaque receipt construction and its evidence;
-- message schemas, canonical encoding, signatures, and transport;
+- actual signature/MAC/attestation algorithms, transport, and persistence;
 - persistence and transactional implementation;
 - business values for clock, expiry, minimum-set, and budget parameters;
 - any actual disclosure profile or payload;

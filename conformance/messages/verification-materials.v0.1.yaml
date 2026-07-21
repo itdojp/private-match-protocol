@@ -1,0 +1,150 @@
+schema_version: '0.1'
+artifact_status: test-only
+scope: synthetic conformance vectors only; no production algorithm or key is selected
+materials:
+- verification_material_id: urn:private-match:test:material:party-a:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:party-a:v0.1
+  status: active
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+  subject_binding_id: urn:private-match:test:subject-binding:party-a:v0.1
+  subject:
+    kind: party
+    actor: party_a_client
+    participant_id: urn:private-match:test:participant:a
+- verification_material_id: urn:private-match:test:material:party-b:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:party-b:v0.1
+  status: active
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+  subject_binding_id: urn:private-match:test:subject-binding:party-b:v0.1
+  subject:
+    kind: party
+    actor: party_b_client
+    participant_id: urn:private-match:test:participant:b
+- verification_material_id: urn:private-match:test:material:coordinator:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:coordinator:v0.1
+  status: active
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+  subject_binding_id: urn:private-match:test:subject-binding:coordinator:v0.1
+  subject:
+    kind: coordinator
+    actor: coordinator
+- verification_material_id: urn:private-match:test:material:profile:v0.1
+  mode: profile-attestation
+  algorithm_id: urn:private-match:test:profile-attestation-placeholder:v0.1
+  key_id: urn:private-match:test:key:profile:v0.1
+  status: active
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+  subject_binding_id: urn:private-match:test:subject-binding:profile:v0.1
+  subject:
+    kind: integration-profile
+    actor: selected_integration_profile
+    profile_id: urn:private-match:test:profile:synthetic
+    profile_version: '0.1'
+    profile_instance_id: urn:private-match:test:profile-instance:0001
+- verification_material_id: urn:private-match:test:material:expired:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:expired:v0.1
+  status: expired
+  not_before: '2026-01-01T00:00:00Z'
+  not_after: '2026-02-01T00:00:00Z'
+  test_only: true
+  subject_binding_id: urn:private-match:test:subject-binding:expired:v0.1
+  subject:
+    kind: party
+    actor: party_a_client
+    participant_id: urn:private-match:test:participant:a
+- verification_material_id: urn:private-match:test:material:revoked:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:revoked:v0.1
+  status: revoked
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+  subject_binding_id: urn:private-match:test:subject-binding:revoked:v0.1
+  subject:
+    kind: party
+    actor: party_a_client
+    participant_id: urn:private-match:test:participant:a
+- verification_material_id: urn:private-match:test:material:party-a-other-key:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:party-a:other:v0.1
+  subject_binding_id: urn:private-match:test:subject-binding:party-a-other-key:v0.1
+  subject:
+    kind: party
+    actor: party_a_client
+    participant_id: urn:private-match:test:participant:a
+  status: active
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+- verification_material_id: urn:private-match:test:material:party-a-wrong-participant:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:party-a:v0.1
+  subject_binding_id: urn:private-match:test:subject-binding:party-a-wrong-participant:v0.1
+  subject:
+    kind: party
+    actor: party_a_client
+    participant_id: urn:private-match:test:participant:other
+  status: active
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+- verification_material_id: urn:private-match:test:material:profile-wrong-instance:v0.1
+  mode: profile-attestation
+  algorithm_id: urn:private-match:test:profile-attestation-placeholder:v0.1
+  key_id: urn:private-match:test:key:profile:v0.1
+  subject_binding_id: urn:private-match:test:subject-binding:profile-wrong-instance:v0.1
+  subject:
+    kind: integration-profile
+    actor: selected_integration_profile
+    profile_id: urn:private-match:test:profile:synthetic
+    profile_version: '0.1'
+    profile_instance_id: urn:private-match:test:profile-instance:other
+  status: active
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+- verification_material_id: urn:private-match:test:material:party-a-short-lived:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:party-a:v0.1
+  subject_binding_id: urn:private-match:test:subject-binding:party-a-short-lived:v0.1
+  subject:
+    kind: party
+    actor: party_a_client
+    participant_id: urn:private-match:test:participant:a
+  status: active
+  not_before: '2026-07-21T00:00:00Z'
+  not_after: '2026-07-21T00:00:20Z'
+  test_only: true
+- verification_material_id: urn:private-match:test:material:party-a-future:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:party-a:v0.1
+  subject_binding_id: urn:private-match:test:subject-binding:party-a-future:v0.1
+  subject:
+    kind: party
+    actor: party_a_client
+    participant_id: urn:private-match:test:participant:a
+  status: active
+  not_before: '2026-07-21T00:00:10Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true

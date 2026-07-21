@@ -19,9 +19,10 @@ scope:
   - participant, policy, commitment, attempt, replay, ordering, budget, result, consent, and expiry semantics
   - extension guards for separately reviewed disclosure profiles
   - failure taxonomy and TLA+ readiness mapping
+  - canonical accepted-event transcript head and event-index binding
   excludes:
   - PET selection or cryptographic implementation
-  - wire message fields or canonical encoding
+  - transport-specific wire framing, production API fields, or persistence encoding
   - transport, persistence, or production coordinator implementation
   - actual identity, private-data, or disclosure payload
   - TLA+ model checking or any production/security certification
@@ -234,12 +235,13 @@ event_parameter_catalog:
     required: true
     description: Current evaluation attempt or explicit NONE.
   - id: selected_integration_profile_binding
-    type: record<profile_id,profile_version,profile_instance_id>
+    type: profile_binding_or_none
     required: true
-    description: Abstract reviewed integration-profile binding; no PET is selected here.
+    description: Current reviewed profile binding or explicit NONE before session creation.
 - id: replay_envelope
-  type: record<sender_participant_id,message_id,nonce,sequence,issued_at,canonical_event_digest>
-  description: Party-message ordering, issued time, and exact-duplicate identity; wire encoding is deferred.
+  type: record<sender_participant_id,message_id,nonce,sequence,issued_at,canonical_event_digest,prior_transcript_digest,canonical_message_digest>
+  description: 'Party-message ordering, issued time, and exact-duplicate identity; wire representation
+    is defined by the Issue #5 draft message contract.'
   fields:
   - id: sender_participant_id
     type: opaque_participant_identifier
@@ -265,8 +267,17 @@ event_parameter_catalog:
     type: sha256_digest
     required: true
     description: Digest binding every envelope identity field and canonical event payload.
+  - id: prior_transcript_digest
+    type: sha256_digest
+    required: true
+    description: Accepted transcript head before this Party message; must equal coordinator state.
+  - id: canonical_message_digest
+    type: sha256_digest
+    required: true
+    description: RFC 8785 and domain-separated message digest derived after complete authentication-input
+      validation.
 - id: clock_policy
-  type: record<authoritative_time,session_expiry,allowed_skew,stale_threshold,evaluation_timeout>
+  type: record<authoritative_time,session_expiry,allowed_skew,stale_threshold,evaluation_timeout,maximum_jump>
   description: Typed policy parameters, not fixed business durations.
   fields:
   - id: authoritative_time
@@ -289,6 +300,10 @@ event_parameter_catalog:
     type: positive_duration
     required: true
     description: Evaluation deadline offset.
+  - id: maximum_jump
+    type: nonnegative_duration
+    required: true
+    description: Reviewed finite upper bound for one authoritative-time proposal; clients cannot override it.
 - id: participant_binding_parameter
   type: record<participant_id,key_id>
   description: One party binding for bind_participant_a or bind_participant_b.
@@ -358,13 +373,21 @@ event_parameter_catalog:
     required: true
     description: Party-local decision value, never coordinator-visible.
 - id: opaque_receipt_parameter
-  type: opaque_profile_reference
-  description: High-entropy or confidential reference defined by the reviewed integration profile.
+  type: record<opaque_receipt_ref,acknowledgment_status,profile_evidence_ref>
+  description: Opaque receipt acknowledgment/callback binding; contains no plaintext result.
   fields:
   - id: opaque_receipt_ref
     type: opaque_high_entropy_reference
     required: true
     description: Profile-defined opaque receipt reference.
+  - id: acknowledgment_status
+    type: enum<ACKNOWLEDGED,BOTH_ACKNOWLEDGED>
+    required: true
+    description: Delivery-specific normalized acknowledgment status.
+  - id: profile_evidence_ref
+    type: opaque_profile_reference
+    required: true
+    description: Opaque profile evidence reference bound to the current profile/session/attempt.
 - id: consent_binding_parameter
   type: record<session,participants,receipt,profile,scope,audience,issued_at,expires_at,nonce,digest>
   description: Exact result-bound consent metadata; no disclosure payload.
@@ -447,7 +470,7 @@ event_parameter_catalog:
     required: true
     description: Coordinator-only detailed failure selected from the taxonomy.
 - id: operation_envelope
-  type: record<actor_id,operation_id,canonical_operation_digest,idempotency_key>
+  type: record<actor_id,operation_id,canonical_operation_digest,idempotency_key,prior_transcript_digest,canonical_message_digest>
   description: Coordinator-command identity in an actor-scoped operation domain; separate from the participant
     replay envelope.
   fields:
@@ -467,8 +490,16 @@ event_parameter_catalog:
     type: opaque_identifier
     required: true
     description: Independently unique actor-scoped idempotency key.
+  - id: prior_transcript_digest
+    type: sha256_digest
+    required: true
+    description: Accepted transcript head before this coordinator command.
+  - id: canonical_message_digest
+    type: sha256_digest
+    required: true
+    description: RFC 8785 and domain-separated coordinator-command message digest.
 - id: profile_callback_envelope
-  type: record<profile_id,profile_version,profile_instance_id,callback_id,canonical_callback_digest,idempotency_key,session_id,evaluation_attempt_id>
+  type: record<profile_id,profile_version,profile_instance_id,callback_id,canonical_callback_digest,idempotency_key,session_id,evaluation_attempt_id,prior_transcript_digest,canonical_message_digest>
   description: Reviewed profile callback identity bound to profile instance, session, and evaluation attempt.
   fields:
   - id: profile_id
@@ -503,8 +534,16 @@ event_parameter_catalog:
     type: opaque_identifier
     required: true
     description: Must equal current evaluation_attempt_id.
+  - id: prior_transcript_digest
+    type: sha256_digest
+    required: true
+    description: Accepted transcript head before this profile callback.
+  - id: canonical_message_digest
+    type: sha256_digest
+    required: true
+    description: RFC 8785 and domain-separated profile-callback message digest.
 - id: time_advance_parameter
-  type: record<new_authoritative_time,reason_or_source_class>
+  type: record<new_authoritative_time,reason_or_source_class,prior_transcript_digest,canonical_event_digest>
   description: Bounded coordinator-clock/environment time proposal; client time is never authoritative.
   fields:
   - id: new_authoritative_time
@@ -515,6 +554,78 @@ event_parameter_catalog:
     type: reviewed_clock_source_class
     required: true
     description: Bounded clock source/reason category.
+  - id: prior_transcript_digest
+    type: sha256_digest
+    required: true
+    description: Accepted transcript head before a mutating timer relation.
+  - id: canonical_event_digest
+    type: sha256_digest
+    required: true
+    description: Domain-separated digest of the canonical authoritative timer event.
+- id: session_proposal_parameter
+  fields:
+  - &id001
+    id: proposal_digest
+    type: sha256_digest
+    required: true
+    description: Exact session proposal digest bound at creation and accepted by each Party.
+  - id: selected_integration_profile_binding
+    type: record<profile_id,profile_version,profile_instance_id>
+    required: true
+    description: Abstract reviewed profile binding established atomically by session creation; no PET
+      is selected.
+  type: record<proposal_digest,selected_integration_profile_binding>
+  description: Exact proposal and abstract reviewed profile binding supplied at session creation.
+- id: session_acceptance_parameter
+  fields:
+  - *id001
+  - id: acceptance_digest
+    type: sha256_digest
+    required: true
+    description: Party-specific immutable acceptance artifact digest.
+  type: record<proposal_digest,acceptance_digest>
+  description: Party-specific exact-proposal acceptance evidence.
+- id: authenticated_subject_parameter
+  type: trusted_record<actor,participant_id,key_id,subject_binding_id,verification_material_id>
+  description: Trusted projection produced only after successful verification-material, sender, key, subject,
+    and validity checks; it is not a wire-controlled field.
+  fields:
+  - id: actor
+    type: actor_id
+    required: true
+    description: Authenticated actor from the reviewed verification-material subject.
+  - id: participant_id
+    type: opaque_participant_identifier
+    required: true
+    description: Authenticated Party participant identifier; NONE only for non-Party subjects.
+  - id: key_id
+    type: opaque_key_identifier
+    required: true
+    description: Authenticated key identifier shared by sender, authentication metadata, and material.
+  - id: subject_binding_id
+    type: opaque_identifier
+    required: true
+    description: Stable reviewed subject-binding registry identifier.
+  - id: verification_material_id
+    type: opaque_identifier
+    required: true
+    description: Validated material identifier used for this event.
+- id: consent_withdrawal_parameter
+  type: record<consent_nonce,consent_artifact_digest,reason_category>
+  description: Party withdrawal reference for the current active consent slot.
+  fields:
+  - id: consent_nonce
+    type: opaque_nonce
+    required: true
+    description: Nonce of the active consent being withdrawn.
+  - id: consent_artifact_digest
+    type: sha256_digest
+    required: true
+    description: Digest of the active consent being withdrawn.
+  - id: reason_category
+    type: normalized_reason_category
+    required: true
+    description: Bounded withdrawal reason category.
 phases:
 - id: UNINITIALIZED
   terminal: false
@@ -617,6 +728,29 @@ state_variables:
   - selected_integration_profile
   coordinator_access: read-write
   description: Unique session binding.
+- id: session_proposal_digest
+  type: sha256_digest_or_none
+  initial: NONE
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - party_a_client
+  - party_b_client
+  coordinator_access: read-write
+  description: Exact proposal digest; immutable after the first Party acceptance.
+- id: session_acceptance
+  type: map<party,record<proposal_digest,acceptance_digest,participant_id,key_id,subject_binding_id,verification_material_id>_or_none>
+  initial: '{A:NONE,B:NONE}'
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - party_a_client
+  - party_b_client
+  coordinator_access: read-write
+  description: Party-specific exact-proposal acceptance bound to the validated participant, key, subject-binding,
+    and verification material; each entry is immutable.
 - id: protocol_profile
   type: versioned_identifier
   initial: private-match-core/v0.1
@@ -666,8 +800,8 @@ state_variables:
   coordinator_access: read-write
   description: Party and key binding; immutable after evaluation begins.
 - id: policy_acceptance
-  type: map<party,boolean>
-  initial: '{A:false,B:false}'
+  type: map<party,record<policy_id,policy_version,acceptance_digest>_or_none>
+  initial: '{A:NONE,B:NONE}'
   owner:
   - coordinator
   visibility:
@@ -675,7 +809,8 @@ state_variables:
   - party_a_client
   - party_b_client
   coordinator_access: read-write
-  description: Per-party acceptance of the exact policy binding.
+  description: Per-party immutable acceptance record for the exact current policy ID/version and acceptance
+    digest.
 - id: commitment
   type: map<party,opaque_commitment>
   initial: '{A:NONE,B:NONE}'
@@ -690,7 +825,7 @@ state_variables:
   coordinator_access: read-write
   description: Opaque per-party commitments; immutable after evaluation begins.
 - id: commitment_pair_id
-  type: opaque_identifier
+  type: sha256_digest_or_none
   initial: NONE
   owner:
   - coordinator
@@ -701,7 +836,8 @@ state_variables:
   - party_b_client
   - selected_integration_profile
   coordinator_access: read-write
-  description: Binding over both commitments and versioned context without private input.
+  description: Coordinator-derived RFC 8785/SHA-256 binding over both opaque commitments and exact versioned
+    context in fixed A/B slot order; not a PET-security or input-truth proof.
 - id: evaluation_started
   type: boolean
   initial: 'false'
@@ -957,6 +1093,15 @@ state_variables:
   - party_b_client
   coordinator_access: read-write
   description: Maximum accepted age relative to authoritative time.
+- id: maximum_time_jump
+  type: nonnegative_policy_duration
+  initial: POLICY_PARAMETER
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  coordinator_access: read-write
+  description: Reviewed finite bound for one authoritative-time proposal; no Party or timer event can override it.
 - id: verification_material_validity
   type: record<not_before,not_after,status>
   initial: NONE
@@ -1027,15 +1172,15 @@ state_variables:
   coordinator_access: read-write
   description: Policy-derived deadline set atomically at start_evaluation and compared against authoritative_time.
 - id: accepted_message_records
-  type: map<replay_domain,map<message_id,record<nonce,sequence,issued_at,canonical_event_digest,normalized_response_ref>>>
+  type: map<replay_domain,map<message_id,record<nonce,sequence,issued_at,canonical_message_digest,canonical_wire_digest,verification_material_id,original_authenticated_subject,response_recipient_binding,normalized_response_ref>>>
   initial: '{}'
   owner:
   - coordinator
   visibility:
   - coordinator
   coordinator_access: read-write
-  description: Authoritative accepted-message identity including issued_at, keyed by (session_id,sender_participant_id)
-    then message_id.
+  description: Authoritative accepted-message identity including the full-wire digest but not the raw
+    authentication value, keyed by (session_id,sender_participant_id) then message_id.
 - id: normalized_message_responses
   type: map<replay_domain,map<message_id,normalized_response>>
   initial: '{}'
@@ -1053,10 +1198,13 @@ state_variables:
       B: party_b_client
     whole_map_party_access: false
     peer_entry_access: forbidden
-  description: Authoritative sender-scoped cache; each party receives only responses in its own replay
-    domain.
+    authorization_source: independent authenticated_requester trusted projection; never replayed message sender
+    exact_subject_match: required against response_recipient_binding
+    no_requester_behavior: classify exact duplicate internally but return no response
+  description: Authoritative sender-scoped cache; each Party receives only a response originally bound
+    to its exact participant, key, material, and subject through an independent requester projection.
 - id: operation_by_id
-  type: map<(actor_id,operation_id),record<idempotency_key,canonical_digest,normalized_response>>
+  type: map<(actor_id,operation_id),record<idempotency_key,canonical_message_digest,canonical_wire_digest,verification_material_id,original_authenticated_subject,response_recipient_binding,normalized_response_ref>>
   initial: '{}'
   owner:
   - coordinator
@@ -1065,7 +1213,7 @@ state_variables:
   coordinator_access: read-write
   description: Coordinator operation registry indexed independently by actor and operation ID.
 - id: operation_by_key
-  type: map<(actor_id,idempotency_key),record<operation_id,canonical_digest,normalized_response>>
+  type: map<(actor_id,idempotency_key),record<operation_id,canonical_message_digest,canonical_wire_digest,verification_material_id,original_authenticated_subject,response_recipient_binding,normalized_response_ref>>
   initial: '{}'
   owner:
   - coordinator
@@ -1074,7 +1222,7 @@ state_variables:
   coordinator_access: read-write
   description: Coordinator operation registry independently enforcing actor-scoped idempotency-key uniqueness.
 - id: callback_by_id
-  type: map<(profile_domain,callback_id),record<idempotency_key,canonical_digest,normalized_response>>
+  type: map<(profile_domain,callback_id),record<idempotency_key,canonical_message_digest,canonical_wire_digest,verification_material_id,original_authenticated_subject,response_recipient_binding,normalized_response_ref>>
   initial: '{}'
   owner:
   - coordinator
@@ -1083,7 +1231,7 @@ state_variables:
   coordinator_access: read-write
   description: Profile callback registry indexed by the fully bound domain and callback ID.
 - id: callback_by_key
-  type: map<(profile_domain,idempotency_key),record<callback_id,canonical_digest,normalized_response>>
+  type: map<(profile_domain,idempotency_key),record<callback_id,canonical_message_digest,canonical_wire_digest,verification_material_id,original_authenticated_subject,response_recipient_binding,normalized_response_ref>>
   initial: '{}'
   owner:
   - coordinator
@@ -1125,6 +1273,31 @@ state_variables:
   coordinator_access: read-write
   description: Reviewed normalized category derived from failure_taxonomy.party_error_category for Party
     projection.
+- id: accepted_event_index
+  type: non_negative_integer
+  initial: '0'
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - assurance_pipeline
+  coordinator_access: read-write
+  description: Monotonic coordinator-authoritative index incremented once for each accepted mutating event
+    and never for rejects, exact duplicates, derived notices, or no-ops.
+- id: canonical_transcript_head
+  type: sha256_digest
+  initial: sha256:200b23451f65992feacb88e782a16afb595bc32d386a4347bb318892cde2ff3c
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - party_a_client
+  - party_b_client
+  - selected_integration_profile
+  - assurance_pipeline
+  coordinator_access: read-write
+  description: Domain-separated accepted transcript head; it binds opaque message/event digests and does
+    not expose the plaintext decision outcome.
 events:
 - id: create_session
   initiator:
@@ -1133,7 +1306,7 @@ events:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: &id001
+  visibility: &id002
   - actor: coordinator
     data:
     - normalized lifecycle
@@ -1155,7 +1328,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: &id002
+  audit_fields: &id003
   - event_id
   - authoritative_timestamp
   - actor_category_or_pseudonymous_ref
@@ -1175,19 +1348,31 @@ events:
   default_failure_code: UNKNOWN_VERSION
   parameters:
   - session_context
+  - session_proposal_parameter
   - clock_policy
   - operation_envelope
   delivery_class: coordinator_command
   required_envelope: operation_envelope
   deduplication_domain: actor_id with independent operation_id and idempotency_key indexes
-- id: bind_participant_a
+- id: accept_session_a
   initiator:
   - party_a_client
   verifier:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1198,7 +1383,50 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields:
+  - event_id
+  - authoritative_timestamp
+  - actor_category_or_pseudonymous_ref
+  - protocol_profile
+  - policy_version
+  - normalized_lifecycle_status
+  - normalized_error_category
+  - opaque_artifact_or_transcript_reference
+  - approved_size_class
+  mutating: true
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change; acceptance binds the exact immutable
+    proposal digest
+  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  retry_class: new-message
+  default_failure_code: SESSION_MISMATCH
+  parameters:
+  - session_context
+  - replay_envelope
+  - session_acceptance_parameter
+  - authenticated_subject_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
+- id: bind_participant_a
+  initiator:
+  - party_a_client
+  verifier:
+  - coordinator
+  authoritative_state_owner:
+  - coordinator
+  visibility: *id002
+  prohibited_data:
+  - raw identifiers
+  - normalized private inputs
+  - matching or non-matching elements
+  - exact intersection count
+  - private attributes
+  - local secrets
+  - actual disclosure payload
+  - plaintext decision outcome visible to coordinator
+  - raw failure code or private failure detail
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1209,6 +1437,61 @@ events:
   - session_context
   - replay_envelope
   - participant_binding_parameter
+  - authenticated_subject_parameter
+  delivery_class: party_message
+  required_envelope: replay_envelope
+  deduplication_domain: (session_id,sender_participant_id)
+- id: accept_session_b
+  initiator:
+  - party_b_client
+  verifier:
+  - coordinator
+  authoritative_state_owner:
+  - coordinator
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  prohibited_data:
+  - raw identifiers
+  - normalized private inputs
+  - matching or non-matching elements
+  - exact intersection count
+  - private attributes
+  - local secrets
+  - actual disclosure payload
+  - plaintext decision outcome visible to coordinator
+  - raw failure code or private failure detail
+  audit_fields:
+  - event_id
+  - authoritative_timestamp
+  - actor_category_or_pseudonymous_ref
+  - protocol_profile
+  - policy_version
+  - normalized_lifecycle_status
+  - normalized_error_category
+  - opaque_artifact_or_transcript_reference
+  - approved_size_class
+  mutating: true
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change; acceptance binds the exact immutable
+    proposal digest
+  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  retry_class: new-message
+  default_failure_code: SESSION_MISMATCH
+  parameters:
+  - session_context
+  - replay_envelope
+  - session_acceptance_parameter
+  - authenticated_subject_parameter
   delivery_class: party_message
   required_envelope: replay_envelope
   deduplication_domain: (session_id,sender_participant_id)
@@ -1219,7 +1502,7 @@ events:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1230,7 +1513,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1241,6 +1524,7 @@ events:
   - session_context
   - replay_envelope
   - participant_binding_parameter
+  - authenticated_subject_parameter
   delivery_class: party_message
   required_envelope: replay_envelope
   deduplication_domain: (session_id,sender_participant_id)
@@ -1252,7 +1536,7 @@ events:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1263,7 +1547,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1284,7 +1568,7 @@ events:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1295,7 +1579,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact actor-bound operation_envelope duplicate requires both independent indexes
     to agree and returns the prior normalized operation response without another state, budget, release,
@@ -1319,7 +1603,7 @@ events:
   - selected_integration_profile
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1330,7 +1614,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1352,7 +1636,7 @@ events:
   - selected_integration_profile
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1363,7 +1647,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1385,7 +1669,7 @@ events:
   - selected_integration_profile
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1396,7 +1680,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact actor-bound operation_envelope duplicate requires both independent indexes
     to agree and returns the prior normalized operation response without another state, budget, release,
@@ -1437,7 +1721,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1483,7 +1767,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1530,7 +1814,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1582,7 +1866,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact profile/session/attempt-bound callback duplicate requires both independent
     indexes to agree and returns the prior normalized callback response without another state, budget,
@@ -1608,7 +1892,7 @@ events:
   authoritative_state_owner:
   - party_a_client
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1619,7 +1903,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1641,7 +1925,7 @@ events:
   authoritative_state_owner:
   - party_b_client
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1652,7 +1936,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1674,7 +1958,7 @@ events:
   authoritative_state_owner:
   - party_a_client
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1685,7 +1969,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1695,7 +1979,7 @@ events:
   parameters:
   - session_context
   - replay_envelope
-  - consent_binding_parameter
+  - consent_withdrawal_parameter
   delivery_class: party_message
   required_envelope: replay_envelope
   deduplication_domain: (session_id,sender_participant_id)
@@ -1707,7 +1991,7 @@ events:
   authoritative_state_owner:
   - party_b_client
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1718,7 +2002,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1728,7 +2012,7 @@ events:
   parameters:
   - session_context
   - replay_envelope
-  - consent_binding_parameter
+  - consent_withdrawal_parameter
   delivery_class: party_message
   required_envelope: replay_envelope
   deduplication_domain: (session_id,sender_participant_id)
@@ -1740,7 +2024,7 @@ events:
   - selected_integration_profile
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1751,7 +2035,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact actor-bound operation_envelope duplicate requires both independent indexes
     to agree and returns the prior normalized operation response without another state, budget, release,
@@ -1795,7 +2079,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact profile/session/attempt-bound callback duplicate requires both independent
     indexes to agree and returns the prior normalized callback response without another state, budget,
@@ -1820,7 +2104,7 @@ events:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1831,7 +2115,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: false
   idempotency_behavior: deterministic state-derived relation with no external delivery or retry
   duplicate_behavior: not externally duplicable
@@ -1849,7 +2133,7 @@ events:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1860,7 +2144,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact actor-bound operation_envelope duplicate requires both independent indexes
     to agree and returns the prior normalized operation response without another state, budget, release,
@@ -1883,7 +2167,7 @@ events:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1894,7 +2178,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: level-triggered threshold evaluation; the same threshold is a no-op and cannot
     duplicate state, budget, release, or audit change
@@ -1913,7 +2197,7 @@ events:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1924,7 +2208,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: true
   idempotency_behavior: exact actor-bound operation_envelope duplicate requires both independent indexes
     to agree and returns the prior normalized operation response without another state, budget, release,
@@ -1947,7 +2231,7 @@ events:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1958,7 +2242,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: false
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -1979,7 +2263,7 @@ events:
   - coordinator
   authoritative_state_owner:
   - coordinator
-  visibility: *id001
+  visibility: *id002
   prohibited_data:
   - raw identifiers
   - normalized private inputs
@@ -1990,7 +2274,7 @@ events:
   - actual disclosure payload
   - plaintext decision outcome visible to coordinator
   - raw failure code or private failure detail
-  audit_fields: *id002
+  audit_fields: *id003
   mutating: false
   idempotency_behavior: non-mutating local guidance from current state with no external delivery deduplication
   duplicate_behavior: not externally duplicable
@@ -2193,8 +2477,21 @@ transitions:
     - clock_policy.allowed_skew
     - clock_policy.authoritative_time
     - clock_policy.evaluation_timeout
+    - clock_policy.maximum_jump
     - clock_policy.session_expiry
     - clock_policy.stale_threshold
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-CREATE
     operation: initialize_session
@@ -2207,6 +2504,7 @@ transitions:
     - session_created_at
     - session_expires_at
     - authoritative_time
+    - maximum_time_jump
     - next_sequence
     - accepted_message_ids
     - accepted_nonces
@@ -2215,13 +2513,18 @@ transitions:
     - selected_integration_profile_binding
     - terminal_failure_code
     - party_terminal_category
+    - session_proposal_digest
+    - session_acceptance
     arguments:
     - bind supplied versioned context
     - derive expiry from reviewed policy parameters
+    - bind exact session proposal digest and selected integration-profile metadata; initialize both Party
+      acceptance slots to NONE
     parameter_reads:
     - clock_policy.allowed_skew
     - clock_policy.authoritative_time
     - clock_policy.evaluation_timeout
+    - clock_policy.maximum_jump
     - clock_policy.session_expiry
     - clock_policy.stale_threshold
     - session_context.commitment_pair_id
@@ -2230,9 +2533,10 @@ transitions:
     - session_context.participant_binding
     - session_context.policy_binding
     - session_context.protocol_profile
-    - session_context.selected_integration_profile_binding
     - session_context.session_id
-  - &id003
+    - session_proposal_parameter.proposal_digest
+    - session_proposal_parameter.selected_integration_profile_binding
+  - &id004
     id: E-AUDIT
     operation: append_normalized_audit
     writes:
@@ -2252,6 +2556,20 @@ transitions:
     - operation_envelope.operation_id
     arguments:
     - atomically store both ID and idempotency-key indexes with the prior normalized response
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2266,7 +2584,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact actor-bound operation_envelope duplicate requires both independent indexes
     to agree and returns the prior normalized operation response without another state, budget, release,
@@ -2290,6 +2608,211 @@ transitions:
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
+- id: TR-ACCEPT-SESSION-A
+  event: accept_session_a
+  actor: party_a_client
+  from_phase:
+  - CREATED
+  to_phase: SAME
+  guards:
+  - id: G-CONTEXT-BINDING
+    predicate: event_context_matches
+    reads:
+    - session_id
+    - protocol_profile
+    - policy_binding
+    - participant_binding
+    - intended_audience
+    - commitment_pair_id
+    - evaluation_attempt_id
+    - selected_integration_profile_binding
+    arguments:
+    - all fields bind to their current values; pre-commitment and pre-attempt values bind explicitly to
+      NONE
+    parameter_reads:
+    - session_context.commitment_pair_id
+    - session_context.evaluation_attempt_id
+    - session_context.intended_audience
+    - session_context.participant_binding
+    - session_context.policy_binding
+    - session_context.protocol_profile
+    - session_context.selected_integration_profile_binding
+    - session_context.session_id
+  - id: G-ORDER-AND-REPLAY
+    predicate: fresh_ordered_message
+    reads:
+    - next_sequence
+    - accepted_message_ids
+    - accepted_nonces
+    - accepted_event_digests
+    arguments:
+    - sequence equals sender next_sequence
+    - nonce unused in (session_id,sender_participant_id)
+    - message_id unused unless exact duplicate
+    parameter_reads:
+    - replay_envelope.canonical_event_digest
+    - replay_envelope.issued_at
+    - replay_envelope.message_id
+    - replay_envelope.nonce
+    - replay_envelope.sender_participant_id
+    - replay_envelope.sequence
+  - id: G-AUTHENTICATED-SUBJECT-A
+    predicate: trusted_subject_matches_party_slot
+    reads: []
+    arguments:
+    - actor=party_a_client
+    - projection exists only after material/sender/key/subject/validity validation
+    - wire fields cannot override the trusted projection
+    parameter_reads:
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
+  - id: G-SESSION-PROPOSAL-A
+    predicate: exact_unaccepted_proposal
+    reads:
+    - session_proposal_digest
+    - session_acceptance
+    arguments:
+    - A acceptance slot is NONE
+    - proposal digest equals session_proposal_digest
+    parameter_reads:
+    - session_acceptance_parameter.proposal_digest
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
+  effects:
+  - id: E-ACCEPT-SESSION-A
+    operation: record_party_session_acceptance
+    writes:
+    - session_acceptance
+    parameter_reads:
+    - session_acceptance_parameter.proposal_digest
+    - session_acceptance_parameter.acceptance_digest
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
+    arguments:
+    - atomically bind A proposal and acceptance digests
+    - store authenticated participant, key, subject_binding_id, and verification_material_id in A acceptance
+      slot
+    - slot is immutable; v0.1 defines no in-session key rotation
+  - id: E-ACCEPT-MESSAGE
+    operation: record_accepted_message
+    writes:
+    - next_sequence
+    - accepted_message_ids
+    - accepted_nonces
+    - accepted_event_digests
+    - normalized_message_responses
+    - accepted_message_records
+    arguments:
+    - atomically index (session_id,sender_participant_id,message_id)
+    - store nonce, sequence, issued_at, canonical digest, and bounded normalized response
+    - advance sequence and nonce state exactly once
+    parameter_reads:
+    - replay_envelope.canonical_event_digest
+    - replay_envelope.issued_at
+    - replay_envelope.message_id
+    - replay_envelope.nonce
+    - replay_envelope.sender_participant_id
+    - replay_envelope.sequence
+    - session_context.session_id
+  - id: E-AUDIT
+    operation: append_normalized_audit
+    writes:
+    - audit_lifecycle
+    arguments:
+    - append only audit_policy.allowed_fields
+    parameter_reads: []
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  audit_effect:
+    category: normalized-protocol-lifecycle
+    fields:
+    - event_id
+    - authoritative_timestamp
+    - actor_category_or_pseudonymous_ref
+    - protocol_profile
+    - policy_version
+    - normalized_lifecycle_status
+    - normalized_error_category
+    - opaque_artifact_or_transcript_reference
+    - approved_size_class
+    detail_policy: counterparty receives only the normalized category when detail would increase inference
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change; acceptance binds the exact immutable
+    proposal digest
+  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  retry_class: new-message
+  failure_code:
+  - AUDIENCE_MISMATCH
+  - OUT_OF_ORDER
+  - PARTICIPANT_MISMATCH
+  - REPLAY
+  - REPLAY_CONFLICT
+  - SESSION_MISMATCH
+  terminal_effect: none
+  mutating: true
+  extension_only: false
+  privacy_notes:
+  - No prohibited private, result, element, count, or payload data enters coordinator state or audit.
+  related_invariants:
+  - INV-SESSION-BINDING
+  - INV-NO-REPLAY
+  - INV-IDEMPOTENCY
+  - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
+  - INV-SESSION-ACCEPTANCE
 - id: TR-BIND-A-FIRST
   event: bind_participant_a
   actor: party_a_client
@@ -2297,7 +2820,7 @@ transitions:
   - CREATED
   to_phase: SAME
   guards:
-  - &id004
+  - &id005
     id: G-CONTEXT-BINDING
     predicate: event_context_matches
     reads:
@@ -2321,7 +2844,7 @@ transitions:
     - session_context.protocol_profile
     - session_context.selected_integration_profile_binding
     - session_context.session_id
-  - &id005
+  - &id006
     id: G-ORDER-AND-REPLAY
     predicate: fresh_ordered_message
     reads:
@@ -2340,6 +2863,25 @@ transitions:
     - replay_envelope.nonce
     - replay_envelope.sender_participant_id
     - replay_envelope.sequence
+  - id: G-SESSION-ACCEPTED-A
+    predicate: party_accepted_exact_proposal
+    reads:
+    - session_proposal_digest
+    - session_acceptance
+    arguments:
+    - A acceptance exists and proposal_digest equals session_proposal_digest
+    - binding participant_id and key_id equal the acceptance record
+    - current authenticated subject_binding_id and verification_material_id equal the acceptance record
+    - authenticated actor is party_a_client
+    - v0.1 has no key-rotation transition; any material or key change fails closed
+    parameter_reads:
+    - participant_binding_parameter.participant_id
+    - participant_binding_parameter.key_id
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
   - id: G-A-UNBOUND-FIRST
     predicate: all_equal
     reads:
@@ -2360,6 +2902,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-BIND-A
     operation: bind_once
@@ -2371,7 +2925,7 @@ transitions:
     parameter_reads:
     - participant_binding_parameter.key_id
     - participant_binding_parameter.participant_id
-  - &id006
+  - &id007
     id: E-ACCEPT-MESSAGE
     operation: record_accepted_message
     writes:
@@ -2393,7 +2947,21 @@ transitions:
     - replay_envelope.sender_participant_id
     - replay_envelope.sequence
     - session_context.session_id
-  - *id003
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2408,7 +2976,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -2431,6 +2999,8 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
+  - INV-SESSION-ACCEPTANCE
 - id: TR-BIND-A-COMPLETE
   event: bind_participant_a
   actor: party_a_client
@@ -2438,8 +3008,27 @@ transitions:
   - CREATED
   to_phase: PARTICIPANTS_BOUND
   guards:
-  - *id004
   - *id005
+  - *id006
+  - id: G-SESSION-ACCEPTED-A
+    predicate: party_accepted_exact_proposal
+    reads:
+    - session_proposal_digest
+    - session_acceptance
+    arguments:
+    - A acceptance exists and proposal_digest equals session_proposal_digest
+    - binding participant_id and key_id equal the acceptance record
+    - current authenticated subject_binding_id and verification_material_id equal the acceptance record
+    - authenticated actor is party_a_client
+    - v0.1 has no key-rotation transition; any material or key change fails closed
+    parameter_reads:
+    - participant_binding_parameter.participant_id
+    - participant_binding_parameter.key_id
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
   - id: G-A-UNBOUND-B-BOUND
     predicate: all_equal
     reads:
@@ -2460,6 +3049,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-BIND-A-COMPLETE
     operation: bind_once
@@ -2472,8 +3073,22 @@ transitions:
     parameter_reads:
     - participant_binding_parameter.key_id
     - participant_binding_parameter.participant_id
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2488,7 +3103,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -2511,6 +3126,212 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
+  - INV-SESSION-ACCEPTANCE
+- id: TR-ACCEPT-SESSION-B
+  event: accept_session_b
+  actor: party_b_client
+  from_phase:
+  - CREATED
+  to_phase: SAME
+  guards:
+  - id: G-CONTEXT-BINDING
+    predicate: event_context_matches
+    reads:
+    - session_id
+    - protocol_profile
+    - policy_binding
+    - participant_binding
+    - intended_audience
+    - commitment_pair_id
+    - evaluation_attempt_id
+    - selected_integration_profile_binding
+    arguments:
+    - all fields bind to their current values; pre-commitment and pre-attempt values bind explicitly to
+      NONE
+    parameter_reads:
+    - session_context.commitment_pair_id
+    - session_context.evaluation_attempt_id
+    - session_context.intended_audience
+    - session_context.participant_binding
+    - session_context.policy_binding
+    - session_context.protocol_profile
+    - session_context.selected_integration_profile_binding
+    - session_context.session_id
+  - id: G-ORDER-AND-REPLAY
+    predicate: fresh_ordered_message
+    reads:
+    - next_sequence
+    - accepted_message_ids
+    - accepted_nonces
+    - accepted_event_digests
+    arguments:
+    - sequence equals sender next_sequence
+    - nonce unused in (session_id,sender_participant_id)
+    - message_id unused unless exact duplicate
+    parameter_reads:
+    - replay_envelope.canonical_event_digest
+    - replay_envelope.issued_at
+    - replay_envelope.message_id
+    - replay_envelope.nonce
+    - replay_envelope.sender_participant_id
+    - replay_envelope.sequence
+  - id: G-AUTHENTICATED-SUBJECT-B
+    predicate: trusted_subject_matches_party_slot
+    reads: []
+    arguments:
+    - actor=party_b_client
+    - projection exists only after material/sender/key/subject/validity validation
+    - wire fields cannot override the trusted projection
+    parameter_reads:
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
+  - id: G-SESSION-PROPOSAL-B
+    predicate: exact_unaccepted_proposal
+    reads:
+    - session_proposal_digest
+    - session_acceptance
+    arguments:
+    - B acceptance slot is NONE
+    - proposal digest equals session_proposal_digest
+    parameter_reads:
+    - session_acceptance_parameter.proposal_digest
+  - id: G-MESSAGE-TIME-VALID
+    predicate: message_time_within_policy
+    reads:
+    - authoritative_time
+    - allowed_clock_skew
+    - message_stale_threshold
+    parameter_reads:
+    - replay_envelope.issued_at
+    arguments:
+    - authoritative_time - message_stale_threshold <= issued_at
+    - issued_at <= authoritative_time + allowed_clock_skew
+    - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
+  effects:
+  - id: E-ACCEPT-SESSION-B
+    operation: record_party_session_acceptance
+    writes:
+    - session_acceptance
+    parameter_reads:
+    - session_acceptance_parameter.proposal_digest
+    - session_acceptance_parameter.acceptance_digest
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
+    arguments:
+    - atomically bind B proposal and acceptance digests
+    - store authenticated participant, key, subject_binding_id, and verification_material_id in B acceptance
+      slot
+    - slot is immutable; v0.1 defines no in-session key rotation
+  - id: E-ACCEPT-MESSAGE
+    operation: record_accepted_message
+    writes:
+    - next_sequence
+    - accepted_message_ids
+    - accepted_nonces
+    - accepted_event_digests
+    - normalized_message_responses
+    - accepted_message_records
+    arguments:
+    - atomically index (session_id,sender_participant_id,message_id)
+    - store nonce, sequence, issued_at, canonical digest, and bounded normalized response
+    - advance sequence and nonce state exactly once
+    parameter_reads:
+    - replay_envelope.canonical_event_digest
+    - replay_envelope.issued_at
+    - replay_envelope.message_id
+    - replay_envelope.nonce
+    - replay_envelope.sender_participant_id
+    - replay_envelope.sequence
+    - session_context.session_id
+  - id: E-AUDIT
+    operation: append_normalized_audit
+    writes:
+    - audit_lifecycle
+    arguments:
+    - append only audit_policy.allowed_fields
+    parameter_reads: []
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
+  visibility:
+  - actor: coordinator
+    data:
+    - normalized lifecycle
+    - binding metadata
+    - message replay metadata
+  - actor: party_a_client
+    data:
+    - own normalized response
+  - actor: party_b_client
+    data:
+    - own normalized response
+  audit_effect:
+    category: normalized-protocol-lifecycle
+    fields:
+    - event_id
+    - authoritative_timestamp
+    - actor_category_or_pseudonymous_ref
+    - protocol_profile
+    - policy_version
+    - normalized_lifecycle_status
+    - normalized_error_category
+    - opaque_artifact_or_transcript_reference
+    - approved_size_class
+    detail_policy: counterparty receives only the normalized category when detail would increase inference
+  idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
+    without another state, sequence, budget, release, or audit change; acceptance binds the exact immutable
+    proposal digest
+  duplicate_behavior: same message_id or nonce with a different canonical event digest is REPLAY_CONFLICT
+  retry_class: new-message
+  failure_code:
+  - AUDIENCE_MISMATCH
+  - OUT_OF_ORDER
+  - PARTICIPANT_MISMATCH
+  - REPLAY
+  - REPLAY_CONFLICT
+  - SESSION_MISMATCH
+  terminal_effect: none
+  mutating: true
+  extension_only: false
+  privacy_notes:
+  - No prohibited private, result, element, count, or payload data enters coordinator state or audit.
+  related_invariants:
+  - INV-SESSION-BINDING
+  - INV-NO-REPLAY
+  - INV-IDEMPOTENCY
+  - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
+  - INV-SESSION-ACCEPTANCE
 - id: TR-BIND-B-FIRST
   event: bind_participant_b
   actor: party_b_client
@@ -2518,8 +3339,27 @@ transitions:
   - CREATED
   to_phase: SAME
   guards:
-  - *id004
   - *id005
+  - *id006
+  - id: G-SESSION-ACCEPTED-B
+    predicate: party_accepted_exact_proposal
+    reads:
+    - session_proposal_digest
+    - session_acceptance
+    arguments:
+    - B acceptance exists and proposal_digest equals session_proposal_digest
+    - binding participant_id and key_id equal the acceptance record
+    - current authenticated subject_binding_id and verification_material_id equal the acceptance record
+    - authenticated actor is party_b_client
+    - v0.1 has no key-rotation transition; any material or key change fails closed
+    parameter_reads:
+    - participant_binding_parameter.participant_id
+    - participant_binding_parameter.key_id
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
   - id: G-B-UNBOUND-FIRST
     predicate: all_equal
     reads:
@@ -2540,6 +3380,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-BIND-B
     operation: bind_once
@@ -2551,8 +3403,22 @@ transitions:
     parameter_reads:
     - participant_binding_parameter.key_id
     - participant_binding_parameter.participant_id
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2567,7 +3433,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -2590,6 +3456,8 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
+  - INV-SESSION-ACCEPTANCE
 - id: TR-BIND-B-COMPLETE
   event: bind_participant_b
   actor: party_b_client
@@ -2597,8 +3465,27 @@ transitions:
   - CREATED
   to_phase: PARTICIPANTS_BOUND
   guards:
-  - *id004
   - *id005
+  - *id006
+  - id: G-SESSION-ACCEPTED-B
+    predicate: party_accepted_exact_proposal
+    reads:
+    - session_proposal_digest
+    - session_acceptance
+    arguments:
+    - B acceptance exists and proposal_digest equals session_proposal_digest
+    - binding participant_id and key_id equal the acceptance record
+    - current authenticated subject_binding_id and verification_material_id equal the acceptance record
+    - authenticated actor is party_b_client
+    - v0.1 has no key-rotation transition; any material or key change fails closed
+    parameter_reads:
+    - participant_binding_parameter.participant_id
+    - participant_binding_parameter.key_id
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
   - id: G-B-UNBOUND-A-BOUND
     predicate: all_equal
     reads:
@@ -2619,6 +3506,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-BIND-B-COMPLETE
     operation: bind_once
@@ -2631,8 +3530,22 @@ transitions:
     parameter_reads:
     - participant_binding_parameter.key_id
     - participant_binding_parameter.participant_id
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2647,7 +3560,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -2670,6 +3583,8 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
+  - INV-SESSION-ACCEPTANCE
 - id: TR-ACCEPT-POLICY-A
   event: accept_policy
   actor: party_a_client
@@ -2677,15 +3592,19 @@ transitions:
   - PARTICIPANTS_BOUND
   to_phase: SAME
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-POLICY-NOT-ACCEPTED-A
-    predicate: equals
+    predicate: unset_and_exact_policy_binding
     reads:
     - policy_acceptance
     arguments:
-    - A=false
-    parameter_reads: []
+    - A=NONE
+    - parameter policy_id equals policy_binding.policy_id
+    - parameter policy_version equals policy_binding.policy_version
+    parameter_reads:
+    - policy_acceptance_parameter.policy_id
+    - policy_acceptance_parameter.policy_version
   - id: G-MESSAGE-TIME-VALID
     predicate: message_time_within_policy
     reads:
@@ -2698,19 +3617,46 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-ACCEPT-POLICY-A
     operation: set
     writes:
     - policy_acceptance
     arguments:
-    - A=true for exact policy_binding
+    - atomically bind A policy_id, policy_version, and acceptance_digest
+    - slot is immutable and cannot satisfy the peer slot
     parameter_reads:
     - policy_acceptance_parameter.acceptance_digest
     - policy_acceptance_parameter.policy_id
     - policy_acceptance_parameter.policy_version
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2725,7 +3671,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -2747,6 +3693,7 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-ACCEPT-POLICY-B
   event: accept_policy
   actor: party_b_client
@@ -2754,15 +3701,19 @@ transitions:
   - PARTICIPANTS_BOUND
   to_phase: SAME
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-POLICY-NOT-ACCEPTED-B
-    predicate: equals
+    predicate: unset_and_exact_policy_binding
     reads:
     - policy_acceptance
     arguments:
-    - B=false
-    parameter_reads: []
+    - B=NONE
+    - parameter policy_id equals policy_binding.policy_id
+    - parameter policy_version equals policy_binding.policy_version
+    parameter_reads:
+    - policy_acceptance_parameter.policy_id
+    - policy_acceptance_parameter.policy_version
   - id: G-MESSAGE-TIME-VALID
     predicate: message_time_within_policy
     reads:
@@ -2775,19 +3726,46 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-ACCEPT-POLICY-B
     operation: set
     writes:
     - policy_acceptance
     arguments:
-    - B=true for exact policy_binding
+    - atomically bind B policy_id, policy_version, and acceptance_digest
+    - slot is immutable and cannot satisfy the peer slot
     parameter_reads:
     - policy_acceptance_parameter.acceptance_digest
     - policy_acceptance_parameter.policy_id
     - policy_acceptance_parameter.policy_version
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2802,7 +3780,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -2824,6 +3802,7 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-RESERVE-BUDGET
   event: reserve_query_budget
   actor: coordinator
@@ -2845,14 +3824,16 @@ transitions:
     - operation_envelope.actor_id equals coordinator transition actor
     - ID index and idempotency-key index are both new or both exactly equal
     - any one-sided or differing binding is REPLAY_CONFLICT with no state change
-  - *id004
+  - *id005
   - id: G-BOTH-POLICY
-    predicate: all_true
+    predicate: both_policy_acceptances_match_binding
     reads:
     - policy_acceptance
+    - policy_binding
     arguments:
-    - A
-    - B
+    - A and B records are present
+    - each record policy_id and policy_version exactly equal current policy_binding
+    - each Party acceptance_digest is present and immutable
     parameter_reads: []
   - id: G-BUDGET-AUTHORIZED
     predicate: equals
@@ -2869,6 +3850,18 @@ transitions:
     - session_expires_at
     arguments: []
     parameter_reads: []
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-RESERVE-BUDGET
     operation: reserve
@@ -2879,7 +3872,7 @@ transitions:
     - query_budget_state=RESERVED
     parameter_reads:
     - query_budget_authorization_ref.authorization_ref
-  - *id003
+  - *id004
   - id: E-ACCEPT-OPERATION
     operation: record_actor_scoped_operation
     writes:
@@ -2892,6 +3885,20 @@ transitions:
     - operation_envelope.operation_id
     arguments:
     - atomically store both ID and idempotency-key indexes with the prior normalized response
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2906,7 +3913,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact actor-bound operation_envelope duplicate requires both independent indexes
     to agree and returns the prior normalized operation response without another state, budget, release,
@@ -2931,6 +3938,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-QUERY-BUDGET
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-COMMIT-A-FIRST
   event: register_commitment_a
   actor: party_a_client
@@ -2938,8 +3946,8 @@ transitions:
   - COMMITMENTS_PENDING
   to_phase: SAME
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-COMMIT-A-FIRST
     predicate: all_equal
     reads:
@@ -2967,6 +3975,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-COMMIT-A
     operation: bind_once
@@ -2976,8 +3996,22 @@ transitions:
     - register opaque commitment for A
     parameter_reads:
     - commitment_parameter.opaque_commitment
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2992,7 +4026,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -3015,6 +4049,7 @@ transitions:
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-COMMIT-A-COMPLETE
   event: register_commitment_a
   actor: party_a_client
@@ -3022,8 +4057,8 @@ transitions:
   - COMMITMENTS_PENDING
   to_phase: COMMITTED
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-COMMIT-A-B-BOUND
     predicate: all_equal
     reads:
@@ -3039,6 +4074,21 @@ transitions:
     arguments:
     - RESERVED
     parameter_reads: []
+  - id: G-COMMITMENT-PAIR-CONTEXT
+    predicate: complete_immutable_derivation_context
+    reads:
+    - protocol_profile
+    - policy_binding
+    - session_id
+    - participant_binding
+    - selected_integration_profile_binding
+    - commitment
+    - commitment_pair_id
+    arguments:
+    - protocol profile, policy, session, ordered participant slots, selected profile, and first commitment
+      are fully bound
+    - commitment_pair_id=NONE before the atomic second-commitment effect
+    parameter_reads: []
   - id: G-MESSAGE-TIME-VALID
     predicate: message_time_within_policy
     reads:
@@ -3051,6 +4101,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-COMMIT-A-PAIR
     operation: bind_once
@@ -3059,11 +4121,29 @@ transitions:
     - commitment_pair_id
     - phase
     arguments:
-    - register A commitment and derive opaque commitment_pair_id over both commitments and versioned binding
+    - register A opaque commitment in its canonical slot
+    - derive commitment_pair_id with RFC 8785 and private-match-commitment-pair/v0.1 over protocol profile,
+      policy, session, ordered A/B participants, selected profile, commitment A, and commitment B
+    - write both the second commitment and derived sha256 identifier atomically exactly once
+    - Party input cannot provide or overwrite commitment_pair_id
     parameter_reads:
     - commitment_parameter.opaque_commitment
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -3078,7 +4158,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -3101,6 +4181,7 @@ transitions:
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-COMMIT-B-FIRST
   event: register_commitment_b
   actor: party_b_client
@@ -3108,8 +4189,8 @@ transitions:
   - COMMITMENTS_PENDING
   to_phase: SAME
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-COMMIT-B-FIRST
     predicate: all_equal
     reads:
@@ -3137,6 +4218,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-COMMIT-B
     operation: bind_once
@@ -3146,8 +4239,22 @@ transitions:
     - register opaque commitment for B
     parameter_reads:
     - commitment_parameter.opaque_commitment
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -3162,7 +4269,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -3185,6 +4292,7 @@ transitions:
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-COMMIT-B-COMPLETE
   event: register_commitment_b
   actor: party_b_client
@@ -3192,8 +4300,8 @@ transitions:
   - COMMITMENTS_PENDING
   to_phase: COMMITTED
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-COMMIT-B-A-BOUND
     predicate: all_equal
     reads:
@@ -3209,6 +4317,21 @@ transitions:
     arguments:
     - RESERVED
     parameter_reads: []
+  - id: G-COMMITMENT-PAIR-CONTEXT
+    predicate: complete_immutable_derivation_context
+    reads:
+    - protocol_profile
+    - policy_binding
+    - session_id
+    - participant_binding
+    - selected_integration_profile_binding
+    - commitment
+    - commitment_pair_id
+    arguments:
+    - protocol profile, policy, session, ordered participant slots, selected profile, and first commitment
+      are fully bound
+    - commitment_pair_id=NONE before the atomic second-commitment effect
+    parameter_reads: []
   - id: G-MESSAGE-TIME-VALID
     predicate: message_time_within_policy
     reads:
@@ -3221,6 +4344,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-COMMIT-B-PAIR
     operation: bind_once
@@ -3229,11 +4364,29 @@ transitions:
     - commitment_pair_id
     - phase
     arguments:
-    - register B commitment and derive opaque commitment_pair_id over both commitments and versioned binding
+    - register B opaque commitment in its canonical slot
+    - derive commitment_pair_id with RFC 8785 and private-match-commitment-pair/v0.1 over protocol profile,
+      policy, session, ordered A/B participants, selected profile, commitment A, and commitment B
+    - write both the second commitment and derived sha256 identifier atomically exactly once
+    - Party input cannot provide or overwrite commitment_pair_id
     parameter_reads:
     - commitment_parameter.opaque_commitment
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -3248,7 +4401,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -3271,6 +4424,7 @@ transitions:
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-START-EVALUATION
   event: start_evaluation
   actor: coordinator
@@ -3292,7 +4446,7 @@ transitions:
     - operation_envelope.actor_id equals coordinator transition actor
     - ID index and idempotency-key index are both new or both exactly equal
     - any one-sided or differing binding is REPLAY_CONFLICT with no state change
-  - *id004
+  - *id005
   - id: G-BUDGET-RESERVED
     predicate: equals
     reads:
@@ -3334,6 +4488,18 @@ transitions:
     - session_expires_at
     arguments: []
     parameter_reads: []
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-START-EVALUATION
     operation: consume_atomically
@@ -3347,7 +4513,7 @@ transitions:
     - bind one new attempt ID
     parameter_reads:
     - evaluation_attempt_parameter.evaluation_attempt_id
-  - *id003
+  - *id004
   - id: E-ACCEPT-OPERATION
     operation: record_actor_scoped_operation
     writes:
@@ -3369,6 +4535,20 @@ transitions:
     arguments:
     - authoritative_time + policy evaluation timeout
     - must be within TimeDomain
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -3383,7 +4563,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact actor-bound operation_envelope duplicate requires both independent indexes
     to agree and returns the prior normalized operation response without another state, budget, release,
@@ -3412,6 +4592,7 @@ transitions:
   - INV-ONE-EVALUATION
   - INV-QUERY-BUDGET
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-SUBMIT-CONTRIBUTION-A
   event: submit_evaluation_contribution
   actor: party_a_client
@@ -3419,8 +4600,8 @@ transitions:
   - EVALUATING
   to_phase: SAME
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-CONTRIBUTION-A-EMPTY
     predicate: is_unset
     reads:
@@ -3447,6 +4628,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-CONTRIBUTION-A
     operation: bind_once
@@ -3456,8 +4649,22 @@ transitions:
     - store profile-defined opaque contribution reference for A outside coordinator plaintext
     parameter_reads:
     - evaluation_contribution_parameter.contribution_ref
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: selected_integration_profile
     data:
@@ -3467,7 +4674,7 @@ transitions:
     - normalized contribution receipt only
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -3491,6 +4698,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
   - INV-ONE-EVALUATION
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-SUBMIT-CONTRIBUTION-B
   event: submit_evaluation_contribution
   actor: party_b_client
@@ -3498,8 +4706,8 @@ transitions:
   - EVALUATING
   to_phase: SAME
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-CONTRIBUTION-B-EMPTY
     predicate: is_unset
     reads:
@@ -3526,6 +4734,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-CONTRIBUTION-B
     operation: bind_once
@@ -3535,8 +4755,22 @@ transitions:
     - store profile-defined opaque contribution reference for B outside coordinator plaintext
     parameter_reads:
     - evaluation_contribution_parameter.contribution_ref
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: selected_integration_profile
     data:
@@ -3546,7 +4780,7 @@ transitions:
     - normalized contribution receipt only
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -3570,6 +4804,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
   - INV-ONE-EVALUATION
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-ACK-RECEIPT-A
   event: acknowledge_opaque_receipt_a
   actor: party_a_client
@@ -3577,8 +4812,8 @@ transitions:
   - EVALUATING
   to_phase: SAME
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-ACK-A-EMPTY
     predicate: is_unset
     reads:
@@ -3586,15 +4821,27 @@ transitions:
     arguments:
     - A
     parameter_reads: []
+  - id: G-CONTRIBUTIONS-COMPLETE
+    predicate: all_set
+    reads:
+    - evaluation_contribution
+    arguments:
+    - A
+    - B
+    parameter_reads: []
   - id: G-OPAQUE-RECEIPT
     predicate: profile_opaque_reference
     reads:
     - opaque_receipt_ref
     arguments:
-    - not a bare digest over MATCH|NO_MATCH|INDETERMINATE
-    - profile-defined high-entropy or confidential reference
+    - opaque_receipt_ref is not a bare digest over MATCH|NO_MATCH|INDETERMINATE
+    - acknowledgment_status=ACKNOWLEDGED
+    - profile_evidence_ref is opaque and bound to current profile/session/attempt
+    - if the peer acknowledgment exists, opaque_receipt_ref equals the peer reference
     parameter_reads:
     - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
   - id: G-LOCAL-RESULT-A
     predicate: event_parameter_one_of
     reads:
@@ -3615,6 +4862,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-ACK-RECEIPT-A
     operation: set_if_unset_or_equal
@@ -3623,12 +4882,30 @@ transitions:
     - opaque_receipt_ref
     - proposed_result_state
     arguments:
-    - record A opaque reference and party-local proposed result; coordinator sees opaque reference only
+    - record A opaque receipt, ACKNOWLEDGED status, profile evidence reference, and party-local proposed
+      result atomically
+    - coordinator projection excludes the local result and local-result binding
     parameter_reads:
     - local_result_parameter.local_result
     - opaque_receipt_parameter.opaque_receipt_ref
-  - *id006
-  - *id003
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: party_a_client
     data:
@@ -3644,7 +4921,7 @@ transitions:
     - profile-dependent entry access under a separately reviewed profile
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -3668,6 +4945,7 @@ transitions:
   - INV-RESULT-SYMMETRY
   - INV-OPAQUE-RECEIPT
   - INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-ACK-RECEIPT-B
   event: acknowledge_opaque_receipt_b
   actor: party_b_client
@@ -3675,8 +4953,8 @@ transitions:
   - EVALUATING
   to_phase: SAME
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-ACK-B-EMPTY
     predicate: is_unset
     reads:
@@ -3684,15 +4962,27 @@ transitions:
     arguments:
     - B
     parameter_reads: []
+  - id: G-CONTRIBUTIONS-COMPLETE
+    predicate: all_set
+    reads:
+    - evaluation_contribution
+    arguments:
+    - A
+    - B
+    parameter_reads: []
   - id: G-OPAQUE-RECEIPT
     predicate: profile_opaque_reference
     reads:
     - opaque_receipt_ref
     arguments:
-    - not a bare digest over MATCH|NO_MATCH|INDETERMINATE
-    - profile-defined high-entropy or confidential reference
+    - opaque_receipt_ref is not a bare digest over MATCH|NO_MATCH|INDETERMINATE
+    - acknowledgment_status=ACKNOWLEDGED
+    - profile_evidence_ref is opaque and bound to current profile/session/attempt
+    - if the peer acknowledgment exists, opaque_receipt_ref equals the peer reference
     parameter_reads:
     - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
   - id: G-LOCAL-RESULT-B
     predicate: event_parameter_one_of
     reads:
@@ -3713,6 +5003,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-ACK-RECEIPT-B
     operation: set_if_unset_or_equal
@@ -3721,12 +5023,30 @@ transitions:
     - opaque_receipt_ref
     - proposed_result_state
     arguments:
-    - record B opaque reference and party-local proposed result; coordinator sees opaque reference only
+    - record B opaque receipt, ACKNOWLEDGED status, profile evidence reference, and party-local proposed
+      result atomically
+    - coordinator projection excludes the local result and local-result binding
     parameter_reads:
     - local_result_parameter.local_result
     - opaque_receipt_parameter.opaque_receipt_ref
-  - *id006
-  - *id003
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: party_b_client
     data:
@@ -3742,7 +5062,7 @@ transitions:
     - profile-dependent entry access under a separately reviewed profile
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -3766,6 +5086,7 @@ transitions:
   - INV-RESULT-SYMMETRY
   - INV-OPAQUE-RECEIPT
   - INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-ACCEPT-SYMMETRIC-RESULT
   event: accept_symmetric_result
   actor: selected_integration_profile
@@ -3794,7 +5115,7 @@ transitions:
     - profile, version, instance, session, and attempt equal current state
     - ID index and idempotency-key index are both new or both exactly equal
     - any one-sided or differing binding is REPLAY_CONFLICT with no state change
-  - *id004
+  - *id005
   - id: G-BOTH-ACKS
     predicate: all_set
     reads:
@@ -3809,9 +5130,13 @@ transitions:
     - result_ack
     - opaque_receipt_ref
     arguments:
-    - A.ref=B.ref=opaque_receipt_ref
+    - A.ref=B.ref=callback opaque_receipt_ref
+    - A.status=B.status=ACKNOWLEDGED and callback status=BOTH_ACKNOWLEDGED
+    - callback profile evidence is bound to current profile/session/attempt
     parameter_reads:
     - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
   - id: G-SAME-PARTY-RESULT
     predicate: all_equal
     reads:
@@ -3849,6 +5174,18 @@ transitions:
     - session_expires_at
     arguments: []
     parameter_reads: []
+  - id: G-CALLBACK-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   effects:
   - id: E-ACCEPT-RESULT
     operation: set_and_increment
@@ -3858,10 +5195,14 @@ transitions:
     - phase
     arguments:
     - party-local values remain identical
+    - store accepted opaque receipt callback binding
     - accepted_evaluation_count=1
     - coordinator stores RESULT_ACCEPTED lifecycle only
-    parameter_reads: []
-  - *id003
+    parameter_reads:
+    - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
+  - *id004
   - id: E-ACCEPT-PROFILE-CALLBACK
     operation: record_profile_callback
     writes:
@@ -3878,6 +5219,20 @@ transitions:
     - profile_callback_envelope.session_id
     arguments:
     - atomically store both callback-ID and idempotency-key indexes with the prior normalized response
+  - id: E-APPEND-CALLBACK-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   visibility:
   - actor: party_a_client
     data:
@@ -3896,7 +5251,7 @@ transitions:
     - profile-dependent comparison under a separately reviewed profile
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact profile/session/attempt-bound callback duplicate requires both independent
     indexes to agree and returns the prior normalized callback response without another state, budget,
@@ -3926,6 +5281,7 @@ transitions:
   - INV-ONE-EVALUATION
   - INV-OPAQUE-RECEIPT
   - INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-RESULT-CONFLICT
   event: accept_symmetric_result
   actor: selected_integration_profile
@@ -3954,16 +5310,32 @@ transitions:
     - profile, version, instance, session, and attempt equal current state
     - ID index and idempotency-key index are both new or both exactly equal
     - any one-sided or differing binding is REPLAY_CONFLICT with no state change
-  - *id004
+  - *id005
   - id: G-RESULT-CONFLICT
     predicate: any_true
     reads:
     - result_ack
     - proposed_result_state
     arguments:
-    - opaque receipt references differ
+    - Party opaque receipt references differ
     - party-local result values differ
-    parameter_reads: []
+    - callback receipt/status/profile binding disagrees with bilateral acknowledged state
+    parameter_reads:
+    - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
+  - id: G-CALLBACK-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   effects:
   - id: E-RESULT-CONFLICT
     operation: fail_closed
@@ -3978,7 +5350,7 @@ transitions:
     - coordinator retains no plaintext result
     - atomically derive party_terminal_category from failure_taxonomy
     parameter_reads: []
-  - *id003
+  - *id004
   - id: E-ACCEPT-PROFILE-CALLBACK
     operation: record_profile_callback
     writes:
@@ -4005,6 +5377,20 @@ transitions:
     - if evaluation_started=true then CONSUMED remains CONSUMED
     - never refund after result timeout failure or INDETERMINATE
     - opaque authorization ledger update is atomic
+  - id: E-APPEND-CALLBACK-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   visibility:
   - actor: party_a_client
     data:
@@ -4023,7 +5409,7 @@ transitions:
     - profile-dependent comparison under a separately reviewed profile
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact profile/session/attempt-bound callback duplicate requires both independent
     indexes to agree and returns the prior normalized callback response without another state, budget,
@@ -4047,6 +5433,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-RESULT-SYMMETRY
   - INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-GRANT-CONSENT-A
   event: grant_consent_a
   actor: party_a_client
@@ -4055,8 +5442,8 @@ transitions:
   - CONSENT_PENDING
   to_phase: CONSENT_PENDING
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-RESULT-ACCEPTED-FOR-CONSENT
     predicate: equals
     reads:
@@ -4081,16 +5468,12 @@ transitions:
     - intended_audience
     - authoritative_time
     arguments:
-    - session
-    - participant set
-    - opaque receipt
-    - profile ID/version
-    - exact scope
-    - audience
-    - issued_at
-    - expires_at
-    - consent nonce
-    - artifact digest
+    - session and participant set equal current immutable bindings
+    - opaque receipt equals the accepted bilateral receipt
+    - profile ID/version, exact scope, and audience equal the first active Party consent when one exists
+    - issued_at < expires_at and authoritative_time is within the active interval
+    - nonce and artifact digest are Party-slot-specific and immutable
+    - withdrawn or expired consent cannot be reused in v0.1
     parameter_reads:
     - consent_binding_parameter.audience
     - consent_binding_parameter.consent_artifact_digest
@@ -4134,6 +5517,18 @@ transitions:
     arguments:
     - issued_at <= authoritative_time + allowed_clock_skew
     - authoritative_time < expires_at <= session_expires_at
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-GRANT-CONSENT-A
     operation: bind_once
@@ -4158,8 +5553,22 @@ transitions:
     - consent_binding_parameter.participant_set
     - consent_binding_parameter.scope
     - consent_binding_parameter.session_id
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4174,7 +5583,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -4201,6 +5610,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-RESULT-SYMMETRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-WITHDRAW-CONSENT-A
   event: withdraw_consent_a
   actor: party_a_client
@@ -4209,26 +5619,19 @@ transitions:
   - DISCLOSURE_AUTHORIZED
   to_phase: ABORTED
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-CONSENT-A-VALID
     predicate: is_set
     reads:
     - consent
     arguments:
-    - A
+    - supplied nonce and digest must identify the current active Party consent
+    - reason category is normalized; current consent profile/scope/audience remain authoritative state
     parameter_reads:
-    - consent_binding_parameter.audience
-    - consent_binding_parameter.consent_artifact_digest
-    - consent_binding_parameter.consent_nonce
-    - consent_binding_parameter.disclosure_profile_id
-    - consent_binding_parameter.disclosure_profile_version
-    - consent_binding_parameter.expires_at
-    - consent_binding_parameter.issued_at
-    - consent_binding_parameter.opaque_receipt_ref
-    - consent_binding_parameter.participant_set
-    - consent_binding_parameter.scope
-    - consent_binding_parameter.session_id
+    - consent_withdrawal_parameter.consent_nonce
+    - consent_withdrawal_parameter.consent_artifact_digest
+    - consent_withdrawal_parameter.reason_category
   - id: G-WITHDRAWAL-BEFORE-COMPLETION
     predicate: ordered_before
     reads:
@@ -4250,6 +5653,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-WITHDRAW-CONSENT-A
     operation: withdraw_and_terminalize
@@ -4261,24 +5676,12 @@ transitions:
     - query_budget_state
     - party_terminal_category
     parameter_reads:
-    - consent_binding_parameter.audience
-    - consent_binding_parameter.consent_artifact_digest
-    - consent_binding_parameter.consent_nonce
-    - consent_binding_parameter.disclosure_profile_id
-    - consent_binding_parameter.disclosure_profile_version
-    - consent_binding_parameter.expires_at
-    - consent_binding_parameter.issued_at
-    - consent_binding_parameter.opaque_receipt_ref
-    - consent_binding_parameter.participant_set
-    - consent_binding_parameter.scope
-    - consent_binding_parameter.session_id
+    - consent_withdrawal_parameter.consent_nonce
+    - consent_withdrawal_parameter.consent_artifact_digest
+    - consent_withdrawal_parameter.reason_category
     arguments:
-    - mark consent[A] withdrawn and preserve history
-    - set disclosure_state=WITHDRAWN
-    - set phase=ABORTED
-    - set terminal_failure_code=CONSENT_WITHDRAWN
-    - CONSUMED remains CONSUMED; no refund
-    - atomically derive party_terminal_category from failure_taxonomy
+    - supplied nonce and digest must identify the current active Party consent
+    - reason category is normalized; current consent profile/scope/audience remain authoritative state
   - id: E-ACCEPT-MESSAGE
     operation: record_accepted_message
     writes:
@@ -4307,6 +5710,20 @@ transitions:
     arguments:
     - append only audit_policy.allowed_fields
     parameter_reads: []
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4321,7 +5738,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -4345,6 +5762,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-GRANT-CONSENT-B
   event: grant_consent_b
   actor: party_b_client
@@ -4353,8 +5771,8 @@ transitions:
   - CONSENT_PENDING
   to_phase: CONSENT_PENDING
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-RESULT-ACCEPTED-FOR-CONSENT
     predicate: equals
     reads:
@@ -4379,16 +5797,12 @@ transitions:
     - intended_audience
     - authoritative_time
     arguments:
-    - session
-    - participant set
-    - opaque receipt
-    - profile ID/version
-    - exact scope
-    - audience
-    - issued_at
-    - expires_at
-    - consent nonce
-    - artifact digest
+    - session and participant set equal current immutable bindings
+    - opaque receipt equals the accepted bilateral receipt
+    - profile ID/version, exact scope, and audience equal the first active Party consent when one exists
+    - issued_at < expires_at and authoritative_time is within the active interval
+    - nonce and artifact digest are Party-slot-specific and immutable
+    - withdrawn or expired consent cannot be reused in v0.1
     parameter_reads:
     - consent_binding_parameter.audience
     - consent_binding_parameter.consent_artifact_digest
@@ -4432,6 +5846,18 @@ transitions:
     arguments:
     - issued_at <= authoritative_time + allowed_clock_skew
     - authoritative_time < expires_at <= session_expires_at
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-GRANT-CONSENT-B
     operation: bind_once
@@ -4456,8 +5882,22 @@ transitions:
     - consent_binding_parameter.participant_set
     - consent_binding_parameter.scope
     - consent_binding_parameter.session_id
-  - *id006
-  - *id003
+  - *id007
+  - *id004
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4472,7 +5912,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -4499,6 +5939,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-RESULT-SYMMETRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-WITHDRAW-CONSENT-B
   event: withdraw_consent_b
   actor: party_b_client
@@ -4507,26 +5948,19 @@ transitions:
   - DISCLOSURE_AUTHORIZED
   to_phase: ABORTED
   guards:
-  - *id004
   - *id005
+  - *id006
   - id: G-CONSENT-B-VALID
     predicate: is_set
     reads:
     - consent
     arguments:
-    - B
+    - supplied nonce and digest must identify the current active Party consent
+    - reason category is normalized; current consent profile/scope/audience remain authoritative state
     parameter_reads:
-    - consent_binding_parameter.audience
-    - consent_binding_parameter.consent_artifact_digest
-    - consent_binding_parameter.consent_nonce
-    - consent_binding_parameter.disclosure_profile_id
-    - consent_binding_parameter.disclosure_profile_version
-    - consent_binding_parameter.expires_at
-    - consent_binding_parameter.issued_at
-    - consent_binding_parameter.opaque_receipt_ref
-    - consent_binding_parameter.participant_set
-    - consent_binding_parameter.scope
-    - consent_binding_parameter.session_id
+    - consent_withdrawal_parameter.consent_nonce
+    - consent_withdrawal_parameter.consent_artifact_digest
+    - consent_withdrawal_parameter.reason_category
   - id: G-WITHDRAWAL-BEFORE-COMPLETION
     predicate: ordered_before
     reads:
@@ -4548,6 +5982,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-WITHDRAW-CONSENT-B
     operation: withdraw_and_terminalize
@@ -4559,24 +6005,12 @@ transitions:
     - query_budget_state
     - party_terminal_category
     parameter_reads:
-    - consent_binding_parameter.audience
-    - consent_binding_parameter.consent_artifact_digest
-    - consent_binding_parameter.consent_nonce
-    - consent_binding_parameter.disclosure_profile_id
-    - consent_binding_parameter.disclosure_profile_version
-    - consent_binding_parameter.expires_at
-    - consent_binding_parameter.issued_at
-    - consent_binding_parameter.opaque_receipt_ref
-    - consent_binding_parameter.participant_set
-    - consent_binding_parameter.scope
-    - consent_binding_parameter.session_id
+    - consent_withdrawal_parameter.consent_nonce
+    - consent_withdrawal_parameter.consent_artifact_digest
+    - consent_withdrawal_parameter.reason_category
     arguments:
-    - mark consent[B] withdrawn and preserve history
-    - set disclosure_state=WITHDRAWN
-    - set phase=ABORTED
-    - set terminal_failure_code=CONSENT_WITHDRAWN
-    - CONSUMED remains CONSUMED; no refund
-    - atomically derive party_terminal_category from failure_taxonomy
+    - supplied nonce and digest must identify the current active Party consent
+    - reason category is normalized; current consent profile/scope/audience remain authoritative state
   - id: E-ACCEPT-MESSAGE
     operation: record_accepted_message
     writes:
@@ -4605,6 +6039,20 @@ transitions:
     arguments:
     - append only audit_policy.allowed_fields
     parameter_reads: []
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4619,7 +6067,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -4643,6 +6091,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-AUTHORIZE-DISCLOSURE-EXTENSION
   event: authorize_disclosure_extension
   actor: coordinator
@@ -4664,8 +6113,8 @@ transitions:
     - operation_envelope.actor_id equals coordinator transition actor
     - ID index and idempotency-key index are both new or both exactly equal
     - any one-sided or differing binding is REPLAY_CONFLICT with no state change
-  - *id004
-  - &id007
+  - *id005
+  - &id008
     id: G-DISCLOSURE-MATCH
     predicate: equals
     reads:
@@ -4674,7 +6123,7 @@ transitions:
     - A=MATCH
     - B=MATCH
     parameter_reads: []
-  - &id008
+  - &id009
     id: G-BILATERAL-CONSENT
     predicate: all_valid
     reads:
@@ -4684,7 +6133,7 @@ transitions:
     - A
     - B
     parameter_reads: []
-  - &id009
+  - &id010
     id: G-CONSENT-RECEIPT-BINDING
     predicate: all_bind
     reads:
@@ -4693,7 +6142,7 @@ transitions:
     arguments:
     - A.receipt=B.receipt=opaque_receipt_ref
     parameter_reads: []
-  - &id010
+  - &id011
     id: G-CONSENT-PARTICIPANT-BINDING
     predicate: all_bind
     reads:
@@ -4702,7 +6151,7 @@ transitions:
     arguments:
     - session participant set
     parameter_reads: []
-  - &id011
+  - &id012
     id: G-CONSENT-PROFILE-BINDING
     predicate: all_bind
     reads:
@@ -4716,7 +6165,7 @@ transitions:
     - disclosure_extension_parameter.profile_id
     - disclosure_extension_parameter.profile_version
     - disclosure_extension_parameter.scope
-  - &id012
+  - &id013
     id: G-CONSENT-SCOPE-BINDING
     predicate: all_bind
     reads:
@@ -4729,7 +6178,7 @@ transitions:
     - disclosure_extension_parameter.profile_id
     - disclosure_extension_parameter.profile_version
     - disclosure_extension_parameter.scope
-  - &id013
+  - &id014
     id: G-CONSENT-AUDIENCE-BINDING
     predicate: all_bind
     reads:
@@ -4743,7 +6192,7 @@ transitions:
     - disclosure_extension_parameter.profile_id
     - disclosure_extension_parameter.profile_version
     - disclosure_extension_parameter.scope
-  - &id014
+  - &id015
     id: G-CONSENT-EXPIRY
     predicate: before
     reads:
@@ -4752,7 +6201,7 @@ transitions:
     arguments:
     - both consent expiries
     parameter_reads: []
-  - &id015
+  - &id016
     id: G-PROFILE-REVIEWED
     predicate: reviewed_profile_exists
     reads:
@@ -4766,7 +6215,7 @@ transitions:
     - disclosure_extension_parameter.profile_id
     - disclosure_extension_parameter.profile_version
     - disclosure_extension_parameter.scope
-  - &id016
+  - &id017
     id: G-ACTIVE-SESSION
     predicate: not_in
     reads:
@@ -4776,6 +6225,18 @@ transitions:
     - CLOSED
     - ABORTED
     parameter_reads: []
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-AUTHORIZE-DISCLOSURE
     operation: set
@@ -4790,7 +6251,7 @@ transitions:
     - disclosure_extension_parameter.profile_id
     - disclosure_extension_parameter.profile_version
     - disclosure_extension_parameter.scope
-  - *id003
+  - *id004
   - id: E-ACCEPT-OPERATION
     operation: record_actor_scoped_operation
     writes:
@@ -4803,6 +6264,20 @@ transitions:
     - operation_envelope.operation_id
     arguments:
     - atomically store both ID and idempotency-key indexes with the prior normalized response
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4817,7 +6292,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact actor-bound operation_envelope duplicate requires both independent indexes
     to agree and returns the prior normalized operation response without another state, budget, release,
@@ -4847,6 +6322,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-RECORD-DISCLOSURE-COMPLETION
   event: record_disclosure_completion
   actor: selected_integration_profile
@@ -4875,8 +6351,7 @@ transitions:
     - profile, version, instance, session, and attempt equal current state
     - ID index and idempotency-key index are both new or both exactly equal
     - any one-sided or differing binding is REPLAY_CONFLICT with no state change
-  - *id004
-  - *id007
+  - *id005
   - *id008
   - *id009
   - *id010
@@ -4886,6 +6361,7 @@ transitions:
   - *id014
   - *id015
   - *id016
+  - *id017
   - id: G-AUTHORIZATION-STILL-VALID
     predicate: equals
     reads:
@@ -4902,6 +6378,18 @@ transitions:
     arguments:
     - completion precedes no accepted withdrawal
     parameter_reads: []
+  - id: G-CALLBACK-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   effects:
   - id: E-COMPLETE-DISCLOSURE
     operation: set
@@ -4921,7 +6409,7 @@ transitions:
     - disclosure_extension_parameter.profile_id
     - disclosure_extension_parameter.profile_version
     - disclosure_extension_parameter.scope
-  - *id003
+  - *id004
   - id: E-ACCEPT-PROFILE-CALLBACK
     operation: record_profile_callback
     writes:
@@ -4948,6 +6436,20 @@ transitions:
     - if evaluation_started=true then CONSUMED remains CONSUMED
     - never refund after result timeout failure or INDETERMINATE
     - opaque authorization ledger update is atomic
+  - id: E-APPEND-CALLBACK-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4961,7 +6463,7 @@ transitions:
     - normalized completion
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact profile/session/attempt-bound callback duplicate requires both independent
     indexes to agree and returns the prior normalized callback response without another state, budget,
@@ -4990,10 +6492,11 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-REJECT-MESSAGE
   event: reject_message
   actor: coordinator
-  from_phase: &id018
+  from_phase: &id019
   - UNINITIALIZED
   - CREATED
   - PARTICIPANTS_BOUND
@@ -5038,7 +6541,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: deterministic state-derived relation with no external delivery or retry
   duplicate_behavior: not externally duplicable
@@ -5085,7 +6588,7 @@ transitions:
 - id: TR-ABORT
   event: abort_session
   actor: coordinator
-  from_phase: &id017
+  from_phase: &id018
   - CREATED
   - PARTICIPANTS_BOUND
   - COMMITMENTS_PENDING
@@ -5142,6 +6645,18 @@ transitions:
     - failure_code exists in failure_taxonomy
     - failure disposition=session-abort
     - party cannot supply coordinator-only failure code
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-ABORT
     operation: atomic_generic_abort
@@ -5174,6 +6689,20 @@ transitions:
     - operation_envelope.operation_id
     arguments:
     - atomically store both ID and idempotency-key indexes with the prior normalized response
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -5188,7 +6717,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact actor-bound operation_envelope duplicate requires both independent indexes
     to agree and returns the prior normalized operation response without another state, budget, release,
@@ -5216,10 +6745,11 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-EXPIRY
   - INV-REVEAL-SAFETY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-ADVANCE-TIME-EXPIRE
   event: expire_session
   actor: coordinator
-  from_phase: *id017
+  from_phase: *id018
   to_phase: EXPIRED
   guards:
   - id: G-TIME-MONOTONIC
@@ -5250,6 +6780,18 @@ transitions:
     - time_advance_parameter.new_authoritative_time
     arguments:
     - new_authoritative_time >= session_expires_at
+  - id: G-TIMER-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   effects:
   - id: E-ADVANCE-AND-EXPIRE
     operation: atomic_time_and_expiry
@@ -5272,6 +6814,20 @@ transitions:
     - if evaluation_started=true then CONSUMED remains CONSUMED
     - append normalized expiry audit category
     - atomically derive party_terminal_category from failure_taxonomy
+  - id: E-APPEND-TIMER-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   visibility:
   - actor: coordinator
     data:
@@ -5286,7 +6842,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: level-triggered threshold evaluation; the same threshold is a no-op and cannot
     duplicate state, budget, release, or audit change
@@ -5309,6 +6865,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-EXPIRY
   - INV-REVEAL-SAFETY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-CLOSE
   event: close_session
   actor: coordinator
@@ -5335,7 +6892,7 @@ transitions:
     - operation_envelope.actor_id equals coordinator transition actor
     - ID index and idempotency-key index are both new or both exactly equal
     - any one-sided or differing binding is REPLAY_CONFLICT with no state change
-  - *id004
+  - *id005
   - id: G-CLOSE-NO-ACTIVE-DISCLOSURE
     predicate: not_in
     reads:
@@ -5343,6 +6900,18 @@ transitions:
     arguments:
     - AUTHORIZED
     parameter_reads: []
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-CLOSE
     operation: set
@@ -5356,7 +6925,7 @@ transitions:
     - invalidate incomplete consent or disclosure authorization
     - atomically derive party_terminal_category from failure_taxonomy
     parameter_reads: []
-  - *id003
+  - *id004
   - id: E-ACCEPT-OPERATION
     operation: record_actor_scoped_operation
     writes:
@@ -5379,6 +6948,20 @@ transitions:
     - if evaluation_started=true then CONSUMED remains CONSUMED
     - never refund after result timeout failure or INDETERMINATE
     - opaque authorization ledger update is atomic
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -5393,7 +6976,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact actor-bound operation_envelope duplicate requires both independent indexes
     to agree and returns the prior normalized operation response without another state, budget, release,
@@ -5417,10 +7000,11 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-EXPIRY
   - INV-REVEAL-SAFETY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-RETRY-EXACT-DUPLICATE-A
   event: retry_idempotent_message
   actor: party_a_client
-  from_phase: *id018
+  from_phase: *id019
   to_phase: SAME
   guards:
   - id: G-EXACT-DUPLICATE-A
@@ -5431,7 +7015,7 @@ transitions:
     - session_id
     arguments:
     - lookup only Party A replay domain (session_id,sender_participant_id)
-    - message_id, nonce, sequence, issued_at, and canonical digest all equal
+    - message_id, nonce, sequence, issued_at, semantic/full-wire digests, material, and original subject all equal
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -5447,7 +7031,7 @@ transitions:
     - participant_binding
     - session_id
     arguments:
-    - Party A own replay-domain entry only
+    - Party A response recipient exactly equals an independent authenticated requester; replayed sender is not authority
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -5461,7 +7045,7 @@ transitions:
     operation: return_prior_response
     writes: []
     arguments:
-    - return only Party A sender-domain prior response
+    - return only when an independent authenticated requester exactly equals Party A's original participant, key, material, and subject binding
     - no state, sequence, nonce, audit, or budget change
     parameter_reads:
     - session_context.session_id
@@ -5480,7 +7064,7 @@ transitions:
     - own sender-domain normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -5557,7 +7141,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: non-mutating local guidance from current state with no external delivery deduplication
   duplicate_behavior: not externally duplicable
@@ -5579,7 +7163,7 @@ transitions:
 - id: TR-RETRY-EXACT-DUPLICATE-B
   event: retry_idempotent_message
   actor: party_b_client
-  from_phase: *id018
+  from_phase: *id019
   to_phase: SAME
   guards:
   - id: G-EXACT-DUPLICATE-B
@@ -5590,7 +7174,7 @@ transitions:
     - session_id
     arguments:
     - lookup only Party B replay domain (session_id,sender_participant_id)
-    - message_id, nonce, sequence, issued_at, and canonical digest all equal
+    - message_id, nonce, sequence, issued_at, semantic/full-wire digests, material, and original subject all equal
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -5606,7 +7190,7 @@ transitions:
     - participant_binding
     - session_id
     arguments:
-    - Party B own replay-domain entry only
+    - Party B response recipient exactly equals an independent authenticated requester; replayed sender is not authority
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -5620,7 +7204,7 @@ transitions:
     operation: return_prior_response
     writes: []
     arguments:
-    - return only Party B sender-domain prior response
+    - return only when an independent authenticated requester exactly equals Party B's original participant, key, material, and subject binding
     - no state, sequence, nonce, audit, or budget change
     parameter_reads:
     - session_context.session_id
@@ -5639,7 +7223,7 @@ transitions:
     - own sender-domain normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: exact replay_envelope duplicate returns the prior normalized message response
     without another state, sequence, budget, release, or audit change
@@ -5716,7 +7300,7 @@ transitions:
     - own normalized response
   audit_effect:
     category: normalized-protocol-lifecycle
-    fields: *id002
+    fields: *id003
     detail_policy: counterparty receives only the normalized category when detail would increase inference
   idempotency_behavior: non-mutating local guidance from current state with no external delivery deduplication
   duplicate_behavior: not externally duplicable
@@ -5738,7 +7322,7 @@ transitions:
 - id: TR-ADVANCE-TIME-NOOP
   event: advance_authoritative_time
   actor: coordinator
-  from_phase: &id019
+  from_phase: &id020
   - CREATED
   - PARTICIPANTS_BOUND
   - COMMITMENTS_PENDING
@@ -5839,7 +7423,7 @@ transitions:
 - id: TR-ADVANCE-TIME-LIVE
   event: advance_authoritative_time
   actor: coordinator
-  from_phase: *id019
+  from_phase: *id020
   to_phase: SAME
   guards:
   - id: G-TIME-MONOTONIC
@@ -5882,6 +7466,18 @@ transitions:
     - new_authoritative_time < session_expires_at
     - if evaluating then new_authoritative_time < evaluation_deadline
     - if consent active then new_authoritative_time < each active consent expiry
+  - id: G-TIMER-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   effects:
   - id: E-ADVANCE-TIME-ONLY
     operation: set
@@ -5891,6 +7487,20 @@ transitions:
     - time_advance_parameter.new_authoritative_time
     arguments:
     - set authoritative_time=new_authoritative_time; no other state write
+  - id: E-APPEND-TIMER-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   visibility:
   - actor: coordinator
     data:
@@ -5935,6 +7545,7 @@ transitions:
   related_invariants:
   - INV-EXPIRY
   - INV-SESSION-BINDING
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-EVALUATION-TIMEOUT
   event: advance_authoritative_time
   actor: coordinator
@@ -5971,6 +7582,18 @@ transitions:
     arguments:
     - new_authoritative_time >= evaluation_deadline
     - new_authoritative_time < session_expires_at
+  - id: G-TIMER-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   effects:
   - id: E-TIMEOUT-AT-DEADLINE
     operation: atomic_time_and_abort
@@ -5992,6 +7615,20 @@ transitions:
     - CONSUMED remains CONSUMED; no refund
     - append normalized timeout audit category
     - atomically derive party_terminal_category from failure_taxonomy
+  - id: E-APPEND-TIMER-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   visibility:
   - actor: coordinator
     data:
@@ -6036,6 +7673,7 @@ transitions:
   - INV-ONE-EVALUATION
   - INV-EXPIRY
   - INV-QUERY-BUDGET
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-CONSENT-EXPIRED
   event: advance_authoritative_time
   actor: coordinator
@@ -6075,6 +7713,18 @@ transitions:
     - new_authoritative_time >= at least one active consent expires_at
     - new_authoritative_time < session_expires_at
     - same-session replacement forbidden
+  - id: G-TIMER-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   effects:
   - id: E-CONSENT-EXPIRY-ABORT
     operation: atomic_time_and_abort
@@ -6096,6 +7746,20 @@ transitions:
     - CONSUMED remains CONSUMED; no refund
     - append normalized consent-expiry audit category
     - atomically derive party_terminal_category from failure_taxonomy
+  - id: E-APPEND-TIMER-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   visibility:
   - actor: coordinator
     data:
@@ -6140,10 +7804,11 @@ transitions:
   - INV-REVEAL-SAFETY
   - INV-EXPIRY
   - INV-QUERY-BUDGET
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-RETRY-EXACT-OPERATION
   event: retry_idempotent_operation
   actor: coordinator
-  from_phase: &id020
+  from_phase: &id021
   - UNINITIALIZED
   - CREATED
   - PARTICIPANTS_BOUND
@@ -6177,7 +7842,7 @@ transitions:
     - session_context.selected_integration_profile_binding
     - session_context.session_id
     arguments:
-    - actor is coordinator and both indexes bind the same ID, key, digest, and prior response
+    - actor is coordinator and both indexes bind the same ID, key, semantic/full-wire digests, material, original subject, and prior response
   effects:
   - id: E-RETURN-PRIOR-OPERATION
     operation: return_prior_response
@@ -6188,7 +7853,7 @@ transitions:
     - operation_envelope.canonical_operation_digest
     - operation_envelope.idempotency_key
     arguments:
-    - return response only when both independent operation indexes agree
+    - return response only when both independent indexes agree and an independent requester equals the original coordinator subject
   visibility:
   - actor: coordinator
     data:
@@ -6227,7 +7892,7 @@ transitions:
 - id: TR-RETRY-EXACT-PROFILE-CALLBACK
   event: retry_idempotent_profile_callback
   actor: selected_integration_profile
-  from_phase: *id020
+  from_phase: *id021
   to_phase: SAME
   guards:
   - id: G-EXACT-PROFILE-CALLBACK-DUPLICATE
@@ -6256,7 +7921,7 @@ transitions:
     - session_context.selected_integration_profile_binding
     - session_context.session_id
     arguments:
-    - bound profile/session/attempt and both callback indexes are exactly equal
+    - bound profile/session/attempt and both callback indexes bind equal IDs, keys, semantic/full-wire digests, material, and original subject
   effects:
   - id: E-RETURN-PRIOR-PROFILE-CALLBACK
     operation: return_prior_response
@@ -6271,7 +7936,7 @@ transitions:
     - profile_callback_envelope.session_id
     - profile_callback_envelope.evaluation_attempt_id
     arguments:
-    - return response only when both independent callback indexes and current binding agree
+    - return response only when both indexes/current binding agree and an independent requester equals the original profile-instance subject
   visibility:
   - actor: coordinator
     data:
@@ -6329,8 +7994,7 @@ invariants:
   - phase
   - disclosure_state
   conditions:
-  - *id004
-  - *id007
+  - *id005
   - *id008
   - *id009
   - *id010
@@ -6340,6 +8004,7 @@ invariants:
   - *id014
   - *id015
   - *id016
+  - *id017
   - id: I-DISCLOSURE-COMPLETE
     predicate: implies
     reads:
@@ -6418,6 +8083,28 @@ invariants:
     - evaluation_started=true
     parameter_reads: []
   violation_effect: reject COMMITMENT_MUTATION and abort when integrity is uncertain
+- id: INV-SESSION-ACCEPTANCE
+  statement: A bound participant implies the same Party previously accepted the exact immutable proposal
+    with the identical authenticated participant ID, key ID, subject-binding ID, and verification-material
+    ID; bilateral binding implies two separate exact-proposal acceptances.
+  state_variables:
+  - session_proposal_digest
+  - session_acceptance
+  - participant_binding
+  conditions:
+  - id: I-BINDING-REQUIRES-ACCEPTANCE
+    predicate: implies
+    reads:
+    - participant_binding
+    - session_acceptance
+    - session_proposal_digest
+    arguments:
+    - A bound implies A accepted exact proposal
+    - B bound implies B accepted exact proposal
+    - both bound implies both exact acceptances
+    - proposal and Party acceptance digests are immutable after first acceptance
+    parameter_reads: []
+  violation_effect: fail closed; do not bind participant or advance phase
 - id: INV-SESSION-BINDING
   statement: Every accepted event after creation binds to one session, protocol version, policy version,
     participant/key set, audience, commitment pair, and evaluation attempt; absent pre-stage values bind
@@ -6431,7 +8118,7 @@ invariants:
   - commitment_pair_id
   - evaluation_attempt_id
   conditions:
-  - *id004
+  - *id005
   violation_effect: reject the specific normalized mismatch category without partial state change
 - id: INV-NO-REPLAY
   statement: A nonce is unique inside replay domain (session_id,sender_participant_id); cross-session,
@@ -6455,8 +8142,9 @@ invariants:
   violation_effect: reject REPLAY or REPLAY_CONFLICT; conflicting duplicates require terminal policy handling
 - id: INV-IDEMPOTENCY
   statement: Each externally delivered class uses its own realizable scoped identity; exact duplicates
-    return the class-specific prior response without another state, budget, release, disclosure, sequence,
-    or audit change.
+    require the same semantic and full-wire digest, material, and original authenticated subject. A prior
+    response is returned only to an independently authenticated exact recipient without another state,
+    budget, release, disclosure, sequence, transcript, or audit change.
   state_variables:
   - accepted_message_ids
   - accepted_nonces
@@ -6477,7 +8165,8 @@ invariants:
     - accepted_event_digests
     parameter_reads: []
     arguments:
-    - same sender message_id nonce issued_at and canonical event digest
+    - same sender message_id nonce sequence issued_at canonical message digest canonical wire digest verification
+      material and original authenticated subject
   - id: I-EXACT-OPERATION-DUPLICATE
     predicate: exact_duplicate
     reads:
@@ -6485,7 +8174,8 @@ invariants:
     - operation_by_key
     parameter_reads: []
     arguments:
-    - same actor operation_id idempotency_key and canonical operation digest
+    - same actor operation_id idempotency_key canonical message digest canonical wire digest material and original
+      authenticated subject
   - id: I-EXACT-CALLBACK-DUPLICATE
     predicate: exact_duplicate
     reads:
@@ -6493,7 +8183,8 @@ invariants:
     - callback_by_key
     parameter_reads: []
     arguments:
-    - same profile instance session attempt callback_id key and canonical callback digest
+    - same profile instance session attempt callback_id key canonical message digest canonical wire digest material
+      and original authenticated subject
   violation_effect: conflicting duplicate is REPLAY_CONFLICT
 - id: INV-ONE-EVALUATION
   statement: A commitment pair receives at most one accepted evaluation; INDETERMINATE, timeout, and failure
@@ -6647,6 +8338,45 @@ invariants:
     parameter_reads: []
   violation_effect: reject the profile or artifact; outcome confidentiality remains unestablished until
     evidenced
+- id: INV-CANONICAL-TRANSCRIPT
+  statement: The coordinator appends each accepted mutating event digest exactly once in authoritative
+    order; rejected, duplicate, derived-notice, local-guidance, and no-op relations do not change the
+    head.
+  state_variables:
+  - accepted_event_index
+  - canonical_transcript_head
+  - accepted_message_records
+  - operation_by_id
+  - operation_by_key
+  - callback_by_id
+  - callback_by_key
+  conditions:
+  - id: I-TRANSCRIPT-MONOTONIC
+    predicate: append_once_in_authoritative_order
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - accepted_event_index increases by exactly one per accepted mutating event
+    - canonical_transcript_head changes only through the reviewed domain-separated append relation
+    parameter_reads: []
+  - id: I-TRANSCRIPT-NO-DUPLICATE
+    predicate: nonmutating_delivery_does_not_append
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    - accepted_message_records
+    - operation_by_id
+    - operation_by_key
+    - callback_by_id
+    - callback_by_key
+    arguments:
+    - exact duplicate returns prior response without transcript mutation
+    - conflict and rejected message do not append
+    - derived notice, local guidance, and same-threshold timer no-op do not append
+    parameter_reads: []
+  violation_effect: fail closed with no state, budget, audit, or transcript mutation; conflicting identity
+    reuse is REPLAY_CONFLICT
 query_budget_semantics:
   authority: coordinator
   reservation_required_before_evaluation: true
@@ -6745,6 +8475,18 @@ clock_and_expiry:
     + allowed_clock_skew
   atomic_deadline_crossing: session expiry, evaluation timeout, or active consent expiry is terminalized
     atomically with the time update; no live window remains
+  timer_threshold_precedence:
+  - SESSION_EXPIRY_THRESHOLD
+  - EVALUATION_DEADLINE
+  - CONSENT_EXPIRY_THRESHOLD
+  - COORDINATOR_CLOCK
+  timer_reason_effect_binding:
+    TR-ADVANCE-TIME-NOOP: COORDINATOR_CLOCK
+    TR-ADVANCE-TIME-LIVE: COORDINATOR_CLOCK
+    TR-ADVANCE-TIME-EXPIRE: SESSION_EXPIRY_THRESHOLD
+    TR-EVALUATION-TIMEOUT: EVALUATION_DEADLINE
+    TR-CONSENT-EXPIRED: CONSENT_EXPIRY_THRESHOLD
+  timer_same_time_policy: same authoritative time in a live phase is a no-op with no transcript or audit append
 replay_and_ordering:
   replay_domain:
   - session_id
@@ -6757,7 +8499,8 @@ replay_and_ordering:
   - sequence
   - issued_at
   - canonical event digest
-  exact_duplicate: no-op and return prior normalized response
+  exact_duplicate: no-op; authorize the prior normalized response only when an independent authenticated requester
+    exactly matches the original response recipient binding
   conflicting_duplicate: REPLAY_CONFLICT; no partial state change and policy-defined abort
   stale_sequence: REPLAY or STALE_MESSAGE; no state change
   future_sequence_gap: retryable OUT_OF_ORDER; no buffering and no state change
@@ -6786,13 +8529,70 @@ replay_and_ordering:
   timer_identity: level-triggered authoritative threshold; no message_id or nonce
   derived_transition_identity: no external delivery or retry identity
   message_response_cache: keyed by (session_id,sender_participant_id,message_id); each Party receives
-    only its own sender-domain response
+    only the response bound to its exact original authenticated subject
   operation_independent_indexes:
   - operation_by_id
   - operation_by_key
   profile_callback_independent_indexes:
   - callback_by_id
   - callback_by_key
+  cached_response_validation_order:
+  - strict JSON parse
+  - strict Schema validation
+  - RFC 8785 canonical wire bytes and semantic and full-wire digest recomputation
+  - replay or idempotency domain lookup
+  - complete accepted-record identity semantic digest full-wire digest material and subject equality
+  - independent authenticated requester and recipient-binding equality
+  - recipient-scoped normalized response lookup or no-response outcome
+  cached_response_dynamic_gate_exemptions:
+  - current transcript head
+  - historical message expiry or staleness
+  - verification material expiry or revocation after original acceptance
+  cached_response_effect: return only the accepted record's prior recipient-scoped response after exact independent requester equality; absent or unauthorized requester receives no response and never mutates state, dedup, sequence, nonce, budget, audit, or transcript
+  stateless_validator_boundary: a stateless validator without authoritative accepted-record state validates as a current message and never fabricates exact-duplicate success
+  canonical_wire_fingerprint:
+    domain: private-match-wire-message/v0.1
+    canonicalization: RFC 8785 JCS of the complete strict message including authentication.value and message_digest
+    output: sha256:<64 lowercase hex>
+    purpose: accepted-record replay equality only
+    stored_value: canonical_wire_digest only; raw authentication.value is not retained
+    excluded_from:
+    - authentication input
+    - semantic message digest
+    - accepted transcript
+    - Party projection
+    retry_policy: byte-identical canonical retransmission only; regenerated authentication values are conflicts
+  accepted_record_equality:
+  - complete delivery-class replay or idempotency domain
+  - message nonce sequence operation callback and idempotency identity as applicable
+  - canonical message digest
+  - canonical wire digest
+  - verification material ID
+  - original authenticated subject binding
+  authenticated_requester_contract:
+    source: independent trusted projection from channel authentication, service principal, or reviewed profile instance; never copied from replayed message sender or identity
+    party_fields:
+    - actor
+    - participant_id
+    - key_id
+    - subject_binding_id
+    - verification_material_id
+    coordinator_fields:
+    - actor
+    - key_id
+    - subject_binding_id
+    - verification_material_id
+    profile_fields:
+    - actor
+    - profile_id
+    - profile_version
+    - profile_instance_id
+    - key_id
+    - subject_binding_id
+    - verification_material_id
+    eligibility: exact equality with original response_recipient_binding
+    no_requester_behavior: preserve exact-duplicate classification but return no cached response
+    unauthorized_behavior: return no cached response and no mutation of state, dedup, transcript, budget, or audit
 retry_semantics:
   idempotent_resend: exact duplicate; return prior normalized response without budget or sequence change
   transient_message_retry: new message_id and nonce at the expected sequence after correcting a retryable
@@ -7140,7 +8940,7 @@ failure_taxonomy:
   detail_visibility: coordinator-and-approved-audit-only; parties receive normalized category
   description: Clock proposal exceeds the reviewed maximum jump.
 audit_policy:
-  allowed_fields: *id002
+  allowed_fields: *id003
   prohibited_fields:
   - plaintext decision outcome
   - raw or normalized private input
@@ -7156,6 +8956,8 @@ formalization:
   state_variable_ids:
   - phase
   - session_id
+  - session_acceptance
+  - session_proposal_digest
   - protocol_profile
   - policy_binding
   - intended_audience
@@ -7180,6 +8982,7 @@ formalization:
   - authoritative_time
   - allowed_clock_skew
   - message_stale_threshold
+  - maximum_time_jump
   - verification_material_validity
   - next_sequence
   - accepted_message_ids
@@ -7196,6 +8999,8 @@ formalization:
   - selected_integration_profile_binding
   - terminal_failure_code
   - party_terminal_category
+  - accepted_event_index
+  - canonical_transcript_head
   initial_predicate:
   - variable: phase
     operator: equals
@@ -7236,14 +9041,32 @@ formalization:
   - variable: party_terminal_category
     operator: equals
     value: NONE
+  - variable: accepted_event_index
+    operator: equals
+    value: '0'
+  - variable: canonical_transcript_head
+    operator: equals
+    value: sha256:200b23451f65992feacb88e782a16afb595bc32d386a4347bb318892cde2ff3c
+  - variable: session_proposal_digest
+    operator: equals
+    value: NONE
+  - variable: session_acceptance
+    operator: equals
+    value: '{A:NONE,B:NONE}'
   event_relation:
   - event: create_session
     transitions:
     - TR-CREATE
+  - event: accept_session_a
+    transitions:
+    - TR-ACCEPT-SESSION-A
   - event: bind_participant_a
     transitions:
     - TR-BIND-A-FIRST
     - TR-BIND-A-COMPLETE
+  - event: accept_session_b
+    transitions:
+    - TR-ACCEPT-SESSION-B
   - event: bind_participant_b
     transitions:
     - TR-BIND-B-FIRST
@@ -7330,13 +9153,15 @@ formalization:
   - event: retry_idempotent_profile_callback
     transitions:
     - TR-RETRY-EXACT-PROFILE-CALLBACK
-  next_state_relation: disjunction of delivery-class-specific enabled transition relations; explicit advance_authoritative_time/expire_session
-    clock relations prevent rollback or a live post-deadline window; stuttering is limited to realizable
-    exact-envelope responses, timer threshold no-op, derived rejection, and local guidance
+  next_state_relation: disjunction of delivery-class-specific enabled transition relations; each accepted
+    mutating relation atomically applies its protocol effects and the canonical transcript append; exact
+    duplicates, rejects, conflicts, derived notices, local guidance, and timer no-op stutter without transcript
+    mutation; authoritative clock relations prevent rollback or a live post-deadline window
   invariant_ids:
   - INV-REVEAL-SAFETY
   - INV-RESULT-SYMMETRY
   - INV-COMMITMENT-IMMUTABILITY
+  - INV-SESSION-ACCEPTANCE
   - INV-SESSION-BINDING
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
@@ -7346,6 +9171,7 @@ formalization:
   - INV-OPAQUE-RECEIPT
   - INV-QUERY-BUDGET
   - INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
+  - INV-CANONICAL-TRANSCRIPT
   fairness_candidates:
   - weak fairness for the authoritative timer relation while a later TimeDomain point exists
   - weak fairness for atomic expire_session when a proposed timer value reaches session_expires_at
@@ -7387,6 +9213,8 @@ formalization:
   - selected profile eventually supplies valid or invalid verification status without exposing coordinator
     plaintext outcome
   - transport authenticates sender and protects content, but transport is outside this artifact
+  - coordinator is the unique authority for accepted-event ordering and atomically persists the event
+    index and transcript head with each accepted state mutation; persistence is not implemented here
   tla_model_status: not created or model-checked in this issue
 parameter_flow_contracts:
 - id: E-ABORT
@@ -7444,13 +9272,17 @@ parameter_flow_contracts:
   required_parameter_reads:
   - local_result_parameter.local_result
   - opaque_receipt_parameter.opaque_receipt_ref
-  description: Every occurrence consumes this complete field set; omission or substitution fails closed.
+  - opaque_receipt_parameter.acknowledgment_status
+  - opaque_receipt_parameter.profile_evidence_ref
+  description: Atomically stores Party A local result and complete opaque receipt acknowledgment binding.
 - id: E-ACK-RECEIPT-B
   kind: operation
   required_parameter_reads:
   - local_result_parameter.local_result
   - opaque_receipt_parameter.opaque_receipt_ref
-  description: Every occurrence consumes this complete field set; omission or substitution fails closed.
+  - opaque_receipt_parameter.acknowledgment_status
+  - opaque_receipt_parameter.profile_evidence_ref
+  description: Atomically stores Party B local result and complete opaque receipt acknowledgment binding.
 - id: E-ADVANCE-AND-EXPIRE
   kind: operation
   required_parameter_reads:
@@ -7544,6 +9376,7 @@ parameter_flow_contracts:
   - clock_policy.allowed_skew
   - clock_policy.authoritative_time
   - clock_policy.evaluation_timeout
+  - clock_policy.maximum_jump
   - clock_policy.session_expiry
   - clock_policy.stale_threshold
   - session_context.commitment_pair_id
@@ -7552,8 +9385,9 @@ parameter_flow_contracts:
   - session_context.participant_binding
   - session_context.policy_binding
   - session_context.protocol_profile
-  - session_context.selected_integration_profile_binding
   - session_context.session_id
+  - session_proposal_parameter.proposal_digest
+  - session_proposal_parameter.selected_integration_profile_binding
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
 - id: E-GRANT-CONSENT-A
   kind: operation
@@ -7657,32 +9491,16 @@ parameter_flow_contracts:
 - id: E-WITHDRAW-CONSENT-A
   kind: operation
   required_parameter_reads:
-  - consent_binding_parameter.audience
-  - consent_binding_parameter.consent_artifact_digest
-  - consent_binding_parameter.consent_nonce
-  - consent_binding_parameter.disclosure_profile_id
-  - consent_binding_parameter.disclosure_profile_version
-  - consent_binding_parameter.expires_at
-  - consent_binding_parameter.issued_at
-  - consent_binding_parameter.opaque_receipt_ref
-  - consent_binding_parameter.participant_set
-  - consent_binding_parameter.scope
-  - consent_binding_parameter.session_id
+  - consent_withdrawal_parameter.consent_artifact_digest
+  - consent_withdrawal_parameter.consent_nonce
+  - consent_withdrawal_parameter.reason_category
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
 - id: E-WITHDRAW-CONSENT-B
   kind: operation
   required_parameter_reads:
-  - consent_binding_parameter.audience
-  - consent_binding_parameter.consent_artifact_digest
-  - consent_binding_parameter.consent_nonce
-  - consent_binding_parameter.disclosure_profile_id
-  - consent_binding_parameter.disclosure_profile_version
-  - consent_binding_parameter.expires_at
-  - consent_binding_parameter.issued_at
-  - consent_binding_parameter.opaque_receipt_ref
-  - consent_binding_parameter.participant_set
-  - consent_binding_parameter.scope
-  - consent_binding_parameter.session_id
+  - consent_withdrawal_parameter.consent_artifact_digest
+  - consent_withdrawal_parameter.consent_nonce
+  - consent_withdrawal_parameter.reason_category
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
 - id: G-ABORT-REASON
   kind: predicate
@@ -7710,23 +9528,16 @@ parameter_flow_contracts:
   - clock_policy.allowed_skew
   - clock_policy.authoritative_time
   - clock_policy.evaluation_timeout
+  - clock_policy.maximum_jump
   - clock_policy.session_expiry
   - clock_policy.stale_threshold
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
 - id: G-CONSENT-A-VALID
   kind: predicate
   required_parameter_reads:
-  - consent_binding_parameter.audience
-  - consent_binding_parameter.consent_artifact_digest
-  - consent_binding_parameter.consent_nonce
-  - consent_binding_parameter.disclosure_profile_id
-  - consent_binding_parameter.disclosure_profile_version
-  - consent_binding_parameter.expires_at
-  - consent_binding_parameter.issued_at
-  - consent_binding_parameter.opaque_receipt_ref
-  - consent_binding_parameter.participant_set
-  - consent_binding_parameter.scope
-  - consent_binding_parameter.session_id
+  - consent_withdrawal_parameter.consent_artifact_digest
+  - consent_withdrawal_parameter.consent_nonce
+  - consent_withdrawal_parameter.reason_category
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
 - id: G-CONSENT-AUDIENCE-BINDING
   kind: predicate
@@ -7740,17 +9551,9 @@ parameter_flow_contracts:
 - id: G-CONSENT-B-VALID
   kind: predicate
   required_parameter_reads:
-  - consent_binding_parameter.audience
-  - consent_binding_parameter.consent_artifact_digest
-  - consent_binding_parameter.consent_nonce
-  - consent_binding_parameter.disclosure_profile_id
-  - consent_binding_parameter.disclosure_profile_version
-  - consent_binding_parameter.expires_at
-  - consent_binding_parameter.issued_at
-  - consent_binding_parameter.opaque_receipt_ref
-  - consent_binding_parameter.participant_set
-  - consent_binding_parameter.scope
-  - consent_binding_parameter.session_id
+  - consent_withdrawal_parameter.consent_artifact_digest
+  - consent_withdrawal_parameter.consent_nonce
+  - consent_withdrawal_parameter.reason_category
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
 - id: G-CONSENT-BINDING
   kind: predicate
@@ -7896,9 +9699,11 @@ parameter_flow_contracts:
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
 - id: G-OPAQUE-RECEIPT
   kind: predicate
-  required_parameter_reads:
+  required_parameter_reads: &id022
   - opaque_receipt_parameter.opaque_receipt_ref
-  description: Every occurrence consumes this complete field set; omission or substitution fails closed.
+  - opaque_receipt_parameter.acknowledgment_status
+  - opaque_receipt_parameter.profile_evidence_ref
+  description: Validates opaque receipt, ACKNOWLEDGED status, and profile evidence binding.
 - id: G-OPERATION-DEDUP
   kind: predicate
   required_parameter_reads:
@@ -7945,9 +9750,8 @@ parameter_flow_contracts:
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
 - id: G-SAME-OPAQUE-RECEIPT
   kind: predicate
-  required_parameter_reads:
-  - opaque_receipt_parameter.opaque_receipt_ref
-  description: Every occurrence consumes this complete field set; omission or substitution fails closed.
+  required_parameter_reads: *id022
+  description: Validates bilateral Party state against the complete profile callback receipt binding.
 - id: G-SESSION-EXPIRY-CROSSED
   kind: predicate
   required_parameter_reads:
@@ -7975,6 +9779,149 @@ parameter_flow_contracts:
   required_parameter_reads:
   - time_advance_parameter.new_authoritative_time
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
+- id: G-PARTY-TRANSCRIPT-CHAIN
+  kind: predicate
+  required_parameter_reads:
+  - replay_envelope.prior_transcript_digest
+  - replay_envelope.canonical_message_digest
+  description: party_message transcript guard consumes the prior head and validated canonical event digest.
+- id: E-APPEND-PARTY-TRANSCRIPT
+  kind: operation
+  required_parameter_reads:
+  - replay_envelope.prior_transcript_digest
+  - replay_envelope.canonical_message_digest
+  description: party_message transcript append consumes the same prior head and validated canonical event
+    digest atomically.
+- id: G-OPERATION-TRANSCRIPT-CHAIN
+  kind: predicate
+  required_parameter_reads:
+  - operation_envelope.prior_transcript_digest
+  - operation_envelope.canonical_message_digest
+  description: coordinator_command transcript guard consumes the prior head and validated canonical event
+    digest.
+- id: E-APPEND-OPERATION-TRANSCRIPT
+  kind: operation
+  required_parameter_reads:
+  - operation_envelope.prior_transcript_digest
+  - operation_envelope.canonical_message_digest
+  description: coordinator_command transcript append consumes the same prior head and validated canonical
+    event digest atomically.
+- id: G-CALLBACK-TRANSCRIPT-CHAIN
+  kind: predicate
+  required_parameter_reads:
+  - profile_callback_envelope.prior_transcript_digest
+  - profile_callback_envelope.canonical_message_digest
+  description: profile_callback transcript guard consumes the prior head and validated canonical event
+    digest.
+- id: E-APPEND-CALLBACK-TRANSCRIPT
+  kind: operation
+  required_parameter_reads:
+  - profile_callback_envelope.prior_transcript_digest
+  - profile_callback_envelope.canonical_message_digest
+  description: profile_callback transcript append consumes the same prior head and validated canonical
+    event digest atomically.
+- id: G-TIMER-TRANSCRIPT-CHAIN
+  kind: predicate
+  required_parameter_reads:
+  - time_advance_parameter.prior_transcript_digest
+  - time_advance_parameter.canonical_event_digest
+  description: timer transcript guard consumes the prior head and validated canonical event digest.
+- id: E-APPEND-TIMER-TRANSCRIPT
+  kind: operation
+  required_parameter_reads:
+  - time_advance_parameter.prior_transcript_digest
+  - time_advance_parameter.canonical_event_digest
+  description: timer transcript append consumes the same prior head and validated canonical event digest
+    atomically.
+- id: G-SESSION-PROPOSAL-A
+  kind: predicate
+  required_parameter_reads:
+  - session_acceptance_parameter.proposal_digest
+  description: Acceptance must reference the exact proposal bound at creation.
+- id: E-ACCEPT-SESSION-A
+  kind: operation
+  required_parameter_reads:
+  - session_acceptance_parameter.acceptance_digest
+  - session_acceptance_parameter.proposal_digest
+  - authenticated_subject_parameter.actor
+  - authenticated_subject_parameter.participant_id
+  - authenticated_subject_parameter.key_id
+  - authenticated_subject_parameter.subject_binding_id
+  - authenticated_subject_parameter.verification_material_id
+  description: Atomically stores exact proposal acceptance and its trusted authenticated subject binding.
+- id: G-SESSION-PROPOSAL-B
+  kind: predicate
+  required_parameter_reads:
+  - session_acceptance_parameter.proposal_digest
+  description: Acceptance must reference the exact proposal bound at creation.
+- id: E-ACCEPT-SESSION-B
+  kind: operation
+  required_parameter_reads:
+  - session_acceptance_parameter.acceptance_digest
+  - session_acceptance_parameter.proposal_digest
+  - authenticated_subject_parameter.actor
+  - authenticated_subject_parameter.participant_id
+  - authenticated_subject_parameter.key_id
+  - authenticated_subject_parameter.subject_binding_id
+  - authenticated_subject_parameter.verification_material_id
+  description: Atomically stores exact proposal acceptance and its trusted authenticated subject binding.
+- id: G-AUTHENTICATED-SUBJECT-A
+  kind: predicate
+  required_parameter_reads: &id023
+  - authenticated_subject_parameter.actor
+  - authenticated_subject_parameter.participant_id
+  - authenticated_subject_parameter.key_id
+  - authenticated_subject_parameter.subject_binding_id
+  - authenticated_subject_parameter.verification_material_id
+  description: Consumes the complete trusted subject projection and enforces the Party slot.
+- id: G-SESSION-ACCEPTED-A
+  kind: predicate
+  required_parameter_reads:
+  - participant_binding_parameter.key_id
+  - participant_binding_parameter.participant_id
+  - authenticated_subject_parameter.actor
+  - authenticated_subject_parameter.participant_id
+  - authenticated_subject_parameter.key_id
+  - authenticated_subject_parameter.subject_binding_id
+  - authenticated_subject_parameter.verification_material_id
+  description: Requires binding payload and current trusted subject to equal the immutable Party acceptance
+    record.
+- id: G-POLICY-NOT-ACCEPTED-A
+  kind: predicate
+  required_parameter_reads:
+  - policy_acceptance_parameter.policy_id
+  - policy_acceptance_parameter.policy_version
+  description: Requires an empty Party slot and exact current policy ID/version.
+- id: G-AUTHENTICATED-SUBJECT-B
+  kind: predicate
+  required_parameter_reads: *id023
+  description: Consumes the complete trusted subject projection and enforces the Party slot.
+- id: G-SESSION-ACCEPTED-B
+  kind: predicate
+  required_parameter_reads:
+  - participant_binding_parameter.key_id
+  - participant_binding_parameter.participant_id
+  - authenticated_subject_parameter.actor
+  - authenticated_subject_parameter.participant_id
+  - authenticated_subject_parameter.key_id
+  - authenticated_subject_parameter.subject_binding_id
+  - authenticated_subject_parameter.verification_material_id
+  description: Requires binding payload and current trusted subject to equal the immutable Party acceptance
+    record.
+- id: G-POLICY-NOT-ACCEPTED-B
+  kind: predicate
+  required_parameter_reads:
+  - policy_acceptance_parameter.policy_id
+  - policy_acceptance_parameter.policy_version
+  description: Requires an empty Party slot and exact current policy ID/version.
+- id: E-ACCEPT-RESULT
+  kind: operation
+  required_parameter_reads: *id022
+  description: Atomically accepts only the complete reviewed receipt callback binding.
+- id: G-RESULT-CONFLICT
+  kind: predicate
+  required_parameter_reads: *id022
+  description: Classifies Party/callback receipt, status, or profile-binding disagreement fail closed.
 envelope_binding_contracts:
 - id: BIND-OPERATION-ACTOR
   delivery_class: coordinator_command
@@ -8031,3 +9978,152 @@ failure_projection_semantics:
   - private failure detail
   description: Coordinator/private assurance retain detail; Parties receive only the reviewed normalized
     category.
+canonical_transcript_semantics:
+  ordering_authority: coordinator
+  canonicalization: RFC 8785 JCS over strict I-JSON values; json.dumps(sort_keys=True) is not conformant
+  digest_algorithm: SHA-256
+  domain_encoding: two-byte unsigned big-endian ASCII-label length followed by the exact ASCII label
+  payload_domain: private-match-payload/v0.1
+  message_domain: private-match-message/v0.1
+  transcript_domain: private-match-transcript/v0.1
+  timer_event_domain: private-match-timer-event/v0.1
+  genesis_domain: private-match-transcript-genesis/v0.1
+  genesis_digest: sha256:200b23451f65992feacb88e782a16afb595bc32d386a4347bb318892cde2ff3c
+  event_index_encoding: unsigned 64-bit big-endian integer in range 1..2^64-1
+  external_message_digest_sources:
+    party_message: replay_envelope.canonical_message_digest
+    coordinator_command: operation_envelope.canonical_message_digest
+    profile_callback: profile_callback_envelope.canonical_message_digest
+  timer_digest_source: time_advance_parameter.canonical_event_digest
+  append_rule: SHA-256(domain(transcript) || prior_digest_bytes || uint64be(accepted_event_index) || accepted_event_digest_bytes)
+  included_relations: accepted mutating party messages, coordinator commands, profile callbacks, and timer
+    events, once in coordinator authoritative order
+  excluded_relations: rejected messages, conflicting duplicates, exact duplicates, derived notices, local
+    guidance, and nonmutating timer threshold no-op re-evaluation
+  result_confidentiality: digest inputs bind opaque receipt and routing metadata; no bare hash of MATCH,
+    NO_MATCH, or INDETERMINATE and no coordinator-readable plaintext result
+commitment_pair_derivation:
+  authority: coordinator
+  domain: private-match-commitment-pair/v0.1
+  canonicalization: RFC 8785 JCS
+  digest_algorithm: SHA-256
+  output_format: sha256:<64 lowercase hex>
+  slot_order:
+  - party_a
+  - party_b
+  canonical_fields:
+  - protocol_profile
+  - policy_binding
+  - session_id
+  - participant_binding.party_a
+  - participant_binding.party_b
+  - selected_integration_profile_binding
+  - commitment_a
+  - commitment_b
+  first_commitment_effect: store only the Party-slot opaque commitment; commitment_pair_id remains NONE
+  second_commitment_effect: atomically store the second commitment and derive commitment_pair_id exactly
+    once
+  party_supplied_identifier: forbidden
+  claim_boundary: Identity binding only; it proves neither commitment truth, input completeness, PET security,
+    nor production readiness.
+cross_message_binding_semantics:
+  atomic_failure_rule: A failed guard mutates no state, dedup index, transcript, budget, or audit record.
+  rules:
+  - id: XMSG-SESSION-ACCEPTANCE-SUBJECT
+    message_types:
+    - session_acceptance
+    - participant_binding
+    state_reads:
+    - session_acceptance
+    - participant_binding
+    required_parameter_paths:
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
+    - participant_binding_parameter.participant_id
+    - participant_binding_parameter.key_id
+    rule: Binding must exactly match the trusted authenticated subject stored by that Party acceptance;
+      peer slots and in-session key rotation are forbidden.
+  - id: XMSG-POLICY-ACCEPTANCE
+    message_types:
+    - policy_acceptance
+    state_reads:
+    - policy_binding
+    - policy_acceptance
+    required_parameter_paths:
+    - policy_acceptance_parameter.policy_id
+    - policy_acceptance_parameter.policy_version
+    - policy_acceptance_parameter.acceptance_digest
+    rule: Each Party immutable acceptance record must equal the current policy ID/version; one Party never
+      satisfies the peer slot.
+  - id: XMSG-COMMITMENT-PAIR
+    message_types:
+    - commitment_registration
+    - evaluation_start
+    state_reads:
+    - commitment
+    - commitment_pair_id
+    - protocol_profile
+    - policy_binding
+    - session_id
+    - participant_binding
+    - selected_integration_profile_binding
+    required_parameter_paths:
+    - commitment_parameter.opaque_commitment
+    rule: The second accepted commitment derives the pair identity exactly once in canonical A/B order;
+      evaluation requires that derived identity.
+  - id: XMSG-RECEIPT-ACCEPTANCE
+    message_types:
+    - evaluation_contribution
+    - opaque_receipt_ack
+    - result_acceptance_notice
+    state_reads:
+    - evaluation_contribution
+    - result_ack
+    - opaque_receipt_ref
+    - selected_integration_profile_binding
+    - evaluation_attempt_id
+    required_parameter_paths:
+    - evaluation_contribution_parameter.contribution_ref
+    - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
+    rule: Both contributions precede Party acknowledgments; both Party references and statuses plus the
+      profile callback reference/status/profile-session-attempt binding must agree before result acceptance.
+  - id: XMSG-CONSENT-BINDING
+    message_types:
+    - consent_grant
+    state_reads:
+    - opaque_receipt_ref
+    - consent
+    - disclosure_profile_ref
+    - participant_binding
+    - intended_audience
+    - authoritative_time
+    required_parameter_paths:
+    - consent_binding_parameter.opaque_receipt_ref
+    - consent_binding_parameter.disclosure_profile_id
+    - consent_binding_parameter.disclosure_profile_version
+    - consent_binding_parameter.scope
+    - consent_binding_parameter.audience
+    - consent_binding_parameter.issued_at
+    - consent_binding_parameter.expires_at
+    - consent_binding_parameter.consent_nonce
+    - consent_binding_parameter.consent_artifact_digest
+    rule: Consent binds the accepted receipt and exact shared profile/scope/audience during its valid
+      interval; Party slots, nonces, and digests are immutable.
+session_acceptance_semantics:
+  proposal_binding: create_session binds one exact proposal digest and one abstract reviewed integration-profile
+    binding; neither can change after first acceptance
+  party_acceptance: A and B acceptance slots separately and immutably bind proposal digest, acceptance
+    digest, authenticated participant, key, subject-binding ID, and verification-material ID.
+  binding_prerequisite: Participant binding is enabled only when payload participant/key and the current
+    trusted authentication projection exactly equal that Party acceptance record.
+  downgrade_prevention: session_acceptance and participant_binding map to separate events and transitions;
+    neither substitutes for the other
+  trusted_subject_projection: Derived only after reviewed verification-material, sender, key, subject,
+    status, and authoritative-time validation; it is not a caller-controlled event field.
+  key_rotation_policy: No v0.1 in-session key/material rotation transition exists; a changed key, material,
+    or subject binding fails closed and requires a new session.

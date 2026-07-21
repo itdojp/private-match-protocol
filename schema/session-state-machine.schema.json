@@ -29,7 +29,11 @@
     "formalization",
     "parameter_flow_contracts",
     "envelope_binding_contracts",
-    "failure_projection_semantics"
+    "failure_projection_semantics",
+    "canonical_transcript_semantics",
+    "commitment_pair_derivation",
+    "cross_message_binding_semantics",
+    "session_acceptance_semantics"
   ],
   "properties": {
     "schema_version": {
@@ -143,6 +147,178 @@
     },
     "failure_projection_semantics": {
       "$ref": "#/$defs/failureProjection"
+    },
+    "canonical_transcript_semantics": {
+      "$ref": "#/$defs/canonicalTranscript"
+    },
+    "session_acceptance_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proposal_binding",
+        "party_acceptance",
+        "binding_prerequisite",
+        "downgrade_prevention",
+        "trusted_subject_projection",
+        "key_rotation_policy"
+      ],
+      "properties": {
+        "proposal_binding": {
+          "type": "string",
+          "minLength": 1
+        },
+        "party_acceptance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "binding_prerequisite": {
+          "type": "string",
+          "minLength": 1
+        },
+        "downgrade_prevention": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trusted_subject_projection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key_rotation_policy": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "commitment_pair_derivation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority",
+        "domain",
+        "canonicalization",
+        "digest_algorithm",
+        "output_format",
+        "slot_order",
+        "canonical_fields",
+        "first_commitment_effect",
+        "second_commitment_effect",
+        "party_supplied_identifier",
+        "claim_boundary"
+      ],
+      "properties": {
+        "authority": {
+          "const": "coordinator"
+        },
+        "domain": {
+          "const": "private-match-commitment-pair/v0.1"
+        },
+        "canonicalization": {
+          "const": "RFC 8785 JCS"
+        },
+        "digest_algorithm": {
+          "const": "SHA-256"
+        },
+        "output_format": {
+          "const": "sha256:<64 lowercase hex>"
+        },
+        "slot_order": {
+          "const": [
+            "party_a",
+            "party_b"
+          ]
+        },
+        "canonical_fields": {
+          "type": "array",
+          "minItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "first_commitment_effect": {
+          "type": "string",
+          "minLength": 1
+        },
+        "second_commitment_effect": {
+          "type": "string",
+          "minLength": 1
+        },
+        "party_supplied_identifier": {
+          "const": "forbidden"
+        },
+        "claim_boundary": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "cross_message_binding_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "atomic_failure_rule",
+        "rules"
+      ],
+      "properties": {
+        "atomic_failure_rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rules": {
+          "type": "array",
+          "minItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "message_types",
+              "state_reads",
+              "required_parameter_paths",
+              "rule"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^XMSG-[A-Z0-9-]+$"
+              },
+              "message_types": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "state_reads": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required_parameter_paths": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                }
+              },
+              "rule": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -1515,7 +1691,10 @@
         "maximum_time_jump",
         "evaluation_deadline",
         "stale_message_relation",
-        "atomic_deadline_crossing"
+        "atomic_deadline_crossing",
+        "timer_threshold_precedence",
+        "timer_reason_effect_binding",
+        "timer_same_time_policy"
       ],
       "properties": {
         "authoritative_clock": {
@@ -1566,6 +1745,35 @@
         },
         "atomic_deadline_crossing": {
           "$ref": "#/$defs/nonEmptyString"
+        },
+        "timer_threshold_precedence": {
+          "const": [
+            "SESSION_EXPIRY_THRESHOLD",
+            "EVALUATION_DEADLINE",
+            "CONSENT_EXPIRY_THRESHOLD",
+            "COORDINATOR_CLOCK"
+          ]
+        },
+        "timer_reason_effect_binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "TR-ADVANCE-TIME-NOOP",
+            "TR-ADVANCE-TIME-LIVE",
+            "TR-ADVANCE-TIME-EXPIRE",
+            "TR-EVALUATION-TIMEOUT",
+            "TR-CONSENT-EXPIRED"
+          ],
+          "properties": {
+            "TR-ADVANCE-TIME-NOOP": { "const": "COORDINATOR_CLOCK" },
+            "TR-ADVANCE-TIME-LIVE": { "const": "COORDINATOR_CLOCK" },
+            "TR-ADVANCE-TIME-EXPIRE": { "const": "SESSION_EXPIRY_THRESHOLD" },
+            "TR-EVALUATION-TIMEOUT": { "const": "EVALUATION_DEADLINE" },
+            "TR-CONSENT-EXPIRED": { "const": "CONSENT_EXPIRY_THRESHOLD" }
+          }
+        },
+        "timer_same_time_policy": {
+          "$ref": "#/$defs/nonEmptyString"
         }
       }
     },
@@ -1592,7 +1800,14 @@
         "derived_transition_identity",
         "message_response_cache",
         "operation_independent_indexes",
-        "profile_callback_independent_indexes"
+        "profile_callback_independent_indexes",
+        "cached_response_validation_order",
+        "cached_response_dynamic_gate_exemptions",
+        "cached_response_effect",
+        "stateless_validator_boundary",
+        "canonical_wire_fingerprint",
+        "accepted_record_equality",
+        "authenticated_requester_contract"
       ],
       "properties": {
         "replay_domain": {
@@ -1694,6 +1909,104 @@
             "callback_by_id",
             "callback_by_key"
           ]
+        },
+        "cached_response_validation_order": {
+          "type": "array",
+          "minItems": 6,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "cached_response_dynamic_gate_exemptions": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "cached_response_effect": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "stateless_validator_boundary": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "canonical_wire_fingerprint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "domain",
+            "canonicalization",
+            "output",
+            "purpose",
+            "stored_value",
+            "excluded_from",
+            "retry_policy"
+          ],
+          "properties": {
+            "domain": { "const": "private-match-wire-message/v0.1" },
+            "canonicalization": { "$ref": "#/$defs/nonEmptyString" },
+            "output": { "const": "sha256:<64 lowercase hex>" },
+            "purpose": { "$ref": "#/$defs/nonEmptyString" },
+            "stored_value": { "$ref": "#/$defs/nonEmptyString" },
+            "excluded_from": {
+              "type": "array",
+              "minItems": 4,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/nonEmptyString" }
+            },
+            "retry_policy": { "$ref": "#/$defs/nonEmptyString" }
+          }
+        },
+        "accepted_record_equality": {
+          "type": "array",
+          "minItems": 6,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "authenticated_requester_contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "party_fields",
+            "coordinator_fields",
+            "profile_fields",
+            "eligibility",
+            "no_requester_behavior",
+            "unauthorized_behavior"
+          ],
+          "properties": {
+            "source": { "$ref": "#/$defs/nonEmptyString" },
+            "party_fields": {
+              "const": [
+                "actor",
+                "participant_id",
+                "key_id",
+                "subject_binding_id",
+                "verification_material_id"
+              ]
+            },
+            "coordinator_fields": {
+              "const": [
+                "actor",
+                "key_id",
+                "subject_binding_id",
+                "verification_material_id"
+              ]
+            },
+            "profile_fields": {
+              "const": [
+                "actor",
+                "profile_id",
+                "profile_version",
+                "profile_instance_id",
+                "key_id",
+                "subject_binding_id",
+                "verification_material_id"
+              ]
+            },
+            "eligibility": { "$ref": "#/$defs/nonEmptyString" },
+            "no_requester_behavior": { "$ref": "#/$defs/nonEmptyString" },
+            "unauthorized_behavior": { "$ref": "#/$defs/nonEmptyString" }
+          }
         }
       }
     },
@@ -2232,7 +2545,10 @@
         "replay_domain",
         "recipient_by_sender",
         "whole_map_party_access",
-        "peer_entry_access"
+        "peer_entry_access",
+        "authorization_source",
+        "exact_subject_match",
+        "no_requester_behavior"
       ],
       "properties": {
         "replay_domain": {
@@ -2262,6 +2578,15 @@
         },
         "peer_entry_access": {
           "const": "forbidden"
+        },
+        "authorization_source": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "exact_subject_match": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "no_requester_behavior": {
+          "$ref": "#/$defs/nonEmptyString"
         }
       }
     },
@@ -2301,6 +2626,100 @@
           "$ref": "#/$defs/stringArray"
         },
         "description": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "canonicalTranscript": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ordering_authority",
+        "canonicalization",
+        "digest_algorithm",
+        "domain_encoding",
+        "payload_domain",
+        "message_domain",
+        "transcript_domain",
+        "timer_event_domain",
+        "genesis_domain",
+        "genesis_digest",
+        "event_index_encoding",
+        "external_message_digest_sources",
+        "timer_digest_source",
+        "append_rule",
+        "included_relations",
+        "excluded_relations",
+        "result_confidentiality"
+      ],
+      "properties": {
+        "ordering_authority": {
+          "const": "coordinator"
+        },
+        "canonicalization": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "digest_algorithm": {
+          "const": "SHA-256"
+        },
+        "domain_encoding": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "payload_domain": {
+          "const": "private-match-payload/v0.1"
+        },
+        "message_domain": {
+          "const": "private-match-message/v0.1"
+        },
+        "transcript_domain": {
+          "const": "private-match-transcript/v0.1"
+        },
+        "timer_event_domain": {
+          "const": "private-match-timer-event/v0.1"
+        },
+        "genesis_domain": {
+          "const": "private-match-transcript-genesis/v0.1"
+        },
+        "genesis_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "event_index_encoding": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "external_message_digest_sources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "party_message",
+            "coordinator_command",
+            "profile_callback"
+          ],
+          "properties": {
+            "party_message": {
+              "const": "replay_envelope.canonical_message_digest"
+            },
+            "coordinator_command": {
+              "const": "operation_envelope.canonical_message_digest"
+            },
+            "profile_callback": {
+              "const": "profile_callback_envelope.canonical_message_digest"
+            }
+          }
+        },
+        "timer_digest_source": {
+          "const": "time_advance_parameter.canonical_event_digest"
+        },
+        "append_rule": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "included_relations": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "excluded_relations": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "result_confidentiality": {
           "$ref": "#/$defs/nonEmptyString"
         }
       }

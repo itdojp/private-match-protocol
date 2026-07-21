@@ -1,0 +1,29 @@
+schema_version: '0.1'
+artifact_status: test-only
+scope: synthetic independent requester projections only; no transport authentication is implemented
+requesters:
+  party_a:
+    actor: party_a_client
+    participant_id: urn:private-match:test:participant:a
+    key_id: urn:private-match:test:key:party-a:v0.1
+    subject_binding_id: urn:private-match:test:subject-binding:party-a:v0.1
+    verification_material_id: urn:private-match:test:material:party-a:v0.1
+  party_b:
+    actor: party_b_client
+    participant_id: urn:private-match:test:participant:b
+    key_id: urn:private-match:test:key:party-b:v0.1
+    subject_binding_id: urn:private-match:test:subject-binding:party-b:v0.1
+    verification_material_id: urn:private-match:test:material:party-b:v0.1
+  coordinator:
+    actor: coordinator
+    key_id: urn:private-match:test:key:coordinator:v0.1
+    subject_binding_id: urn:private-match:test:subject-binding:coordinator:v0.1
+    verification_material_id: urn:private-match:test:material:coordinator:v0.1
+  selected_integration_profile:
+    actor: selected_integration_profile
+    key_id: urn:private-match:test:key:profile:v0.1
+    subject_binding_id: urn:private-match:test:subject-binding:profile:v0.1
+    verification_material_id: urn:private-match:test:material:profile:v0.1
+    profile_id: urn:private-match:test:profile:synthetic
+    profile_version: '0.1'
+    profile_instance_id: urn:private-match:test:profile-instance:0001
