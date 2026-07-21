@@ -34,6 +34,15 @@ Required specifications:
 - error and abort semantics
 - privacy leakage contract
 
+Current draft artifacts:
+
+- [`private-match-core/v0.1` actors and trust boundaries](specs/ACTORS_AND_TRUST_BOUNDARIES.md)
+- [Privacy Leakage Contract v0.1](docs/PRIVACY_LEAKAGE_CONTRACT.md)
+- [Core session and disclosure state machine v0.1](specs/state-machines/private-match-core-session-v0.1.md)
+
+These artifacts remain `draft`; their presence does not satisfy the P1
+`candidate` exit criterion or select an integration profile.
+
 Exit criteria:
 
 - protocol draft is `candidate`

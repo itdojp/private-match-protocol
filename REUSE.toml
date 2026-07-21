@@ -7,14 +7,18 @@ path = [
   ".github/workflows/protocol-spec.yml",
   ".gitignore",
   "privacy/leakage-contract.v0.1.yaml",
+  "specs/state-machines/private-match-core-session-v0.1.yaml",
   "REUSE.toml",
   "requirements-build.in",
   "requirements-build.txt",
   "requirements-dev.in",
   "requirements-dev.txt",
   "schema/leakage-contract.schema.json",
+  "schema/session-state-machine.schema.json",
   "scripts/validate_leakage_contract.py",
+  "scripts/validate_session_state_machine.py",
   "tests/test_leakage_contract.py",
+  "tests/test_session_state_machine.py",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 ITDO Inc. / 株式会社アイティードゥ"
@@ -30,6 +34,7 @@ path = [
   "docs/*.md",
   "docs/decisions/*.md",
   "specs/*.md",
+  "specs/state-machines/*.md",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 ITDO Inc. / 株式会社アイティードゥ"
