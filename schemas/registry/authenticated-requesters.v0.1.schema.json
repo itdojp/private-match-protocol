@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/itdojp/private-match-protocol/schemas/registry/authenticated-requesters.v0.1.schema.json",
+  "title": "Synthetic authenticated requester fixtures v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "artifact_status", "scope", "requesters"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "artifact_status": { "const": "test-only" },
+    "scope": { "type": "string", "minLength": 1 },
+    "requesters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "party_a",
+        "party_b",
+        "coordinator",
+        "selected_integration_profile"
+      ],
+      "properties": {
+        "party_a": { "$ref": "#/$defs/partyA" },
+        "party_b": { "$ref": "#/$defs/partyB" },
+        "coordinator": { "$ref": "#/$defs/coordinator" },
+        "selected_integration_profile": { "$ref": "#/$defs/profile" }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+    },
+    "partyBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor",
+        "participant_id",
+        "key_id",
+        "subject_binding_id",
+        "verification_material_id"
+      ],
+      "properties": {
+        "actor": { "enum": ["party_a_client", "party_b_client"] },
+        "participant_id": { "$ref": "#/$defs/identifier" },
+        "key_id": { "$ref": "#/$defs/identifier" },
+        "subject_binding_id": { "$ref": "#/$defs/identifier" },
+        "verification_material_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "partyA": {
+      "allOf": [
+        { "$ref": "#/$defs/partyBase" },
+        { "properties": { "actor": { "const": "party_a_client" } } }
+      ]
+    },
+    "partyB": {
+      "allOf": [
+        { "$ref": "#/$defs/partyBase" },
+        { "properties": { "actor": { "const": "party_b_client" } } }
+      ]
+    },
+    "coordinator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor",
+        "key_id",
+        "subject_binding_id",
+        "verification_material_id"
+      ],
+      "properties": {
+        "actor": { "const": "coordinator" },
+        "key_id": { "$ref": "#/$defs/identifier" },
+        "subject_binding_id": { "$ref": "#/$defs/identifier" },
+        "verification_material_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor",
+        "key_id",
+        "subject_binding_id",
+        "verification_material_id",
+        "profile_id",
+        "profile_version",
+        "profile_instance_id"
+      ],
+      "properties": {
+        "actor": { "const": "selected_integration_profile" },
+        "key_id": { "$ref": "#/$defs/identifier" },
+        "subject_binding_id": { "$ref": "#/$defs/identifier" },
+        "verification_material_id": { "$ref": "#/$defs/identifier" },
+        "profile_id": { "$ref": "#/$defs/identifier" },
+        "profile_version": { "$ref": "#/$defs/identifier" },
+        "profile_instance_id": { "$ref": "#/$defs/identifier" }
+      }
+    }
+  }
+}

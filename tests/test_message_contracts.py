@@ -40,12 +40,18 @@ class MessageContractTests(unittest.TestCase):
         cls.material_schema = json.loads(
             (ROOT / validator.MATERIAL_SCHEMA).read_text(encoding="utf-8")
         )
+        cls.requester_schema = json.loads(
+            (ROOT / validator.REQUESTER_SCHEMA).read_text(encoding="utf-8")
+        )
         cls.registry = strict_yaml_load(
             (ROOT / validator.REGISTRY_PATH).read_text(encoding="utf-8")
         )
         cls.materials = strict_yaml_load(
             (ROOT / validator.MATERIAL_PATH).read_text(encoding="utf-8")
         )
+        cls.requesters = strict_yaml_load(
+            (ROOT / validator.REQUESTER_PATH).read_text(encoding="utf-8")
+        )["requesters"]
         cls.context = strict_yaml_load(
             (ROOT / validator.CONTEXT_PATH).read_text(encoding="utf-8")
         )
@@ -62,6 +68,16 @@ class MessageContractTests(unittest.TestCase):
             for entry in cls.expected["entries"]
             if entry["kind"] == "message"
         ]
+
+    def requester_for(self, message: dict) -> dict:
+        actor = message["sender"]["actor"]
+        key = {
+            "party_a_client": "party_a",
+            "party_b_client": "party_b",
+            "coordinator": "coordinator",
+            "selected_integration_profile": "selected_integration_profile",
+        }[actor]
+        return copy.deepcopy(self.requesters[key])
 
     def runner_before(
         self, message_type: str, actor: str | None = None
@@ -194,6 +210,7 @@ class MessageContractTests(unittest.TestCase):
             self.timer_schema,
             self.registry_schema,
             self.material_schema,
+            self.requester_schema,
         ):
             Draft202012Validator.check_schema(schema)
             self.assertEqual(
@@ -1121,8 +1138,11 @@ class MessageContractTests(unittest.TestCase):
             self.message_schema,
             self.registry,
             self.materials,
+            authenticated_requester=self.requester_for(message),
         )
-        self.assertEqual(("EXACT_DUPLICATE", []), (outcome, findings))
+        self.assertEqual(("EXACT_DUPLICATE_AUTHORIZED", []), (outcome, findings))
+        self.assertTrue(outcome.response_authorized)
+        self.assertIsInstance(outcome.cached_response_ref, str)
         self.assertEqual(before, (runner.__dict__, transcript.__dict__))
 
         delayed_runner, delayed_transcript, _ = self.runner_before(
@@ -1139,8 +1159,9 @@ class MessageContractTests(unittest.TestCase):
             self.message_schema,
             self.registry,
             self.materials,
+            authenticated_requester=self.requester_for(message),
         )
-        self.assertEqual(("EXACT_DUPLICATE", []), (outcome, findings))
+        self.assertEqual(("EXACT_DUPLICATE_AUTHORIZED", []), (outcome, findings))
         self.assertEqual(
             delayed_before, (delayed_runner.__dict__, delayed_transcript.__dict__)
         )
@@ -1192,8 +1213,11 @@ class MessageContractTests(unittest.TestCase):
                         self.message_schema,
                         self.registry,
                         materials,
+                        authenticated_requester=self.requester_for(message),
                     )
-                    self.assertEqual(("EXACT_DUPLICATE", []), (outcome, findings))
+                    self.assertEqual(
+                        ("EXACT_DUPLICATE_AUTHORIZED", []), (outcome, findings)
+                    )
                     self.assertEqual(before, (runner.__dict__, transcript.__dict__))
 
     def test_duplicate_conflicts_never_mutate_authoritative_trace(self) -> None:
@@ -1261,13 +1285,11 @@ class MessageContractTests(unittest.TestCase):
         )
         own = transcript.dedup.cached_response(
             party,
-            requester_actor="party_a_client",
-            requester_participant_id=party["sender"]["participant_id"],
+            authenticated_requester=self.requester_for(party),
         )
         peer = transcript.dedup.cached_response(
             party,
-            requester_actor="party_b_client",
-            requester_participant_id="urn:private-match:test:participant:b",
+            authenticated_requester=copy.deepcopy(self.requesters["party_b"]),
         )
         self.assertIsInstance(own, str)
         self.assertIsNone(peer)
@@ -1286,6 +1308,160 @@ class MessageContractTests(unittest.TestCase):
         self.assertTrue(
             {"prior-transcript", "message-expired", "verification-material"}
             & {finding.code for finding in findings}
+        )
+
+    def test_cached_response_requires_independent_exact_requester_subject(self) -> None:
+        runner, transcript = self.completed_trace()
+        party = next(
+            message
+            for message in self.trace_messages
+            if message["message_type"] == "session_acceptance"
+            and message["sender"]["actor"] == "party_a_client"
+        )
+        coordinator = next(
+            message
+            for message in self.trace_messages
+            if message["message_type"] == "session_proposal"
+        )
+        profile = next(
+            message
+            for message in self.trace_messages
+            if message["message_type"] == "result_acceptance_notice"
+        )
+        party_a = self.requester_for(party)
+        denied_party_requesters = [
+            None,
+            copy.deepcopy(self.requesters["party_b"]),
+            party_a | {"participant_id": "urn:private-match:test:participant:other"},
+            party_a | {"key_id": "urn:private-match:test:key:other"},
+            party_a
+            | {
+                "subject_binding_id": (
+                    "urn:private-match:test:subject-binding:party-a:other"
+                )
+            },
+        ]
+        for requester in denied_party_requesters:
+            with self.subTest(requester=requester):
+                before = (
+                    copy.deepcopy(runner.__dict__),
+                    copy.deepcopy(transcript.__dict__),
+                )
+                outcome, findings = validator.apply_trace_message_atomically(
+                    runner,
+                    transcript,
+                    copy.deepcopy(party),
+                    self.message_schema,
+                    self.registry,
+                    self.materials,
+                    authenticated_requester=requester,
+                )
+                self.assertEqual([], findings)
+                self.assertEqual("EXACT_DUPLICATE_NO_RESPONSE", outcome)
+                self.assertFalse(outcome.response_authorized)
+                self.assertIsNone(outcome.cached_response_ref)
+                self.assertEqual(before, (runner.__dict__, transcript.__dict__))
+
+        requester_cases = (
+            (party, party_a, "EXACT_DUPLICATE_AUTHORIZED"),
+            (
+                coordinator,
+                self.requester_for(coordinator),
+                "EXACT_DUPLICATE_AUTHORIZED",
+            ),
+            (coordinator, party_a, "EXACT_DUPLICATE_NO_RESPONSE"),
+            (profile, self.requester_for(profile), "EXACT_DUPLICATE_AUTHORIZED"),
+            (
+                profile,
+                self.requester_for(profile)
+                | {
+                    "profile_instance_id": (
+                        "urn:private-match:test:profile-instance:other"
+                    )
+                },
+                "EXACT_DUPLICATE_NO_RESPONSE",
+            ),
+            (
+                profile,
+                self.requester_for(profile) | {"profile_version": "0.2"},
+                "EXACT_DUPLICATE_NO_RESPONSE",
+            ),
+        )
+        for message, requester, expected in requester_cases:
+            with self.subTest(delivery=message["delivery_class"], expected=expected):
+                before = (
+                    copy.deepcopy(runner.__dict__),
+                    copy.deepcopy(transcript.__dict__),
+                )
+                outcome, findings = validator.apply_trace_message_atomically(
+                    runner,
+                    transcript,
+                    copy.deepcopy(message),
+                    self.message_schema,
+                    self.registry,
+                    self.materials,
+                    authenticated_requester=requester,
+                )
+                self.assertEqual([], findings)
+                self.assertEqual(expected, outcome)
+                self.assertEqual(
+                    expected == "EXACT_DUPLICATE_AUTHORIZED",
+                    outcome.response_authorized,
+                )
+                self.assertEqual(before, (runner.__dict__, transcript.__dict__))
+
+    def test_wire_authentication_change_conflicts_without_raw_value_retention(
+        self,
+    ) -> None:
+        runner, transcript = self.completed_trace()
+        party = next(
+            copy.deepcopy(message)
+            for message in self.trace_messages
+            if message["message_type"] == "session_acceptance"
+            and message["sender"]["actor"] == "party_a_client"
+        )
+        before = (copy.deepcopy(runner.__dict__), copy.deepcopy(transcript.__dict__))
+        party["authentication"]["value"] += "-changed"
+        outcome, findings = validator.apply_trace_message_atomically(
+            runner,
+            transcript,
+            party,
+            self.message_schema,
+            self.registry,
+            self.materials,
+            authenticated_requester=self.requesters["party_a"],
+        )
+        self.assertEqual(("REPLAY_CONFLICT", []), (outcome, findings))
+        self.assertEqual(before, (runner.__dict__, transcript.__dict__))
+        serialized_records = repr(transcript.dedup.__dict__)
+        self.assertNotIn(
+            "SYNTHETIC-NOT-A-CRYPTOGRAPHIC-AUTHENTICATOR", serialized_records
+        )
+        self.assertNotIn('"authentication"', serialized_records)
+        self.assertIn("canonical_wire_digest", serialized_records)
+
+    def test_authenticated_requester_fixture_matches_reviewed_material_subjects(
+        self,
+    ) -> None:
+        fixture = {
+            "schema_version": "0.1",
+            "artifact_status": "test-only",
+            "scope": "synthetic",
+            "requesters": self.requesters,
+        }
+        self.assertEqual(
+            [], validator.requester_fixture_findings(fixture, self.materials)
+        )
+        changed = copy.deepcopy(fixture)
+        changed["requesters"]["party_a"]["key_id"] = "urn:private-match:test:key:other"
+        self.assertEqual(
+            {"authenticated-requester"},
+            {
+                finding.code
+                for finding in validator.requester_fixture_findings(
+                    changed, self.materials
+                )
+            },
         )
 
     def test_timer_live_noop_and_retry_are_atomic(self) -> None:
@@ -1482,8 +1658,9 @@ class MessageContractTests(unittest.TestCase):
             self.message_schema,
             self.registry,
             self.materials,
+            authenticated_requester=self.requester_for(delayed_party),
         )
-        self.assertEqual(("EXACT_DUPLICATE", []), (outcome, findings))
+        self.assertEqual(("EXACT_DUPLICATE_AUTHORIZED", []), (outcome, findings))
         self.assertEqual(
             before, (reserved_runner.__dict__, reserved_transcript.__dict__)
         )

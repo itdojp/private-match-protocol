@@ -1172,15 +1172,15 @@ state_variables:
   coordinator_access: read-write
   description: Policy-derived deadline set atomically at start_evaluation and compared against authoritative_time.
 - id: accepted_message_records
-  type: map<replay_domain,map<message_id,record<nonce,sequence,issued_at,canonical_event_digest,normalized_response_ref>>>
+  type: map<replay_domain,map<message_id,record<nonce,sequence,issued_at,canonical_message_digest,canonical_wire_digest,verification_material_id,original_authenticated_subject,response_recipient_binding,normalized_response_ref>>>
   initial: '{}'
   owner:
   - coordinator
   visibility:
   - coordinator
   coordinator_access: read-write
-  description: Authoritative accepted-message identity including issued_at, keyed by (session_id,sender_participant_id)
-    then message_id.
+  description: Authoritative accepted-message identity including the full-wire digest but not the raw
+    authentication value, keyed by (session_id,sender_participant_id) then message_id.
 - id: normalized_message_responses
   type: map<replay_domain,map<message_id,normalized_response>>
   initial: '{}'
@@ -1198,10 +1198,13 @@ state_variables:
       B: party_b_client
     whole_map_party_access: false
     peer_entry_access: forbidden
-  description: Authoritative sender-scoped cache; each party receives only responses in its own replay
-    domain.
+    authorization_source: independent authenticated_requester trusted projection; never replayed message sender
+    exact_subject_match: required against response_recipient_binding
+    no_requester_behavior: classify exact duplicate internally but return no response
+  description: Authoritative sender-scoped cache; each Party receives only a response originally bound
+    to its exact participant, key, material, and subject through an independent requester projection.
 - id: operation_by_id
-  type: map<(actor_id,operation_id),record<idempotency_key,canonical_digest,normalized_response>>
+  type: map<(actor_id,operation_id),record<idempotency_key,canonical_message_digest,canonical_wire_digest,verification_material_id,original_authenticated_subject,response_recipient_binding,normalized_response_ref>>
   initial: '{}'
   owner:
   - coordinator
@@ -1210,7 +1213,7 @@ state_variables:
   coordinator_access: read-write
   description: Coordinator operation registry indexed independently by actor and operation ID.
 - id: operation_by_key
-  type: map<(actor_id,idempotency_key),record<operation_id,canonical_digest,normalized_response>>
+  type: map<(actor_id,idempotency_key),record<operation_id,canonical_message_digest,canonical_wire_digest,verification_material_id,original_authenticated_subject,response_recipient_binding,normalized_response_ref>>
   initial: '{}'
   owner:
   - coordinator
@@ -1219,7 +1222,7 @@ state_variables:
   coordinator_access: read-write
   description: Coordinator operation registry independently enforcing actor-scoped idempotency-key uniqueness.
 - id: callback_by_id
-  type: map<(profile_domain,callback_id),record<idempotency_key,canonical_digest,normalized_response>>
+  type: map<(profile_domain,callback_id),record<idempotency_key,canonical_message_digest,canonical_wire_digest,verification_material_id,original_authenticated_subject,response_recipient_binding,normalized_response_ref>>
   initial: '{}'
   owner:
   - coordinator
@@ -1228,7 +1231,7 @@ state_variables:
   coordinator_access: read-write
   description: Profile callback registry indexed by the fully bound domain and callback ID.
 - id: callback_by_key
-  type: map<(profile_domain,idempotency_key),record<callback_id,canonical_digest,normalized_response>>
+  type: map<(profile_domain,idempotency_key),record<callback_id,canonical_message_digest,canonical_wire_digest,verification_material_id,original_authenticated_subject,response_recipient_binding,normalized_response_ref>>
   initial: '{}'
   owner:
   - coordinator
@@ -7012,7 +7015,7 @@ transitions:
     - session_id
     arguments:
     - lookup only Party A replay domain (session_id,sender_participant_id)
-    - message_id, nonce, sequence, issued_at, and canonical digest all equal
+    - message_id, nonce, sequence, issued_at, semantic/full-wire digests, material, and original subject all equal
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -7028,7 +7031,7 @@ transitions:
     - participant_binding
     - session_id
     arguments:
-    - Party A own replay-domain entry only
+    - Party A response recipient exactly equals an independent authenticated requester; replayed sender is not authority
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -7042,7 +7045,7 @@ transitions:
     operation: return_prior_response
     writes: []
     arguments:
-    - return only Party A sender-domain prior response
+    - return only when an independent authenticated requester exactly equals Party A's original participant, key, material, and subject binding
     - no state, sequence, nonce, audit, or budget change
     parameter_reads:
     - session_context.session_id
@@ -7171,7 +7174,7 @@ transitions:
     - session_id
     arguments:
     - lookup only Party B replay domain (session_id,sender_participant_id)
-    - message_id, nonce, sequence, issued_at, and canonical digest all equal
+    - message_id, nonce, sequence, issued_at, semantic/full-wire digests, material, and original subject all equal
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -7187,7 +7190,7 @@ transitions:
     - participant_binding
     - session_id
     arguments:
-    - Party B own replay-domain entry only
+    - Party B response recipient exactly equals an independent authenticated requester; replayed sender is not authority
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -7201,7 +7204,7 @@ transitions:
     operation: return_prior_response
     writes: []
     arguments:
-    - return only Party B sender-domain prior response
+    - return only when an independent authenticated requester exactly equals Party B's original participant, key, material, and subject binding
     - no state, sequence, nonce, audit, or budget change
     parameter_reads:
     - session_context.session_id
@@ -7839,7 +7842,7 @@ transitions:
     - session_context.selected_integration_profile_binding
     - session_context.session_id
     arguments:
-    - actor is coordinator and both indexes bind the same ID, key, digest, and prior response
+    - actor is coordinator and both indexes bind the same ID, key, semantic/full-wire digests, material, original subject, and prior response
   effects:
   - id: E-RETURN-PRIOR-OPERATION
     operation: return_prior_response
@@ -7850,7 +7853,7 @@ transitions:
     - operation_envelope.canonical_operation_digest
     - operation_envelope.idempotency_key
     arguments:
-    - return response only when both independent operation indexes agree
+    - return response only when both independent indexes agree and an independent requester equals the original coordinator subject
   visibility:
   - actor: coordinator
     data:
@@ -7918,7 +7921,7 @@ transitions:
     - session_context.selected_integration_profile_binding
     - session_context.session_id
     arguments:
-    - bound profile/session/attempt and both callback indexes are exactly equal
+    - bound profile/session/attempt and both callback indexes bind equal IDs, keys, semantic/full-wire digests, material, and original subject
   effects:
   - id: E-RETURN-PRIOR-PROFILE-CALLBACK
     operation: return_prior_response
@@ -7933,7 +7936,7 @@ transitions:
     - profile_callback_envelope.session_id
     - profile_callback_envelope.evaluation_attempt_id
     arguments:
-    - return response only when both independent callback indexes and current binding agree
+    - return response only when both indexes/current binding agree and an independent requester equals the original profile-instance subject
   visibility:
   - actor: coordinator
     data:
@@ -8139,8 +8142,9 @@ invariants:
   violation_effect: reject REPLAY or REPLAY_CONFLICT; conflicting duplicates require terminal policy handling
 - id: INV-IDEMPOTENCY
   statement: Each externally delivered class uses its own realizable scoped identity; exact duplicates
-    return the class-specific prior response without another state, budget, release, disclosure, sequence,
-    or audit change.
+    require the same semantic and full-wire digest, material, and original authenticated subject. A prior
+    response is returned only to an independently authenticated exact recipient without another state,
+    budget, release, disclosure, sequence, transcript, or audit change.
   state_variables:
   - accepted_message_ids
   - accepted_nonces
@@ -8161,7 +8165,8 @@ invariants:
     - accepted_event_digests
     parameter_reads: []
     arguments:
-    - same sender message_id nonce issued_at and canonical event digest
+    - same sender message_id nonce sequence issued_at canonical message digest canonical wire digest verification
+      material and original authenticated subject
   - id: I-EXACT-OPERATION-DUPLICATE
     predicate: exact_duplicate
     reads:
@@ -8169,7 +8174,8 @@ invariants:
     - operation_by_key
     parameter_reads: []
     arguments:
-    - same actor operation_id idempotency_key and canonical operation digest
+    - same actor operation_id idempotency_key canonical message digest canonical wire digest material and original
+      authenticated subject
   - id: I-EXACT-CALLBACK-DUPLICATE
     predicate: exact_duplicate
     reads:
@@ -8177,7 +8183,8 @@ invariants:
     - callback_by_key
     parameter_reads: []
     arguments:
-    - same profile instance session attempt callback_id key and canonical callback digest
+    - same profile instance session attempt callback_id key canonical message digest canonical wire digest material
+      and original authenticated subject
   violation_effect: conflicting duplicate is REPLAY_CONFLICT
 - id: INV-ONE-EVALUATION
   statement: A commitment pair receives at most one accepted evaluation; INDETERMINATE, timeout, and failure
@@ -8492,7 +8499,8 @@ replay_and_ordering:
   - sequence
   - issued_at
   - canonical event digest
-  exact_duplicate: no-op and return prior normalized response
+  exact_duplicate: no-op; authorize the prior normalized response only when an independent authenticated requester
+    exactly matches the original response recipient binding
   conflicting_duplicate: REPLAY_CONFLICT; no partial state change and policy-defined abort
   stale_sequence: REPLAY or STALE_MESSAGE; no state change
   future_sequence_gap: retryable OUT_OF_ORDER; no buffering and no state change
@@ -8521,7 +8529,7 @@ replay_and_ordering:
   timer_identity: level-triggered authoritative threshold; no message_id or nonce
   derived_transition_identity: no external delivery or retry identity
   message_response_cache: keyed by (session_id,sender_participant_id,message_id); each Party receives
-    only its own sender-domain response
+    only the response bound to its exact original authenticated subject
   operation_independent_indexes:
   - operation_by_id
   - operation_by_key
@@ -8531,16 +8539,60 @@ replay_and_ordering:
   cached_response_validation_order:
   - strict JSON parse
   - strict Schema validation
-  - canonical bytes and digest recomputation
+  - RFC 8785 canonical wire bytes and semantic and full-wire digest recomputation
   - replay or idempotency domain lookup
-  - complete accepted-record identity and digest equality
-  - recipient-scoped normalized response lookup
+  - complete accepted-record identity semantic digest full-wire digest material and subject equality
+  - independent authenticated requester and recipient-binding equality
+  - recipient-scoped normalized response lookup or no-response outcome
   cached_response_dynamic_gate_exemptions:
   - current transcript head
   - historical message expiry or staleness
   - verification material expiry or revocation after original acceptance
-  cached_response_effect: return only the accepted record's prior recipient-scoped response; never mutate state, sequence, nonce, budget, audit, or transcript
+  cached_response_effect: return only the accepted record's prior recipient-scoped response after exact independent requester equality; absent or unauthorized requester receives no response and never mutates state, dedup, sequence, nonce, budget, audit, or transcript
   stateless_validator_boundary: a stateless validator without authoritative accepted-record state validates as a current message and never fabricates exact-duplicate success
+  canonical_wire_fingerprint:
+    domain: private-match-wire-message/v0.1
+    canonicalization: RFC 8785 JCS of the complete strict message including authentication.value and message_digest
+    output: sha256:<64 lowercase hex>
+    purpose: accepted-record replay equality only
+    stored_value: canonical_wire_digest only; raw authentication.value is not retained
+    excluded_from:
+    - authentication input
+    - semantic message digest
+    - accepted transcript
+    - Party projection
+    retry_policy: byte-identical canonical retransmission only; regenerated authentication values are conflicts
+  accepted_record_equality:
+  - complete delivery-class replay or idempotency domain
+  - message nonce sequence operation callback and idempotency identity as applicable
+  - canonical message digest
+  - canonical wire digest
+  - verification material ID
+  - original authenticated subject binding
+  authenticated_requester_contract:
+    source: independent trusted projection from channel authentication, service principal, or reviewed profile instance; never copied from replayed message sender or identity
+    party_fields:
+    - actor
+    - participant_id
+    - key_id
+    - subject_binding_id
+    - verification_material_id
+    coordinator_fields:
+    - actor
+    - key_id
+    - subject_binding_id
+    - verification_material_id
+    profile_fields:
+    - actor
+    - profile_id
+    - profile_version
+    - profile_instance_id
+    - key_id
+    - subject_binding_id
+    - verification_material_id
+    eligibility: exact equality with original response_recipient_binding
+    no_requester_behavior: preserve exact-duplicate classification but return no cached response
+    unauthorized_behavior: return no cached response and no mutation of state, dedup, transcript, budget, or audit
 retry_semantics:
   idempotent_resend: exact duplicate; return prior normalized response without budget or sequence change
   transient_message_retry: new message_id and nonce at the expected sequence after correcting a retryable

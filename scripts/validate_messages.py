@@ -32,6 +32,7 @@ from canonicalize_message import (
     strict_loads,
     timer_event_digest,
     transcript_genesis_digest,
+    wire_message_digest,
 )
 from strict_yaml import strict_yaml_load
 from validate_session_state_machine import authoritative_time_transition
@@ -41,8 +42,10 @@ MESSAGE_SCHEMA = Path("schemas/messages/envelope.v0.1.schema.json")
 TIMER_SCHEMA = Path("schemas/messages/timer-event.v0.1.schema.json")
 REGISTRY_SCHEMA = Path("schemas/registry/message-types.v0.1.schema.json")
 MATERIAL_SCHEMA = Path("schemas/registry/verification-materials.v0.1.schema.json")
+REQUESTER_SCHEMA = Path("schemas/registry/authenticated-requesters.v0.1.schema.json")
 REGISTRY_PATH = Path("registry/message-types.v0.1.yaml")
 MATERIAL_PATH = Path("conformance/messages/verification-materials.v0.1.yaml")
+REQUESTER_PATH = Path("conformance/messages/authenticated-requesters.v0.1.yaml")
 CONTEXT_PATH = Path("conformance/messages/context.v0.1.yaml")
 INVALID_MANIFEST = Path("conformance/messages/invalid/manifest.v0.1.yaml")
 EXPECTED_DIGESTS = Path("conformance/messages/expected-digests/vectors.v0.1.json")
@@ -275,6 +278,64 @@ def _material_index(materials: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {str(key[0]): value for key, value in composite.items()}
 
 
+def requester_fixture_findings(
+    requester_fixture: dict[str, Any], materials: dict[str, Any]
+) -> list[Finding]:
+    """Check synthetic trusted projections against reviewed material subjects.
+
+    The fixture represents an independent channel/service-principal projection;
+    this comparison prevents tests from silently constructing it from a replayed
+    wire message while keeping transport authentication outside this draft.
+    """
+
+    findings: list[Finding] = []
+    material_index = _material_index(materials)
+    requesters = requester_fixture.get("requesters", {})
+    if not isinstance(requesters, dict):
+        return [_finding("authenticated-requester", "requesters", "must be a mapping")]
+    for name, requester in requesters.items():
+        path = f"requesters.{name}"
+        if not isinstance(requester, dict):
+            continue
+        material_id = requester.get("verification_material_id")
+        material = material_index.get(str(material_id))
+        if material is None:
+            findings.append(
+                _finding(
+                    "authenticated-requester",
+                    f"{path}.verification_material_id",
+                    "must reference a unique reviewed verification material",
+                )
+            )
+            continue
+        subject = material.get("subject", {})
+        expected: dict[str, Any] = {
+            "actor": subject.get("actor"),
+            "key_id": material.get("key_id"),
+            "subject_binding_id": material.get("subject_binding_id"),
+            "verification_material_id": material_id,
+        }
+        if subject.get("kind") == "party":
+            expected["participant_id"] = subject.get("participant_id")
+        elif subject.get("kind") == "integration-profile":
+            expected.update(
+                {
+                    "profile_id": subject.get("profile_id"),
+                    "profile_version": subject.get("profile_version"),
+                    "profile_instance_id": subject.get("profile_instance_id"),
+                }
+            )
+        if requester != expected:
+            findings.append(
+                _finding(
+                    "authenticated-requester",
+                    path,
+                    "trusted projection must exactly match its reviewed material subject",
+                )
+            )
+    return sorted(set(findings))
+
+
 def authenticated_subject_parameter(
     message: dict[str, Any],
     materials: dict[str, Any],
@@ -385,13 +446,23 @@ def authenticated_subject_parameter(
         )
     if findings:
         return None, sorted(set(findings))
-    return {
+    trusted_subject = {
         "actor": subject.get("actor"),
-        "participant_id": subject.get("participant_id"),
         "key_id": material.get("key_id"),
         "subject_binding_id": material.get("subject_binding_id"),
         "verification_material_id": material_id,
-    }, []
+    }
+    if subject.get("kind") == "party":
+        trusted_subject["participant_id"] = subject.get("participant_id")
+    elif subject.get("kind") == "integration-profile":
+        trusted_subject.update(
+            {
+                "profile_id": subject.get("profile_id"),
+                "profile_version": subject.get("profile_version"),
+                "profile_instance_id": subject.get("profile_instance_id"),
+            }
+        )
+    return trusted_subject, []
 
 
 def semantic_message_findings(
@@ -779,14 +850,38 @@ def semantic_message_findings(
     return sorted(set(findings))
 
 
+@dataclass(frozen=True, eq=False)
+class TraceMessageOutcome:
+    """Classification plus independently authorized cached-response result."""
+
+    classification: str
+    cached_response_ref: str | None = None
+    response_authorized: bool = False
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, str):
+            return self.classification == other
+        if isinstance(other, TraceMessageOutcome):
+            return (
+                self.classification,
+                self.cached_response_ref,
+                self.response_authorized,
+            ) == (
+                other.classification,
+                other.cached_response_ref,
+                other.response_authorized,
+            )
+        return NotImplemented
+
+
 @dataclass
 class DedupRegistry:
     """Authoritative accepted-record indexes for cached-response replay.
 
-    Records retain every replay identity field required by the State Machine,
-    the validated material reference, canonical message digest, and a bounded
-    response reference.  The response reference is a conformance-model token,
-    not a transport response or protocol payload.
+    Accepted records persist replay identities, the semantic message digest, a
+    domain-separated fingerprint of the complete canonical wire value, the
+    validated material reference, the original trusted subject, and a bounded
+    response reference.  Raw ``authentication.value`` is never retained.
     """
 
     party_by_id: dict[tuple[str, str, str], dict[str, Any]] = field(
@@ -809,40 +904,60 @@ class DedupRegistry:
         ).removeprefix("sha256:")
 
     @classmethod
-    def _party_record(cls, message: dict[str, Any]) -> dict[str, Any]:
-        identity = message["identity"]
+    def _common_record(
+        cls,
+        message: dict[str, Any],
+        accepted_subject: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        subject = copy.deepcopy(accepted_subject)
         return {
+            "canonical_message_digest": message["message_digest"],
+            "canonical_wire_digest": wire_message_digest(message),
+            "verification_material_id": message["authentication"][
+                "verification_material_id"
+            ],
+            "original_authenticated_subject": subject,
+            "response_recipient_binding": copy.deepcopy(subject),
+            "normalized_response_ref": cls._response_ref(message),
+        }
+
+    @classmethod
+    def _party_record(
+        cls,
+        message: dict[str, Any],
+        accepted_subject: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        identity = message["identity"]
+        return cls._common_record(message, accepted_subject) | {
+            "session_id": message["session_context"]["session_id"],
+            "sender_participant_id": identity["sender_participant_id"],
             "message_id": identity["message_id"],
             "nonce": identity["nonce"],
             "sequence": identity["sequence"],
             "issued_at": identity["issued_at"],
-            "canonical_message_digest": message["message_digest"],
-            "verification_material_id": message["authentication"][
-                "verification_material_id"
-            ],
-            "recipient_actor": message["sender"]["actor"],
-            "recipient_participant_id": identity["sender_participant_id"],
-            "normalized_response_ref": cls._response_ref(message),
         }
 
     @classmethod
-    def _operation_record(cls, message: dict[str, Any]) -> dict[str, Any]:
+    def _operation_record(
+        cls,
+        message: dict[str, Any],
+        accepted_subject: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         identity = message["identity"]
-        return {
+        return cls._common_record(message, accepted_subject) | {
+            "actor_id": identity["actor_id"],
             "operation_id": identity["operation_id"],
             "idempotency_key": identity["idempotency_key"],
-            "canonical_message_digest": message["message_digest"],
-            "verification_material_id": message["authentication"][
-                "verification_material_id"
-            ],
-            "recipient_actor": "coordinator",
-            "normalized_response_ref": cls._response_ref(message),
         }
 
     @classmethod
-    def _callback_record(cls, message: dict[str, Any]) -> dict[str, Any]:
+    def _callback_record(
+        cls,
+        message: dict[str, Any],
+        accepted_subject: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         identity = message["identity"]
-        return {
+        return cls._common_record(message, accepted_subject) | {
             "profile_id": identity["profile_id"],
             "profile_version": identity["profile_version"],
             "profile_instance_id": identity["profile_instance_id"],
@@ -850,15 +965,24 @@ class DedupRegistry:
             "evaluation_attempt_id": identity["evaluation_attempt_id"],
             "callback_id": identity["callback_id"],
             "idempotency_key": identity["idempotency_key"],
-            "canonical_message_digest": message["message_digest"],
-            "verification_material_id": message["authentication"][
-                "verification_material_id"
-            ],
-            "recipient_actor": "selected_integration_profile",
-            "normalized_response_ref": cls._response_ref(message),
         }
 
-    def classify(self, message: dict[str, Any], *, commit: bool = True) -> str:
+    @staticmethod
+    def _candidate_with_original_subject(
+        builder: Any, message: dict[str, Any], prior: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if prior is None:
+            return None
+        subject = prior.get("original_authenticated_subject")
+        return builder(message, subject)
+
+    def classify(
+        self,
+        message: dict[str, Any],
+        *,
+        commit: bool = True,
+        accepted_subject: dict[str, Any] | None = None,
+    ) -> str:
         delivery = message["delivery_class"]
         identity = message["identity"]
         if delivery == "party_message":
@@ -868,32 +992,38 @@ class DedupRegistry:
             )
             by_id_key = (*domain, identity["message_id"])
             by_nonce_key = (*domain, identity["nonce"])
-            record = self._party_record(message)
             old_id = self.party_by_id.get(by_id_key)
             old_nonce = self.party_by_nonce.get(by_nonce_key)
             if old_id is None and old_nonce is None:
                 if commit:
+                    record = self._party_record(message, accepted_subject)
                     self.party_by_id[by_id_key] = copy.deepcopy(record)
                     self.party_by_nonce[by_nonce_key] = copy.deepcopy(record)
                 return "ACCEPTED"
-            if old_id == record and old_nonce == record:
+            candidate = self._candidate_with_original_subject(
+                self._party_record, message, old_id
+            )
+            if old_id == candidate and old_nonce == candidate:
                 return "EXACT_DUPLICATE"
             return "REPLAY_CONFLICT"
         if delivery == "coordinator_command":
             actor = identity["actor_id"]
             id_key = (actor, identity["operation_id"])
             idem_key = (actor, identity["idempotency_key"])
-            record = self._operation_record(message)
             old_id, old_key = (
                 self.operation_by_id.get(id_key),
                 self.operation_by_key.get(idem_key),
             )
             if old_id is None and old_key is None:
                 if commit:
+                    record = self._operation_record(message, accepted_subject)
                     self.operation_by_id[id_key] = copy.deepcopy(record)
                     self.operation_by_key[idem_key] = copy.deepcopy(record)
                 return "ACCEPTED"
-            if old_id == record and old_key == record:
+            candidate = self._candidate_with_original_subject(
+                self._operation_record, message, old_id
+            )
+            if old_id == candidate and old_key == candidate:
                 return "EXACT_DUPLICATE"
             return "REPLAY_CONFLICT"
         if delivery == "profile_callback":
@@ -909,17 +1039,20 @@ class DedupRegistry:
             )
             id_key = (*domain, identity["callback_id"])
             idem_key = (*domain, identity["idempotency_key"])
-            record = self._callback_record(message)
             old_id, old_key = (
                 self.callback_by_id.get(id_key),
                 self.callback_by_key.get(idem_key),
             )
             if old_id is None and old_key is None:
                 if commit:
+                    record = self._callback_record(message, accepted_subject)
                     self.callback_by_id[id_key] = copy.deepcopy(record)
                     self.callback_by_key[idem_key] = copy.deepcopy(record)
                 return "ACCEPTED"
-            if old_id == record and old_key == record:
+            candidate = self._candidate_with_original_subject(
+                self._callback_record, message, old_id
+            )
+            if old_id == candidate and old_key == candidate:
                 return "EXACT_DUPLICATE"
             return "REPLAY_CONFLICT"
         # Derived notices are outbound projections, not accepted mutations.
@@ -929,10 +1062,14 @@ class DedupRegistry:
         self,
         message: dict[str, Any],
         *,
-        requester_actor: str,
-        requester_participant_id: str | None = None,
+        authenticated_requester: dict[str, Any] | None,
     ) -> str | None:
-        """Return only the exact accepted record's recipient-scoped response."""
+        """Authorize a stored response from an independent trusted projection.
+
+        ``authenticated_requester`` is supplied by the caller's channel or
+        service-principal trust boundary.  It is never derived from the replayed
+        message's sender, identity, or authentication fields.
+        """
 
         if self.classify(message, commit=False) != "EXACT_DUPLICATE":
             return None
@@ -945,18 +1082,10 @@ class DedupRegistry:
                 identity["message_id"],
             )
             record = self.party_by_id.get(key)
-            if (
-                record is None
-                or requester_actor != record["recipient_actor"]
-                or requester_participant_id != record["recipient_participant_id"]
-            ):
-                return None
         elif delivery == "coordinator_command":
             record = self.operation_by_id.get(
                 (identity["actor_id"], identity["operation_id"])
             )
-            if record is None or requester_actor != record["recipient_actor"]:
-                return None
         elif delivery == "profile_callback":
             domain = tuple(
                 identity[key]
@@ -969,9 +1098,13 @@ class DedupRegistry:
                 )
             )
             record = self.callback_by_id.get((*domain, identity["callback_id"]))
-            if record is None or requester_actor != record["recipient_actor"]:
-                return None
         else:
+            return None
+        if (
+            record is None
+            or authenticated_requester is None
+            or authenticated_requester != record.get("response_recipient_binding")
+        ):
             return None
         response = record.get("normalized_response_ref")
         return response if isinstance(response, str) else None
@@ -983,7 +1116,13 @@ class TranscriptState:
     accepted_event_index: int = 0
     dedup: DedupRegistry = field(default_factory=DedupRegistry)
 
-    def accept_message(self, message: dict[str, Any], *, rejected: bool = False) -> str:
+    def accept_message(
+        self,
+        message: dict[str, Any],
+        *,
+        rejected: bool = False,
+        accepted_subject: dict[str, Any] | None = None,
+    ) -> str:
         if rejected:
             return "REJECTED"
         # Classify without recording first. Dedup indexes and transcript state
@@ -997,7 +1136,10 @@ class TranscriptState:
             return "PRIOR_TRANSCRIPT_MISMATCH"
         next_index = self.accepted_event_index + 1
         next_head = append_transcript(self.head, next_index, message["message_digest"])
-        if self.dedup.classify(message, commit=True) != "ACCEPTED":
+        if (
+            self.dedup.classify(message, commit=True, accepted_subject=accepted_subject)
+            != "ACCEPTED"
+        ):
             raise RuntimeError("dedup state changed during accepted-event commit")
         self.accepted_event_index = next_index
         self.head = next_head
@@ -1548,10 +1690,13 @@ def trace_message_preflight_findings(
 ) -> list[Finding]:
     """Validate schema and canonical digests before authoritative dedup lookup.
 
-    The caller must have obtained ``message`` through strict JSON parsing.  This
-    preflight intentionally excludes current clock, material-status, phase, and
-    transcript-head gates so an already accepted exact record can reach its
-    cached-response path.  New messages still receive every dynamic check below.
+    The caller must have obtained ``message`` from strictly parsed canonical
+    wire bytes; a dict alone cannot prove that source precondition.  This
+    preflight recomputes both the non-circular semantic message digest and the
+    complete wire fingerprint, while intentionally excluding current clock,
+    material-status, phase, and transcript-head gates so an already accepted
+    exact record can reach its cached-response path.  New messages still receive
+    every dynamic check below.
     """
 
     findings: list[Finding] = []
@@ -1569,6 +1714,7 @@ def trace_message_preflight_findings(
         return sorted(set(findings))
     try:
         canonicalize(message)
+        wire_message_digest(message)
         if message.get("payload_digest") != payload_digest(message.get("payload")):
             findings.append(
                 _finding("payload-digest", "message.payload_digest", "digest mismatch")
@@ -1782,32 +1928,38 @@ def apply_trace_message_atomically(
     message_schema: dict[str, Any],
     registry: dict[str, Any],
     materials: dict[str, Any],
-) -> tuple[str, list[Finding]]:
+    *,
+    authenticated_requester: dict[str, Any] | None = None,
+) -> tuple[TraceMessageOutcome, list[Finding]]:
     """Validate in replay-safe order, then apply one abstract transaction.
 
-    Strict parsing occurs at the bytes boundary.  Schema and digest preflight
-    precede authoritative accepted-record lookup.  Exact accepted duplicates
-    bypass current prior-head, time, material, and phase gates and only expose
-    their sender/actor-scoped cached response; conflicts and rejects are no-op.
+    Strict parsing and canonical-wire equality occur at the bytes boundary.
+    Schema, semantic digest, and complete wire-fingerprint preflight precede
+    authoritative accepted-record lookup.  Exact accepted duplicates bypass
+    current prior-head, time, material, and phase gates, but cached-response
+    authorization uses only the independent ``authenticated_requester`` trusted
+    projection.  No requester or a mismatched requester returns an internal
+    exact classification with no response eligibility.
     """
 
     preflight = trace_message_preflight_findings(message, message_schema)
     if preflight:
-        return "REJECTED", preflight
+        return TraceMessageOutcome("REJECTED"), preflight
 
     classification = transcript.dedup.classify(message, commit=False)
     if classification == "EXACT_DUPLICATE":
-        sender = message.get("sender", {})
         response = transcript.dedup.cached_response(
-            message,
-            requester_actor=str(sender.get("actor")),
-            requester_participant_id=sender.get("participant_id"),
+            message, authenticated_requester=authenticated_requester
         )
         if response is None:
-            return "REPLAY_CONFLICT", []
-        return "EXACT_DUPLICATE", []
+            return TraceMessageOutcome("EXACT_DUPLICATE_NO_RESPONSE"), []
+        return TraceMessageOutcome(
+            "EXACT_DUPLICATE_AUTHORIZED",
+            cached_response_ref=response,
+            response_authorized=True,
+        ), []
     if classification in {"REPLAY_CONFLICT", "EXCLUDED"}:
-        return transcript.accept_message(message), []
+        return TraceMessageOutcome(transcript.accept_message(message)), []
 
     dynamic_findings = semantic_message_findings(
         message,
@@ -1816,20 +1968,27 @@ def apply_trace_message_atomically(
         runner.context(transcript.head),
     )
     if dynamic_findings:
-        return "REJECTED", dynamic_findings
+        return TraceMessageOutcome("REJECTED"), dynamic_findings
+    accepted_subject, subject_findings = authenticated_subject_parameter(
+        message, materials, runner.authoritative_time
+    )
+    if subject_findings or accepted_subject is None:
+        return TraceMessageOutcome("REJECTED"), subject_findings
     candidate_runner = copy.deepcopy(runner)
     findings = candidate_runner.apply(message, registry, materials)
     if findings:
-        return "REJECTED", findings
+        return TraceMessageOutcome("REJECTED"), findings
     candidate_transcript = copy.deepcopy(transcript)
-    outcome = candidate_transcript.accept_message(message)
+    outcome = candidate_transcript.accept_message(
+        message, accepted_subject=accepted_subject
+    )
     if outcome != "ACCEPTED":
-        return outcome, []
+        return TraceMessageOutcome(outcome), []
     runner.__dict__.clear()
     runner.__dict__.update(candidate_runner.__dict__)
     transcript.__dict__.clear()
     transcript.__dict__.update(candidate_transcript.__dict__)
-    return outcome, []
+    return TraceMessageOutcome(outcome), []
 
 
 def registry_findings(
@@ -2299,8 +2458,10 @@ def validate_repository(root: Path) -> list[Finding]:
         ("timer_schema", TIMER_SCHEMA, _load_json),
         ("registry_schema", REGISTRY_SCHEMA, _load_json),
         ("material_schema", MATERIAL_SCHEMA, _load_json),
+        ("requester_schema", REQUESTER_SCHEMA, _load_json),
         ("registry", REGISTRY_PATH, _load_yaml),
         ("materials", MATERIAL_PATH, _load_yaml),
+        ("requesters", REQUESTER_PATH, _load_yaml),
         ("context", CONTEXT_PATH, _load_yaml),
         ("state_machine", STATE_MACHINE_PATH, _load_yaml),
     ):
@@ -2315,6 +2476,7 @@ def validate_repository(root: Path) -> list[Finding]:
         "timer_schema",
         "registry_schema",
         "material_schema",
+        "requester_schema",
     ):
         try:
             Draft202012Validator.check_schema(loaded[schema_name])
@@ -2328,7 +2490,15 @@ def validate_repository(root: Path) -> list[Finding]:
             loaded["materials"], loaded["material_schema"], "verification-materials"
         )
     )
+    findings.extend(
+        _schema_findings(
+            loaded["requesters"], loaded["requester_schema"], "authenticated-requesters"
+        )
+    )
     findings.extend(material_registry_findings(loaded["materials"]))
+    findings.extend(
+        requester_fixture_findings(loaded["requesters"], loaded["materials"])
+    )
     findings.extend(
         registry_findings(
             loaded["registry"],

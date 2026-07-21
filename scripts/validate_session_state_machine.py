@@ -1824,6 +1824,9 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
         },
         "whole_map_party_access": False,
         "peer_entry_access": "forbidden",
+        "authorization_source": "independent authenticated_requester trusted projection; never replayed message sender",
+        "exact_subject_match": "required against response_recipient_binding",
+        "no_requester_behavior": "classify exact duplicate internally but return no response",
     }
     if (
         message_cache.get("visibility") != ["coordinator"]
@@ -1844,7 +1847,11 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
         "nonce",
         "sequence",
         "issued_at",
-        "canonical_event_digest",
+        "canonical_message_digest",
+        "canonical_wire_digest",
+        "verification_material_id",
+        "original_authenticated_subject",
+        "response_recipient_binding",
     }.issubset(
         set(accepted_record_type.replace("<", ",").replace(">", ",").split(","))
     ):
@@ -1852,7 +1859,7 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
             _finding(
                 "message-response-scope",
                 "state_variables.accepted_message_records",
-                "accepted message identity must persist domain, ID, nonce, sequence, issued_at, and canonical digest",
+                "accepted message identity must persist domain, replay identity, semantic/full-wire digests, material, subject, and recipient",
             )
         )
 
@@ -3038,18 +3045,34 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
     replay_exemptions = " ".join(
         replay.get("cached_response_dynamic_gate_exemptions", [])
     ).lower()
+    wire = replay.get("canonical_wire_fingerprint", {})
+    equality = " ".join(replay.get("accepted_record_equality", [])).lower()
+    requester = replay.get("authenticated_requester_contract", {})
+    requester_source = str(requester.get("source", "")).lower()
+    requester_eligibility = str(requester.get("eligibility", "")).lower()
+    requester_unauthorized = str(requester.get("unauthorized_behavior", "")).lower()
     if (
-        len(replay_order) < 6
+        len(replay_order) < 7
         or "transcript head" not in replay_exemptions
         or "material" not in replay_exemptions
         or "stateless" not in str(replay.get("stateless_validator_boundary", ""))
         or "recipient" not in str(replay.get("cached_response_effect", ""))
+        or wire.get("domain") != "private-match-wire-message/v0.1"
+        or "authentication.value" not in str(wire.get("canonicalization", ""))
+        or "raw authentication.value is not retained"
+        not in str(wire.get("stored_value", ""))
+        or "canonical wire digest" not in equality
+        or "original authenticated subject" not in equality
+        or "never copied from replayed message" not in requester_source
+        or "exact equality" not in requester_eligibility
+        or "no cached response" not in requester_unauthorized
+        or "no mutation" not in requester_unauthorized
     ):
         findings.append(
             _finding(
                 "replay-ordering",
                 "replay_and_ordering.cached_response_validation_order",
-                "cached responses require strict preflight, authoritative lookup, recipient scope, and a stateless boundary",
+                "cached responses require full-wire equality, independent requester authorization, recipient scope, and a stateless boundary",
             )
         )
 

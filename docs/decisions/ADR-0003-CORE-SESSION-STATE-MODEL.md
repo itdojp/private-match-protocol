@@ -179,8 +179,11 @@ class-specific prior response without another state, budget, release,
 disclosure, or audit update. A reused identity with a different canonical digest
 is `REPLAY_CONFLICT`.
 
-Party response caches are keyed by session, sender, and message ID. Each Party
-receives only its own sender-domain entry. Coordinator operations have separate
+Party response caches are keyed by session, sender, and message ID. Each record
+also binds the semantic digest, full-wire digest, material, original authenticated
+subject, and response recipient. The coordinator returns it only when an
+independent channel/service/profile requester projection exactly matches that
+recipient; the replayed sender never authorizes release. Coordinator operations have separate
 ID and idempotency-key indexes in the actor domain; profile callbacks have the
 same two-index rule in the profile/session/attempt domain. A changed key under
 an existing ID, a changed ID under an existing key, or a changed digest under
@@ -188,9 +191,10 @@ either index is `REPLAY_CONFLICT`. First acceptance writes both indexes and the
 prior response atomically.
 
 Authoritative duplicate classification occurs after strict parse, Schema, and
-canonical digest validation but before current-head, time, and current-material
-gates. A complete accepted-record match returns the recipient-scoped stored
-response without a new event, including after later terminalization, expiry, or
+semantic plus full-wire digest validation but before current-head, time, and
+current-material gates. A complete accepted-record match can return the
+recipient-scoped stored response only to an independently authenticated exact
+recipient, including after later terminalization, expiry, or
 material revocation. Otherwise the full current-event gates apply. Stateless
 validation cannot infer an accepted record and therefore cannot grant this
 exception.

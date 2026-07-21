@@ -183,10 +183,13 @@ session, and evaluation attempt already held in state.
 
 Party message responses are cached under
 `(session_id, sender_participant_id, message_id)`. The accepted record also
-stores nonce, sequence, `issued_at`, and canonical event digest. Party A can
-retrieve only Party A's sender-domain response and Party B can retrieve only
-Party B's. The coordinator may hold the authoritative whole map; neither Party
-has whole-map or peer-entry access.
+stores nonce, sequence, `issued_at`, semantic digest, full canonical-wire digest,
+verification material, original authenticated subject, recipient binding, and a
+bounded response reference. Raw `authentication.value` is not stored. Party A
+can retrieve only a response bound to Party A's exact participant, key, material,
+and subject; Party B has the symmetric restriction. Authorization comes from an
+independent authenticated requester projection, never from the replayed sender.
+Without it, exact classification is possible but no response is released.
 
 ### Machine-readable event-parameter flow
 
@@ -481,9 +484,10 @@ relations have no external retry semantics.
 
 Before current-head, time, or verification-material gates, an authoritative
 retry handler strictly parses the input, validates its Schema, recomputes its
-canonical digest, identifies the deduplication domain, and looks up an accepted
-record. A complete match returns only the domain/recipient-scoped cached
-response. Later expiry or revocation does not turn that response lookup into a
+semantic and complete-wire digests, identifies the deduplication domain, and
+looks up an accepted record. A complete match returns only the
+domain/recipient-scoped cached response to an independently authenticated exact
+recipient. Later expiry or revocation does not turn that response lookup into a
 new protocol event. Without an accepted record, all current-event gates apply;
 a stateless validator cannot infer or grant this historical duplicate path.
 

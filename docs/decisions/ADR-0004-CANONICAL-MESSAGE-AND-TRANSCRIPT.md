@@ -164,6 +164,13 @@ cross-protocol confusion and avoids a circular message digest. The
 `authentication.value` and `message_digest` are excluded from the authentication
 input; algorithm, key, and verification-material identifiers remain inside.
 
+Use a fifth internal `private-match-wire-message/v0.1` domain over the complete
+RFC 8785 wire message, including `authentication.value` and `message_digest`,
+only for accepted-record equality. It is not authenticated recursively and does
+not enter the transcript. Storing its digest avoids retaining the raw
+authenticator. v0.1 retries require the original canonical bytes; re-signing the
+same authentication input with a different value is a conflict.
+
 ### Transcript every observation versus accepted mutations only
 
 Record accepted mutating events once. Exclude rejects, exact duplicates,
@@ -181,12 +188,16 @@ not define a distributed consensus or persistence implementation.
 
 Classify a complete match against an authoritative accepted record before the
 current transcript-head, message-time, and current-material gates. Strict parse,
-Schema, canonical digest, replay-domain, identity, and recipient-scope checks
-remain mandatory. The result is a stored-response lookup, not a newly accepted
+Schema, semantic and full-wire digests, replay-domain, identity, material, and
+original-subject checks remain mandatory. The result is a stored-response lookup,
+not a newly accepted
 event, so later state progress, terminalization, expiry, or material revocation
 does not append the transcript or repeat state, budget, audit, or sequence
-effects. Any mismatch fails as a conflict or follows the ordinary new-message
-path. Stateless file validation cannot assert that accepted history exists.
+effects. Response release also requires an independent requester projection that
+exactly matches the original recipient; the replayed sender is never authority.
+An absent or mismatched requester receives no response. Any equality
+mismatch fails as a conflict or follows the ordinary new-message path. Stateless
+file validation cannot assert that accepted history exists.
 
 ### Timer digest append versus State Machine transaction
 

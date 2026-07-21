@@ -27,6 +27,7 @@ import rfc8785
 
 PAYLOAD_DOMAIN = "private-match-payload/v0.1"
 MESSAGE_DOMAIN = "private-match-message/v0.1"
+WIRE_MESSAGE_DOMAIN = "private-match-wire-message/v0.1"
 TRANSCRIPT_DOMAIN = "private-match-transcript/v0.1"
 TRANSCRIPT_GENESIS_DOMAIN = "private-match-transcript-genesis/v0.1"
 TIMER_EVENT_DOMAIN = "private-match-timer-event/v0.1"
@@ -292,6 +293,19 @@ def message_digest(message: dict[str, Any]) -> str:
     return format_digest(
         digest_bytes(MESSAGE_DOMAIN, canonicalize(authentication_input(message)))
     )
+
+
+def wire_message_digest(message: dict[str, Any]) -> str:
+    """Fingerprint the complete canonical wire message for replay equality.
+
+    Unlike :func:`message_digest`, this private Coordinator-side fingerprint
+    includes ``authentication.value`` and the existing ``message_digest``.  It
+    is not a wire field, authentication input, or transcript entry, so it does
+    not introduce a circular digest dependency.  Callers accepting raw input
+    must first strictly parse it and require byte equality with RFC 8785 output.
+    """
+
+    return format_digest(digest_bytes(WIRE_MESSAGE_DOMAIN, canonicalize(message)))
 
 
 def populate_digests(message: dict[str, Any]) -> dict[str, Any]:

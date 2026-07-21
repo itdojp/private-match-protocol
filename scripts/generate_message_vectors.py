@@ -866,6 +866,8 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     party_conflict = copy.deepcopy(entries[1]["message"])
     party_conflict["payload"]["acceptance_digest"] = _digest("a")
     party_conflict = populate_digests(party_conflict)
+    party_changed_authentication = copy.deepcopy(entries[1]["message"])
+    party_changed_authentication["authentication"]["value"] += "-changed"
     op_original = build_message(registry, full_context, "evaluation_start", serial=4001)
     op_changed_key = _mutated(
         op_original,
@@ -879,6 +881,8 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             "operation_id", "urn:private-match:test:operation:changed"
         ),
     )
+    op_changed_authentication = copy.deepcopy(op_original)
+    op_changed_authentication["authentication"]["value"] += "-changed"
     cb_original = build_message(
         registry, full_context, "result_acceptance_notice", serial=5001
     )
@@ -894,6 +898,8 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             "callback_id", "urn:private-match:test:callback:changed"
         ),
     )
+    cb_changed_authentication = copy.deepcopy(cb_original)
+    cb_changed_authentication["authentication"]["value"] += "-changed"
     expected = {
         "schema_version": "0.1",
         "genesis_digest": transcript_genesis_digest(),
@@ -902,12 +908,15 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         "duplicate_vectors": {
             "party_exact": entries[1]["message"],
             "party_changed_payload": party_conflict,
+            "party_changed_authentication_value": party_changed_authentication,
             "operation_exact": op_original,
             "operation_same_id_different_key": op_changed_key,
             "operation_same_key_different_id": op_changed_id,
+            "operation_changed_authentication_value": op_changed_authentication,
             "callback_exact": cb_original,
             "callback_same_id_different_key": cb_changed_key,
             "callback_same_key_different_id": cb_changed_id,
+            "callback_changed_authentication_value": cb_changed_authentication,
         },
         "negative_transcript_vectors": [
             {

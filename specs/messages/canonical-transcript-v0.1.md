@@ -167,14 +167,18 @@ Excluded:
 - any other nonmutating normalized response
 
 A rejected or conflicting message does not enter the accepted transcript. An
-exact duplicate returns the prior normalized response and the previous
-transcript head. It cannot consume budget, repeat audit mutation, or append a
-second entry.
+exact duplicate leaves the previous transcript head unchanged. Its full-wire
+fingerprint, over the complete RFC 8785 message including
+`authentication.value`, is replay-state metadata and never enters the accepted
+transcript. A prior response is returned only when an independent authenticated
+requester exactly matches its original recipient binding. It cannot consume
+budget, repeat audit mutation, or append a second entry.
 
 An authoritative accepted-record lookup precedes the gates that are meaningful
 only for a new event. After strict parse/Schema/canonical-digest checks, a
-complete sender/operation/callback-domain identity match may return the stored,
-recipient-scoped response even if the current transcript head has advanced or
+complete domain, semantic digest, full-wire digest, material, and original
+subject match may authorize the stored response only for an independently
+authenticated exact recipient, even if the current transcript head has advanced or
 the original message/material later expired or was revoked. Any changed ID,
 nonce, idempotency key, callback identity, digest, or domain is a conflict. If
 no accepted record exists, current prior-head, time, material, State Machine,

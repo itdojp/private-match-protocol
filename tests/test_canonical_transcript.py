@@ -140,6 +140,54 @@ class CanonicalTranscriptTests(unittest.TestCase):
         self.assertEqual("REPLAY_CONFLICT", state.accept_message(changed))
         self.assertEqual((head, index), (state.head, state.accepted_event_index))
 
+    def test_authentication_value_is_wire_bound_but_not_transcript_bound(self) -> None:
+        original = self.duplicates["party_exact"]
+        changed = self.duplicates["party_changed_authentication_value"]
+        self.assertEqual(original["message_digest"], changed["message_digest"])
+        self.assertNotEqual(
+            canonical.wire_message_digest(original),
+            canonical.wire_message_digest(changed),
+        )
+        prior = original["prior_transcript_digest"]
+        self.assertEqual(
+            canonical.append_transcript(prior, 1, original["message_digest"]),
+            canonical.append_transcript(prior, 1, changed["message_digest"]),
+        )
+
+    def test_changed_authentication_value_conflicts_for_every_dedup_class(self) -> None:
+        for exact_key, changed_key in (
+            ("party_exact", "party_changed_authentication_value"),
+            ("operation_exact", "operation_changed_authentication_value"),
+            ("callback_exact", "callback_changed_authentication_value"),
+        ):
+            with self.subTest(delivery=exact_key):
+                registry = validator.DedupRegistry()
+                self.assertEqual(
+                    "ACCEPTED", registry.classify(self.duplicates[exact_key])
+                )
+                before = copy.deepcopy(registry.__dict__)
+                self.assertEqual(
+                    "REPLAY_CONFLICT", registry.classify(self.duplicates[changed_key])
+                )
+                self.assertEqual(before, registry.__dict__)
+
+    def test_noncanonical_wire_bytes_do_not_reach_duplicate_lookup(self) -> None:
+        message = self.duplicates["party_exact"]
+        noncanonical = json.dumps(message, indent=2).encode("utf-8")
+        schema = json.loads((ROOT / validator.MESSAGE_SCHEMA).read_text())
+        registry = yaml_load(ROOT / validator.REGISTRY_PATH)
+        materials = yaml_load(ROOT / validator.MATERIAL_PATH)
+        context = yaml_load(ROOT / validator.CONTEXT_PATH)
+        _, findings = validator.validate_message_bytes(
+            noncanonical,
+            schema,
+            registry,
+            materials,
+            context,
+            path="synthetic-noncanonical-wire",
+        )
+        self.assertIn("noncanonical-json", {finding.code for finding in findings})
+
     def test_rejected_message_does_not_mutate_transcript_or_dedup(self) -> None:
         message = self.duplicates["party_exact"]
         state = validator.TranscriptState(head=message["prior_transcript_digest"])

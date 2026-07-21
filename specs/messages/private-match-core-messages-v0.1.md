@@ -62,6 +62,20 @@ exact `message_type` conditional.
 | `authentication.value` | External authenticator bytes/string | The only authentication member excluded |
 | `message_digest` | Domain-separated digest of the canonical authentication input | Excluded to avoid a cycle |
 
+The coordinator also computes an internal replay fingerprint over the complete
+strictly parsed canonical wire value:
+
+```text
+wire_message_digest = SHA-256(
+  domain("private-match-wire-message/v0.1") || RFC8785(complete message)
+)
+```
+
+This includes `authentication.value`, `message_digest`, payload, envelope, and
+all other wire fields. It is stored only as `sha256:<64 lowercase hex>` in the
+accepted record, never enters the authentication input or accepted transcript,
+and does not require retention of the raw authenticator.
+
 `json.dumps(sort_keys=True)` is not an RFC 8785 implementation and must not be
 used to produce authenticated bytes.
 
@@ -97,9 +111,11 @@ prior transcript head, and authentication metadata. Its replay domain is
 independently unique.
 
 An exact duplicate requires the same message ID, nonce, sequence, `issued_at`,
-canonical message digest, and session/sender domain. It returns the prior
-normalized response and does not append the transcript. Reusing either identity
-with different data is `REPLAY_CONFLICT`.
+canonical message digest, full-wire digest, verification material, original
+authenticated subject, and session/sender domain. A changed authenticator is a
+`REPLAY_CONFLICT` even when the authentication input and semantic message digest
+are unchanged. Draft v0.1 retry therefore means byte-identical canonical
+retransmission; it does not permit regenerating a randomized signature.
 
 Authoritative processing classifies a possible exact duplicate before applying
 the current transcript-head, message-time, or verification-material validity
@@ -108,8 +124,13 @@ canonical bytes and digest, resolves the replay domain, and requires a complete
 match against an accepted record. Only that cached-response path may ignore a
 later transcript head or a material/message expiry or revocation that occurred
 after original acceptance. It is not a new authenticated event and cannot
-change state, sequence, nonce, budget, audit, or transcript. A Party receives
-only the cached response in its own `(session_id, sender_participant_id)` domain.
+change state, sequence, nonce, budget, audit, or transcript. Returning the cached
+response additionally requires an independent trusted requester projection from
+channel authentication, a service principal, or a reviewed profile instance.
+It must exactly equal the response's original recipient subject; it is never
+copied from the replayed message. No requester or a peer/mismatched requester can
+receive the response, although the coordinator may classify the wire value as
+an exact duplicate internally.
 
 If no accepted record exists, the input follows the ordinary new-message path
 and must satisfy the current transcript, time, material, State Machine, and

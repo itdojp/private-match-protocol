@@ -1982,10 +1982,11 @@ class SessionStateMachineTests(unittest.TestCase):
             [
                 "strict JSON parse",
                 "strict Schema validation",
-                "canonical bytes and digest recomputation",
+                "RFC 8785 canonical wire bytes and semantic and full-wire digest recomputation",
                 "replay or idempotency domain lookup",
-                "complete accepted-record identity and digest equality",
-                "recipient-scoped normalized response lookup",
+                "complete accepted-record identity semantic digest full-wire digest material and subject equality",
+                "independent authenticated requester and recipient-binding equality",
+                "recipient-scoped normalized response lookup or no-response outcome",
             ],
             replay["cached_response_validation_order"],
         )
@@ -1994,6 +1995,38 @@ class SessionStateMachineTests(unittest.TestCase):
         mutated = copy.deepcopy(self.model)
         mutated["replay_and_ordering"]["cached_response_validation_order"] = []
         self.assertIn("schema", self.schema_codes(mutated))
+
+    def test_wire_fingerprint_and_independent_requester_are_machine_readable(self):
+        replay = self.model_copy["replay_and_ordering"]
+        wire = replay["canonical_wire_fingerprint"]
+        self.assertEqual("private-match-wire-message/v0.1", wire["domain"])
+        self.assertIn("authentication.value", wire["canonicalization"])
+        self.assertIn("not retained", wire["stored_value"])
+        self.assertIn(
+            "canonical wire digest", " ".join(replay["accepted_record_equality"])
+        )
+        requester = replay["authenticated_requester_contract"]
+        self.assertIn("never copied from replayed message", requester["source"])
+        self.assertIn("exact equality", requester["eligibility"])
+        self.assertIn("no cached response", requester["no_requester_behavior"])
+
+        for mutate in (
+            lambda model: model["replay_and_ordering"][
+                "canonical_wire_fingerprint"
+            ].__setitem__("domain", "private-match-message/v0.1"),
+            lambda model: model["replay_and_ordering"][
+                "accepted_record_equality"
+            ].remove("canonical wire digest"),
+            lambda model: model["replay_and_ordering"][
+                "authenticated_requester_contract"
+            ].__setitem__("source", "replayed message sender"),
+        ):
+            changed = copy.deepcopy(self.model)
+            mutate(changed)
+            self.assertTrue(
+                {"schema", "replay-ordering"}
+                & (self.schema_codes(changed) | self.semantic_codes(changed))
+            )
 
     def test_timer_precedence_and_maximum_jump_are_machine_readable(self):
         clock = self.model_copy["clock_and_expiry"]

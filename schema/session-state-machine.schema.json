@@ -1804,7 +1804,10 @@
         "cached_response_validation_order",
         "cached_response_dynamic_gate_exemptions",
         "cached_response_effect",
-        "stateless_validator_boundary"
+        "stateless_validator_boundary",
+        "canonical_wire_fingerprint",
+        "accepted_record_equality",
+        "authenticated_requester_contract"
       ],
       "properties": {
         "replay_domain": {
@@ -1924,6 +1927,86 @@
         },
         "stateless_validator_boundary": {
           "$ref": "#/$defs/nonEmptyString"
+        },
+        "canonical_wire_fingerprint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "domain",
+            "canonicalization",
+            "output",
+            "purpose",
+            "stored_value",
+            "excluded_from",
+            "retry_policy"
+          ],
+          "properties": {
+            "domain": { "const": "private-match-wire-message/v0.1" },
+            "canonicalization": { "$ref": "#/$defs/nonEmptyString" },
+            "output": { "const": "sha256:<64 lowercase hex>" },
+            "purpose": { "$ref": "#/$defs/nonEmptyString" },
+            "stored_value": { "$ref": "#/$defs/nonEmptyString" },
+            "excluded_from": {
+              "type": "array",
+              "minItems": 4,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/nonEmptyString" }
+            },
+            "retry_policy": { "$ref": "#/$defs/nonEmptyString" }
+          }
+        },
+        "accepted_record_equality": {
+          "type": "array",
+          "minItems": 6,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "authenticated_requester_contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "party_fields",
+            "coordinator_fields",
+            "profile_fields",
+            "eligibility",
+            "no_requester_behavior",
+            "unauthorized_behavior"
+          ],
+          "properties": {
+            "source": { "$ref": "#/$defs/nonEmptyString" },
+            "party_fields": {
+              "const": [
+                "actor",
+                "participant_id",
+                "key_id",
+                "subject_binding_id",
+                "verification_material_id"
+              ]
+            },
+            "coordinator_fields": {
+              "const": [
+                "actor",
+                "key_id",
+                "subject_binding_id",
+                "verification_material_id"
+              ]
+            },
+            "profile_fields": {
+              "const": [
+                "actor",
+                "profile_id",
+                "profile_version",
+                "profile_instance_id",
+                "key_id",
+                "subject_binding_id",
+                "verification_material_id"
+              ]
+            },
+            "eligibility": { "$ref": "#/$defs/nonEmptyString" },
+            "no_requester_behavior": { "$ref": "#/$defs/nonEmptyString" },
+            "unauthorized_behavior": { "$ref": "#/$defs/nonEmptyString" }
+          }
         }
       }
     },
@@ -2462,7 +2545,10 @@
         "replay_domain",
         "recipient_by_sender",
         "whole_map_party_access",
-        "peer_entry_access"
+        "peer_entry_access",
+        "authorization_source",
+        "exact_subject_match",
+        "no_requester_behavior"
       ],
       "properties": {
         "replay_domain": {
@@ -2492,6 +2578,15 @@
         },
         "peer_entry_access": {
           "const": "forbidden"
+        },
+        "authorization_source": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "exact_subject_match": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "no_requester_behavior": {
+          "$ref": "#/$defs/nonEmptyString"
         }
       }
     },
