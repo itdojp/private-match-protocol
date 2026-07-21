@@ -672,48 +672,62 @@
           ],
           "properties": {
             "party_a": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "participant_id",
-                "key_id"
-              ],
-              "properties": {
-                "participant_id": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 160,
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "participant_id",
+                    "key_id"
+                  ],
+                  "properties": {
+                    "participant_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                    },
+                    "key_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                    }
+                  }
                 },
-                "key_id": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 160,
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                {
+                  "type": "null"
                 }
-              }
+              ]
             },
             "party_b": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "participant_id",
-                "key_id"
-              ],
-              "properties": {
-                "participant_id": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 160,
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "participant_id",
+                    "key_id"
+                  ],
+                  "properties": {
+                    "participant_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                    },
+                    "key_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                    }
+                  }
                 },
-                "key_id": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 160,
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                {
+                  "type": "null"
                 }
-              }
+              ]
             }
           }
         },
@@ -1031,15 +1045,12 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "session_parameters_digest",
+        "proposal_digest",
         "session_expires_at",
-        "clock_policy"
+        "clock_policy",
+        "selected_integration_profile"
       ],
       "properties": {
-        "session_parameters_digest": {
-          "type": "string",
-          "pattern": "^sha256:[0-9a-f]{64}$"
-        },
         "session_expires_at": {
           "type": "string",
           "format": "date-time"
@@ -1069,6 +1080,30 @@
               "maximum": 604800
             }
           }
+        },
+        "proposal_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "selected_integration_profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profile_id",
+            "profile_version",
+            "profile_instance_id"
+          ],
+          "properties": {
+            "profile_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "profile_version": {
+              "$ref": "#/$defs/version"
+            },
+            "profile_instance_id": {
+              "$ref": "#/$defs/identifier"
+            }
+          }
         }
       }
     },
@@ -1077,26 +1112,12 @@
       "additionalProperties": false,
       "required": [
         "proposal_digest",
-        "participant_id",
-        "participant_key_id",
         "acceptance_digest"
       ],
       "properties": {
         "proposal_digest": {
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$"
-        },
-        "participant_id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 160,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
-        },
-        "participant_key_id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 160,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
         },
         "acceptance_digest": {
           "type": "string",
@@ -1437,7 +1458,8 @@
         "profile_version",
         "scope",
         "audience",
-        "completion_ref"
+        "completion_ref",
+        "authorization_ref"
       ],
       "properties": {
         "profile_id": {
@@ -1474,6 +1496,12 @@
           }
         },
         "completion_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+        },
+        "authorization_ref": {
           "type": "string",
           "minLength": 1,
           "maxLength": 160,

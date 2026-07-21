@@ -21,6 +21,7 @@ if str(SCRIPTS) not in sys.path:
 
 import canonicalize_message as canonical  # noqa: E402
 import validate_messages as validator  # noqa: E402
+from strict_yaml import strict_yaml_load  # noqa: E402
 
 
 class MessageContractTests(unittest.TestCase):
@@ -38,13 +39,13 @@ class MessageContractTests(unittest.TestCase):
         cls.material_schema = json.loads(
             (ROOT / validator.MATERIAL_SCHEMA).read_text(encoding="utf-8")
         )
-        cls.registry = yaml.safe_load(
+        cls.registry = strict_yaml_load(
             (ROOT / validator.REGISTRY_PATH).read_text(encoding="utf-8")
         )
-        cls.materials = yaml.safe_load(
+        cls.materials = strict_yaml_load(
             (ROOT / validator.MATERIAL_PATH).read_text(encoding="utf-8")
         )
-        cls.context = yaml.safe_load(
+        cls.context = strict_yaml_load(
             (ROOT / validator.CONTEXT_PATH).read_text(encoding="utf-8")
         )
         cls.valid_paths = sorted((ROOT / "conformance/messages/valid").glob("*.json"))
@@ -100,7 +101,7 @@ class MessageContractTests(unittest.TestCase):
         self.assertEqual(expected, set(validator._registry_index(self.registry)))
 
     def test_every_state_delivery_event_has_a_contract(self) -> None:
-        state = yaml.safe_load(
+        state = strict_yaml_load(
             (ROOT / validator.STATE_MACHINE_PATH).read_text(encoding="utf-8")
         )
         self.assertEqual(
@@ -109,7 +110,7 @@ class MessageContractTests(unittest.TestCase):
         )
 
     def test_registry_parameter_sources_cover_every_required_field(self) -> None:
-        state = yaml.safe_load(
+        state = strict_yaml_load(
             (ROOT / validator.STATE_MACHINE_PATH).read_text(encoding="utf-8")
         )
         mutated = copy.deepcopy(self.registry)
@@ -121,8 +122,104 @@ class MessageContractTests(unittest.TestCase):
         )
         self.assertIn("parameter-mapping", {item.code for item in findings})
 
+    def test_registry_destinations_are_machine_checked(self) -> None:
+        state = strict_yaml_load(
+            (ROOT / validator.STATE_MACHINE_PATH).read_text(encoding="utf-8")
+        )
+        cases = {}
+        typo = copy.deepcopy(self.registry)
+        typo["messages"][0]["parameter_sources"][0]["destination"]["field"] = (
+            "proposal_typo"
+        )
+        cases["destination typo"] = typo
+        wrong_parameter = copy.deepcopy(self.registry)
+        wrong_parameter["messages"][0]["parameter_sources"][0]["destination"][
+            "parameter"
+        ] = "session_acceptance_parameter"
+        cases["wrong parameter"] = wrong_parameter
+        wrong_transition = copy.deepcopy(self.registry)
+        wrong_transition["messages"][0]["parameter_sources"][0]["destination"][
+            "consumed_by"
+        ][0]["transition"] = "TR-CLOSE"
+        cases["wrong transition"] = wrong_transition
+        unused = copy.deepcopy(self.registry)
+        unused["messages"][0]["parameter_sources"][0]["destination"]["consumed_by"][0][
+            "operation"
+        ] = "E-AUDIT"
+        cases["mapped but unused"] = unused
+        duplicate = copy.deepcopy(self.registry)
+        duplicate["messages"][0]["parameter_sources"][1]["destination"] = copy.deepcopy(
+            duplicate["messages"][0]["parameter_sources"][0]["destination"]
+        )
+        cases["duplicate destination"] = duplicate
+        for name, mutated in cases.items():
+            with self.subTest(name=name):
+                findings = validator.registry_findings(
+                    mutated, state, self.message_schema
+                )
+                self.assertIn(
+                    "parameter-mapping-destination",
+                    {item.code for item in findings},
+                )
+
+    def test_semantic_registry_ids_are_duplicate_rejecting(self) -> None:
+        state = strict_yaml_load(
+            (ROOT / validator.STATE_MACHINE_PATH).read_text(encoding="utf-8")
+        )
+        duplicate_message = copy.deepcopy(self.registry)
+        duplicate_message["messages"].append(
+            copy.deepcopy(duplicate_message["messages"][0])
+        )
+        self.assertIn(
+            "registry-duplicate",
+            {
+                item.code
+                for item in validator.registry_findings(
+                    duplicate_message, state, self.message_schema
+                )
+            },
+        )
+        duplicate_internal = copy.deepcopy(self.registry)
+        duplicate_internal["internal_event_contracts"].append(
+            copy.deepcopy(duplicate_internal["internal_event_contracts"][0])
+        )
+        self.assertIn(
+            "registry-duplicate",
+            {
+                item.code
+                for item in validator.registry_findings(
+                    duplicate_internal, state, self.message_schema
+                )
+            },
+        )
+        for field in ("verification_material_id", "subject_binding_id"):
+            duplicate_material = copy.deepcopy(self.materials)
+            duplicate = copy.deepcopy(duplicate_material["materials"][1])
+            duplicate[field] = duplicate_material["materials"][0][field]
+            duplicate_material["materials"].append(duplicate)
+            self.assertIn(
+                "material-duplicate",
+                {
+                    item.code
+                    for item in validator.material_registry_findings(duplicate_material)
+                },
+                field,
+            )
+
+    def test_strict_yaml_rejects_duplicate_mapping_keys(self) -> None:
+        with self.assertRaises(yaml.YAMLError):
+            strict_yaml_load("schema_version: '0.1'\nschema_version: '0.1'\n")
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            path = Path(directory) / "duplicate.yaml"
+            path.write_text("schema_version: '0.1'\nschema_version: '0.1'\n")
+            value, findings = validator._load_yaml(path)
+        self.assertIsNone(value)
+        self.assertEqual(["yaml-parse"], [item.code for item in findings])
+        self.assertLessEqual(len(findings[0].message), 320)
+        self.assertNotIn("Traceback", findings[0].message)
+
     def test_registry_and_payload_schema_cannot_drift(self) -> None:
-        state = yaml.safe_load(
+        state = strict_yaml_load(
             (ROOT / validator.STATE_MACHINE_PATH).read_text(encoding="utf-8")
         )
         mutated = copy.deepcopy(self.message_schema)
@@ -150,12 +247,16 @@ class MessageContractTests(unittest.TestCase):
         self.assertGreaterEqual(len(self.valid_paths), 26)
         for path in self.valid_paths:
             raw = path.read_bytes()
+            parsed = canonical.strict_loads(raw)
+            stage_context = copy.deepcopy(self.context)
+            stage_context["session_context"] = copy.deepcopy(parsed["session_context"])
+            stage_context["prior_transcript_digest"] = parsed["prior_transcript_digest"]
             message, findings = validator.validate_message_bytes(
                 raw,
                 self.message_schema,
                 self.registry,
                 self.materials,
-                self.context,
+                stage_context,
                 path=path.name,
             )
             self.assertEqual([], findings, path.name)
@@ -176,21 +277,215 @@ class MessageContractTests(unittest.TestCase):
             self.assertIn(f"{prefix}-b", self.messages)
 
     def test_all_negative_vector_expectations_are_observed(self) -> None:
-        manifest = yaml.safe_load(
+        manifest = strict_yaml_load(
             (ROOT / validator.INVALID_MANIFEST).read_text(encoding="utf-8")
         )
         self.assertGreaterEqual(len(manifest["cases"]), 30)
         for case in manifest["cases"]:
             path = ROOT / "conformance/messages/invalid" / case["file"]
+            invalid_context = copy.deepcopy(self.context)
+            context_reference = canonical.strict_loads(
+                (
+                    ROOT / "conformance/messages/valid" / case["context_file"]
+                ).read_bytes()
+            )
+            invalid_context["session_context"] = copy.deepcopy(
+                context_reference["session_context"]
+            )
+            invalid_context["prior_transcript_digest"] = context_reference[
+                "prior_transcript_digest"
+            ]
             _, findings = validator.validate_message_bytes(
                 path.read_bytes(),
                 self.message_schema,
                 self.registry,
                 self.materials,
-                self.context,
+                invalid_context,
                 path=case["file"],
             )
             self.assertIn(case["expected_code"], {item.code for item in findings})
+
+    def test_authentication_subject_negative_vectors_are_present(self) -> None:
+        manifest = strict_yaml_load(
+            (ROOT / validator.INVALID_MANIFEST).read_text(encoding="utf-8")
+        )
+        identifiers = {item["id"] for item in manifest["cases"]}
+        self.assertTrue(
+            {
+                "same-role-other-active-key",
+                "authentication-sender-key-mismatch",
+                "material-participant-mismatch",
+                "profile-material-instance-mismatch",
+                "coordinator-material-for-party",
+                "party-a-material-for-party-b",
+            }.issubset(identifiers)
+        )
+
+    def test_material_validity_uses_issued_and_authoritative_time(self) -> None:
+        base = self.messages["session-acceptance-a"]
+        stage = copy.deepcopy(self.context)
+        stage["session_context"] = copy.deepcopy(base["session_context"])
+        stage["prior_transcript_digest"] = base["prior_transcript_digest"]
+
+        def findings_for(not_before: str, not_after: str, authoritative: str):
+            materials = copy.deepcopy(self.materials)
+            material = next(
+                item
+                for item in materials["materials"]
+                if item["verification_material_id"]
+                == base["authentication"]["verification_material_id"]
+            )
+            material["not_before"] = not_before
+            material["not_after"] = not_after
+            local_context = copy.deepcopy(stage)
+            local_context["authoritative_time"] = authoritative
+            return validator.semantic_message_findings(
+                base, self.registry, materials, local_context
+            )
+
+        self.assertEqual(
+            [],
+            findings_for(
+                base["issued_at"],
+                "2026-07-21T00:01:00Z",
+                "2026-07-21T00:00:30Z",
+            ),
+        )
+        for name, before, after, authoritative in (
+            (
+                "issued before not_before",
+                "2026-07-21T00:00:01Z",
+                "2026-07-21T00:01:00Z",
+                "2026-07-21T00:00:30Z",
+            ),
+            (
+                "issued at not_after",
+                "2026-07-20T23:59:00Z",
+                base["issued_at"],
+                "2026-07-20T23:59:30Z",
+            ),
+            (
+                "authoritative at not_after",
+                "2026-07-20T23:59:00Z",
+                "2026-07-21T00:00:30Z",
+                "2026-07-21T00:00:30Z",
+            ),
+        ):
+            with self.subTest(name=name):
+                self.assertIn(
+                    "verification-material",
+                    {item.code for item in findings_for(before, after, authoritative)},
+                )
+
+    def test_positive_transcript_is_an_evolving_state_trace(self) -> None:
+        expected = canonical.strict_loads(
+            (ROOT / validator.EXPECTED_DIGESTS).read_bytes()
+        )
+        state = validator.TranscriptState()
+        runner = validator.AbstractStateRunner(copy.deepcopy(self.context))
+        seen = []
+        for entry in expected["entries"]:
+            if entry["kind"] == "timer":
+                self.assertEqual("ACCEPTED", state.accept_timer(entry["timer_event"]))
+                runner.base_context["authoritative_time"] = entry["timer_event"][
+                    "new_authoritative_time"
+                ]
+                continue
+            message = entry["message"]
+            stage = runner.context(state.head)
+            self.assertEqual(
+                [],
+                validator.semantic_message_findings(
+                    message, self.registry, self.materials, stage
+                ),
+            )
+            self.assertEqual([], runner.apply(message, self.registry))
+            self.assertEqual("ACCEPTED", state.accept_message(message))
+            seen.append(message["message_type"])
+        self.assertLess(
+            seen.index("session_acceptance"), seen.index("participant_binding")
+        )
+        self.assertEqual(2, seen.count("session_acceptance"))
+        self.assertEqual(2, seen.count("participant_binding"))
+        self.assertEqual("CLOSED", runner.phase)
+
+    def test_future_state_context_and_binding_bypass_fail_closed(self) -> None:
+        expected = canonical.strict_loads(
+            (ROOT / validator.EXPECTED_DIGESTS).read_bytes()
+        )
+        messages = [
+            entry["message"]
+            for entry in expected["entries"]
+            if entry["kind"] == "message"
+        ]
+        proposal = messages[0]
+        self.assertIsNone(proposal["session_context"]["selected_integration_profile"])
+        self.assertIsNotNone(proposal["payload"]["selected_integration_profile"])
+        acceptance_a = messages[1]
+        self.assertEqual(
+            proposal["payload"]["selected_integration_profile"],
+            acceptance_a["session_context"]["selected_integration_profile"],
+        )
+        binding_a = next(
+            item
+            for item in messages
+            if item["message_type"] == "participant_binding"
+            and item["sender"]["actor"] == "party_a_client"
+        )
+        runner = validator.AbstractStateRunner(copy.deepcopy(self.context))
+        self.assertEqual([], runner.apply(proposal, self.registry))
+        bypass = copy.deepcopy(runner)
+        self.assertIn(
+            "state-trace",
+            {item.code for item in bypass.apply(binding_a, self.registry)},
+        )
+        self.assertEqual([], runner.apply(acceptance_a, self.registry))
+        wrong_proposal = copy.deepcopy(messages[2])
+        wrong_proposal["payload"]["proposal_digest"] = "sha256:" + "f" * 64
+        self.assertIn(
+            "state-trace",
+            {item.code for item in runner.apply(wrong_proposal, self.registry)},
+        )
+        for field, value in (
+            ("commitment_pair_id", "urn:private-match:test:commitment-pair:future"),
+            ("evaluation_attempt_id", "urn:private-match:test:evaluation:future"),
+        ):
+            changed = copy.deepcopy(acceptance_a)
+            changed["session_context"][field] = value
+            changed = canonical.populate_digests(changed)
+            self.assertIn(
+                "context-binding",
+                {
+                    item.code
+                    for item in validator.semantic_message_findings(
+                        changed,
+                        self.registry,
+                        self.materials,
+                        validator.AbstractStateRunner(
+                            copy.deepcopy(self.context)
+                        ).context(changed["prior_transcript_digest"]),
+                    )
+                },
+            )
+        future_profile = copy.deepcopy(proposal)
+        future_profile["session_context"]["selected_integration_profile"] = (
+            copy.deepcopy(proposal["payload"]["selected_integration_profile"])
+        )
+        future_profile = canonical.populate_digests(future_profile)
+        self.assertIn(
+            "context-binding",
+            {
+                item.code
+                for item in validator.semantic_message_findings(
+                    future_profile,
+                    self.registry,
+                    self.materials,
+                    validator.AbstractStateRunner(copy.deepcopy(self.context)).context(
+                        future_profile["prior_transcript_digest"]
+                    ),
+                )
+            },
+        )
 
     def test_duplicate_json_key_is_rejected_before_object_construction(self) -> None:
         with self.assertRaises(canonical.DuplicateJSONKeyError):
@@ -346,7 +641,7 @@ class MessageContractTests(unittest.TestCase):
         self.assertNotIn("internal_failure_code", notice["payload"])
 
     def test_unknown_expired_and_revoked_material_fail_closed(self) -> None:
-        manifest = yaml.safe_load(
+        manifest = strict_yaml_load(
             (ROOT / validator.INVALID_MANIFEST).read_text(encoding="utf-8")
         )
         ids = {item["id"] for item in manifest["cases"]}

@@ -10,18 +10,11 @@ session_context:
     policy_id: urn:private-match:test:policy:core
     policy_version: '0.1'
   participants:
-    party_a:
-      participant_id: urn:private-match:test:participant:a
-      key_id: urn:private-match:test:key:party-a:v0.1
-    party_b:
-      participant_id: urn:private-match:test:participant:b
-      key_id: urn:private-match:test:key:party-b:v0.1
+    party_a: null
+    party_b: null
   intended_audience:
   - party_a_client
   - party_b_client
-  commitment_pair_id: urn:private-match:test:commitment-pair:0001
-  evaluation_attempt_id: urn:private-match:test:evaluation:0001
-  selected_integration_profile:
-    profile_id: urn:private-match:test:profile:synthetic
-    profile_version: '0.1'
-    profile_instance_id: urn:private-match:test:profile-instance:0001
+  commitment_pair_id: null
+  evaluation_attempt_id: null
+  selected_integration_profile: null

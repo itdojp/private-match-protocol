@@ -93,6 +93,8 @@ class SessionStateMachineTests(unittest.TestCase):
     def base_result_trace(self):
         return [
             "TR-CREATE",
+            "TR-ACCEPT-SESSION-A",
+            "TR-ACCEPT-SESSION-B",
             "TR-BIND-A-FIRST",
             "TR-BIND-B-COMPLETE",
             "TR-ACCEPT-POLICY-A",
@@ -107,6 +109,48 @@ class SessionStateMachineTests(unittest.TestCase):
             "TR-ACK-RECEIPT-B",
             "TR-ACCEPT-SYMMETRIC-RESULT",
         ]
+
+    def test_session_acceptance_is_distinct_and_required_before_binding(self):
+        acceptance_a = self.transition("TR-ACCEPT-SESSION-A")
+        acceptance_b = self.transition("TR-ACCEPT-SESSION-B")
+        self.assertEqual("accept_session_a", acceptance_a["event"])
+        self.assertEqual("accept_session_b", acceptance_b["event"])
+        for party in ("A", "B"):
+            for suffix in ("FIRST", "COMPLETE"):
+                binding = self.transition(f"TR-BIND-{party}-{suffix}")
+                guards = {item["id"] for item in binding["guards"]}
+                self.assertIn(f"G-SESSION-ACCEPTED-{party}", guards)
+        invariant = self.invariant("INV-SESSION-ACCEPTANCE")
+        self.assertIn("session_acceptance", invariant["state_variables"])
+        self.assertIn("session_proposal_digest", invariant["state_variables"])
+
+    def test_session_proposal_and_party_acceptance_are_immutable_bindings(self):
+        create = self.transition("TR-CREATE")
+        create_effect = next(
+            item for item in create["effects"] if item["id"] == "E-CREATE"
+        )
+        self.assertIn(
+            "session_proposal_parameter.proposal_digest",
+            create_effect["parameter_reads"],
+        )
+        self.assertIn(
+            "session_proposal_parameter.selected_integration_profile_binding",
+            create_effect["parameter_reads"],
+        )
+        for party in ("A", "B"):
+            transition = self.transition(f"TR-ACCEPT-SESSION-{party}")
+            effect = next(
+                item
+                for item in transition["effects"]
+                if item["id"] == f"E-ACCEPT-SESSION-{party}"
+            )
+            self.assertEqual(
+                {
+                    "session_acceptance_parameter.proposal_digest",
+                    "session_acceptance_parameter.acceptance_digest",
+                },
+                set(effect["parameter_reads"]),
+            )
 
     def synthetic_disclosure_state(self):
         participants = {

@@ -4,6 +4,7 @@ import copy
 import json
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -16,6 +17,7 @@ if str(SCRIPTS) not in sys.path:
 
 import canonicalize_message as canonical  # noqa: E402
 import validate_messages as validator  # noqa: E402
+from strict_yaml import strict_yaml_load  # noqa: E402
 
 
 class CanonicalTranscriptTests(unittest.TestCase):
@@ -291,6 +293,75 @@ class CanonicalTranscriptTests(unittest.TestCase):
         self.assertEqual("NO_OP", state.accept_timer(timer, mutates=False))
         self.assertEqual(before, (state.head, state.accepted_event_index))
 
+    def test_timer_append_failures_are_exception_atomic(self) -> None:
+        valid = copy.deepcopy(
+            next(
+                item["timer_event"] for item in self.entries if item["kind"] == "timer"
+            )
+        )
+        cases = []
+        invalid_time = copy.deepcopy(valid)
+        invalid_time["new_authoritative_time"] = "not-a-time"
+        cases.append(("invalid time", invalid_time))
+        unsupported = copy.deepcopy(valid)
+        unsupported["reason_or_source_class"] = "UNSUPPORTED"
+        cases.append(("unsupported value", unsupported))
+        extra = copy.deepcopy(valid)
+        extra["unexpected"] = True
+        cases.append(("noncanonical contract", extra))
+        for name, timer in cases:
+            state = validator.TranscriptState(head=valid["prior_transcript_digest"])
+            before = (state.head, state.accepted_event_index)
+            with (
+                self.subTest(name=name),
+                self.assertRaises(canonical.CanonicalMessageError),
+            ):
+                state.accept_timer(timer)
+            self.assertEqual(before, (state.head, state.accepted_event_index))
+
+        state = validator.TranscriptState(
+            head=valid["prior_transcript_digest"], accepted_event_index=2**64 - 1
+        )
+        before = (state.head, state.accepted_event_index)
+        with self.assertRaises(canonical.CanonicalMessageError):
+            state.accept_timer(valid)
+        self.assertEqual(before, (state.head, state.accepted_event_index))
+
+        state = validator.TranscriptState(head=valid["prior_transcript_digest"])
+        before = (state.head, state.accepted_event_index)
+        with (
+            mock.patch.object(
+                validator,
+                "timer_event_digest",
+                side_effect=canonical.CanonicalMessageError("digest"),
+            ),
+            self.assertRaises(canonical.CanonicalMessageError),
+        ):
+            state.accept_timer(valid)
+        self.assertEqual(before, (state.head, state.accepted_event_index))
+
+        state = validator.TranscriptState(head=valid["prior_transcript_digest"])
+        before = (state.head, state.accepted_event_index)
+        with (
+            mock.patch.object(
+                validator,
+                "append_transcript",
+                side_effect=canonical.CanonicalMessageError("bounds"),
+            ),
+            self.assertRaises(canonical.CanonicalMessageError),
+        ):
+            state.accept_timer(valid)
+        self.assertEqual(before, (state.head, state.accepted_event_index))
+
+    def test_valid_timer_commits_index_and_head_once(self) -> None:
+        timer = next(
+            item["timer_event"] for item in self.entries if item["kind"] == "timer"
+        )
+        state = validator.TranscriptState(head=timer["prior_transcript_digest"])
+        self.assertEqual("ACCEPTED", state.accept_timer(timer))
+        self.assertEqual(1, state.accepted_event_index)
+        self.assertNotEqual(timer["prior_transcript_digest"], state.head)
+
     def test_derived_notice_is_excluded_from_accepted_transcript(self) -> None:
         notice = canonical.strict_loads(
             (
@@ -321,9 +392,7 @@ class CanonicalTranscriptTests(unittest.TestCase):
 
 
 def yaml_load(path: Path):
-    import yaml
-
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return strict_yaml_load(path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

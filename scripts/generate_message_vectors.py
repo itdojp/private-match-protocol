@@ -18,6 +18,8 @@ from canonicalize_message import (
     timer_event_digest,
     transcript_genesis_digest,
 )
+from strict_yaml import strict_yaml_load
+from validate_messages import AbstractStateRunner
 
 
 REGISTRY_PATH = Path("registry/message-types.v0.1.yaml")
@@ -28,6 +30,26 @@ EXPECTED_PATH = Path("conformance/messages/expected-digests/vectors.v0.1.json")
 
 ISSUED_AT = "2026-07-21T00:00:00Z"
 EXPIRES_AT = "2026-07-21T00:10:00Z"
+POSITIVE_TRACE_SEQUENCE = [
+    ("session_proposal", None),
+    ("session_acceptance", "a"),
+    ("session_acceptance", "b"),
+    ("participant_binding", "a"),
+    ("participant_binding", "b"),
+    ("policy_acceptance", "a"),
+    ("policy_acceptance", "b"),
+    ("query_budget_reservation", None),
+    ("commitment_registration", "a"),
+    ("commitment_registration", "b"),
+    ("evaluation_start", None),
+    ("evaluation_contribution", "a"),
+    ("evaluation_contribution", "b"),
+    ("opaque_receipt_ack", "a"),
+    ("opaque_receipt_ack", "b"),
+    ("result_acceptance_notice", None),
+    ("consent_grant", "a"),
+    ("consent_grant", "b"),
+]
 
 
 def _digest(fill: str) -> str:
@@ -35,21 +57,34 @@ def _digest(fill: str) -> str:
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
-    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    value = strict_yaml_load(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a mapping")
     return value
 
 
 def _entry_index(registry: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {item["message_type"]: item for item in registry["messages"]}
+    result: dict[str, dict[str, Any]] = {}
+    seen_versions: set[tuple[str, str]] = set()
+    for item in registry["messages"]:
+        key = (item["message_type"], item["message_version"])
+        if key in seen_versions:
+            raise ValueError(f"duplicate message type/version: {key[0]} {key[1]}")
+        seen_versions.add(key)
+        result[item["message_type"]] = item
+    return result
 
 
 def _payload(message_type: str, party: str | None = None) -> dict[str, Any]:
     slot = party or "a"
     return {
         "session_proposal": {
-            "session_parameters_digest": _digest("1"),
+            "proposal_digest": _digest("2"),
+            "selected_integration_profile": {
+                "profile_id": "urn:private-match:test:profile:synthetic",
+                "profile_version": "0.1",
+                "profile_instance_id": "urn:private-match:test:profile-instance:0001",
+            },
             "session_expires_at": "2026-07-21T01:00:00Z",
             "clock_policy": {
                 "allowed_clock_skew_seconds": 60,
@@ -59,8 +94,6 @@ def _payload(message_type: str, party: str | None = None) -> dict[str, Any]:
         },
         "session_acceptance": {
             "proposal_digest": _digest("2"),
-            "participant_id": f"urn:private-match:test:participant:{slot}",
-            "participant_key_id": f"urn:private-match:test:key:party-{slot}:v0.1",
             "acceptance_digest": _digest("3"),
         },
         "participant_binding": {
@@ -125,6 +158,7 @@ def _payload(message_type: str, party: str | None = None) -> dict[str, Any]:
             "scope": ["urn:private-match:test:scope:contact-ref"],
             "audience": ["party_a_client", "party_b_client"],
             "completion_ref": "urn:private-match:test:completion:synthetic",
+            "authorization_ref": "urn:private-match:test:authorization:synthetic",
         },
         "abort_notice": {"internal_failure_code": "PARTIAL_PARTY_FAILURE"},
         "normalized_error_notice": {
@@ -185,6 +219,7 @@ def build_message(
     party: str | None = None,
     serial: int = 1,
     prior: str | None = None,
+    sequence: int | None = None,
 ) -> dict[str, Any]:
     entry = _entry_index(registry)[message_type]
     if party:
@@ -199,7 +234,7 @@ def build_message(
             "sender_participant_id": sender["participant_id"],
             "message_id": f"urn:private-match:test:message:{serial:04d}",
             "nonce": f"urn:private-match:test:nonce:{serial:04d}",
-            "sequence": serial - 1,
+            "sequence": serial - 1 if sequence is None else sequence,
             "issued_at": ISSUED_AT,
         }
     elif delivery == "coordinator_command":
@@ -265,6 +300,52 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         CONTEXT_PATH: yaml.safe_dump(context, sort_keys=False).encode()
     }
 
+    full_context = copy.deepcopy(context)
+    full_context["session_context"]["participants"] = {
+        "party_a": {
+            "participant_id": "urn:private-match:test:participant:a",
+            "key_id": "urn:private-match:test:key:party-a:v0.1",
+        },
+        "party_b": {
+            "participant_id": "urn:private-match:test:participant:b",
+            "key_id": "urn:private-match:test:key:party-b:v0.1",
+        },
+    }
+    full_context["session_context"]["commitment_pair_id"] = (
+        "urn:private-match:test:commitment-pair:0001"
+    )
+    full_context["session_context"]["evaluation_attempt_id"] = (
+        "urn:private-match:test:evaluation:0001"
+    )
+    full_context["session_context"]["selected_integration_profile"] = {
+        "profile_id": "urn:private-match:test:profile:synthetic",
+        "profile_version": "0.1",
+        "profile_instance_id": "urn:private-match:test:profile-instance:0001",
+    }
+    stage_contexts: dict[tuple[str, str | None], dict[str, Any]] = {}
+    stage_runner = AbstractStateRunner(copy.deepcopy(context))
+    stage_head = transcript_genesis_digest()
+    for stage_index, (message_type, party) in enumerate(POSITIVE_TRACE_SEQUENCE, 1):
+        stage_context = stage_runner.context(stage_head)
+        stage_contexts[(message_type, party)] = copy.deepcopy(stage_context)
+        stage_message = build_message(
+            registry,
+            stage_context,
+            message_type,
+            party=party,
+            serial=6000 + stage_index,
+            prior=stage_head,
+            sequence=stage_runner.next_sequence[party] if party else None,
+        )
+        stage_findings = stage_runner.apply(stage_message, registry)
+        if stage_findings:
+            raise ValueError(
+                "invalid standalone vector stage: "
+                + "; ".join(map(str, stage_findings))
+            )
+        stage_head = append_transcript(
+            stage_head, stage_index, stage_message["message_digest"]
+        )
     cases: list[tuple[str, str, str | None]] = [
         ("session-proposal", "session_proposal", None),
         ("session-acceptance-a", "session_acceptance", "a"),
@@ -299,13 +380,18 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     ]
     built: dict[str, dict[str, Any]] = {}
     for serial, (filename, message_type, party) in enumerate(cases, 1):
+        vector_context = stage_contexts.get((message_type, party), full_context)
         message = build_message(
-            registry, context, message_type, party=party, serial=serial
+            registry, vector_context, message_type, party=party, serial=serial
         )
         built[filename] = message
         files[VALID_DIR / f"{filename}.json"] = _canonical_file(message)
 
     invalid: list[dict[str, str]] = []
+    context_reference_by_sender = {
+        (message["message_type"], message["sender"]["actor"]): filename
+        for filename, message in built.items()
+    }
 
     def add_invalid(
         name: str,
@@ -315,8 +401,17 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         raw: bytes | None = None,
     ) -> None:
         files[INVALID_DIR / f"{name}.json"] = raw or _canonical_file(message)
+        context_reference = context_reference_by_sender.get(
+            (message.get("message_type"), message.get("sender", {}).get("actor")),
+            "session-acceptance-a",
+        )
         invalid.append(
-            {"id": name, "file": f"{name}.json", "expected_code": expected_code}
+            {
+                "id": name,
+                "file": f"{name}.json",
+                "context_file": f"{context_reference}.json",
+                "expected_code": expected_code,
+            }
         )
 
     base = built["session-acceptance-a"]
@@ -355,7 +450,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     add_invalid(
         "cross-participant-substitution",
         _mutated(
-            base,
+            built["policy-acceptance-a"],
             lambda x: x["session_context"]["participants"]["party_a"].__setitem__(
                 "participant_id", "urn:private-match:test:participant:other"
             ),
@@ -370,12 +465,87 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     add_invalid(
         "wrong-sender-key",
         _mutated(
-            base,
+            built["policy-acceptance-a"],
             lambda x: x["sender"].__setitem__(
                 "key_id", "urn:private-match:test:key:party-b:v0.1"
             ),
         ),
         "key-binding",
+    )
+    add_invalid(
+        "authentication-sender-key-mismatch",
+        _mutated(
+            base,
+            lambda x: x["authentication"].__setitem__(
+                "key_id", "urn:private-match:test:key:party-a:other:v0.1"
+            ),
+        ),
+        "authentication-subject",
+    )
+
+    def other_active_key(x):
+        x["authentication"].update(
+            {
+                "verification_material_id": "urn:private-match:test:material:party-a-other-key:v0.1",
+                "key_id": "urn:private-match:test:key:party-a:other:v0.1",
+            }
+        )
+
+    add_invalid(
+        "same-role-other-active-key",
+        _mutated(base, other_active_key),
+        "authentication-subject",
+    )
+    add_invalid(
+        "material-participant-mismatch",
+        _mutated(
+            base,
+            lambda x: x["authentication"].__setitem__(
+                "verification_material_id",
+                "urn:private-match:test:material:party-a-wrong-participant:v0.1",
+            ),
+        ),
+        "authentication-subject",
+    )
+    profile_base = built["result-acceptance-notice"]
+    add_invalid(
+        "profile-material-instance-mismatch",
+        _mutated(
+            profile_base,
+            lambda x: x["authentication"].__setitem__(
+                "verification_material_id",
+                "urn:private-match:test:material:profile-wrong-instance:v0.1",
+            ),
+        ),
+        "authentication-subject",
+    )
+
+    def coordinator_material_for_party(x):
+        x["authentication"].update(
+            {
+                "verification_material_id": "urn:private-match:test:material:coordinator:v0.1",
+                "key_id": "urn:private-match:test:key:coordinator:v0.1",
+            }
+        )
+
+    add_invalid(
+        "coordinator-material-for-party",
+        _mutated(base, coordinator_material_for_party),
+        "authentication-subject",
+    )
+
+    def party_a_material_for_party_b(x):
+        x["authentication"].update(
+            {
+                "verification_material_id": "urn:private-match:test:material:party-a:v0.1",
+                "key_id": "urn:private-match:test:key:party-a:v0.1",
+            }
+        )
+
+    add_invalid(
+        "party-a-material-for-party-b",
+        _mutated(built["session-acceptance-b"], party_a_material_for_party_b),
+        "authentication-subject",
     )
     for field in ("algorithm_id", "key_id", "verification_material_id"):
         m = copy.deepcopy(base)
@@ -424,6 +594,28 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         "verification-material",
     )
     add_invalid(
+        "material-expired-at-authoritative-time",
+        _mutated(
+            base,
+            lambda x: x["authentication"].__setitem__(
+                "verification_material_id",
+                "urn:private-match:test:material:party-a-short-lived:v0.1",
+            ),
+        ),
+        "verification-material",
+    )
+    add_invalid(
+        "material-issued-before-not-before",
+        _mutated(
+            base,
+            lambda x: x["authentication"].__setitem__(
+                "verification_material_id",
+                "urn:private-match:test:material:party-a-future:v0.1",
+            ),
+        ),
+        "verification-material",
+    )
+    add_invalid(
         "expired-message",
         _mutated(base, lambda x: x.__setitem__("expires_at", "2026-07-21T00:00:10Z")),
         "message-expired",
@@ -441,7 +633,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
 
     add_invalid("future-issued-at", _mutated(base, future_message), "future-message")
     m = copy.deepcopy(base)
-    m["payload"]["participant_id"] = "urn:private-match:test:participant:changed"
+    m["payload"]["proposal_digest"] = _digest("e")
     add_invalid("payload-digest-mismatch", m, "payload-digest")
     add_invalid(
         "prior-transcript-digest-mismatch",
@@ -566,36 +758,25 @@ def generated_files(root: Path) -> dict[Path, bytes]:
 
     # Build one authoritative positive chain.  Each message is rebuilt with the
     # actual prior head so routing/policy/authentication input is chain-bound.
-    sequence_spec = [
-        ("session_proposal", None),
-        ("session_acceptance", "a"),
-        ("session_acceptance", "b"),
-        ("policy_acceptance", "a"),
-        ("policy_acceptance", "b"),
-        ("commitment_registration", "a"),
-        ("commitment_registration", "b"),
-        ("query_budget_reservation", None),
-        ("evaluation_start", None),
-        ("evaluation_contribution", "a"),
-        ("evaluation_contribution", "b"),
-        ("opaque_receipt_ack", "a"),
-        ("opaque_receipt_ack", "b"),
-        ("result_acceptance_notice", None),
-        ("consent_grant", "a"),
-        ("consent_grant", "b"),
-        ("close_notice", None),
-    ]
     head = transcript_genesis_digest()
     entries = []
-    for index, (message_type, party) in enumerate(sequence_spec, 1):
+    runner = AbstractStateRunner(copy.deepcopy(context))
+    for index, (message_type, party) in enumerate(POSITIVE_TRACE_SEQUENCE, 1):
+        stage_context = runner.context(head)
         message = build_message(
             registry,
-            context,
+            stage_context,
             message_type,
             party=party,
             serial=1000 + index,
             prior=head,
+            sequence=runner.next_sequence[party] if party else None,
         )
+        trace_findings = runner.apply(message, registry)
+        if trace_findings:
+            raise ValueError(
+                "invalid generated state trace: " + "; ".join(map(str, trace_findings))
+            )
         head = append_transcript(head, index, message["message_digest"])
         entries.append(
             {
@@ -609,7 +790,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         "event_type": "authoritative_timer_event",
         "event_version": "0.1",
         "delivery_class": "timer",
-        "session_id": context["session_context"]["session_id"],
+        "session_id": runner.base_context["session_context"]["session_id"],
         "new_authoritative_time": "2026-07-21T00:00:31Z",
         "reason_or_source_class": "COORDINATOR_CLOCK",
         "prior_transcript_digest": head,
@@ -624,11 +805,34 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             "expected_head": head,
         }
     )
+    runner.base_context["authoritative_time"] = timer["new_authoritative_time"]
+    close_index = len(entries) + 1
+    close_message = build_message(
+        registry,
+        runner.context(head),
+        "close_notice",
+        serial=1000 + close_index,
+        prior=head,
+    )
+    trace_findings = runner.apply(close_message, registry)
+    if trace_findings:
+        raise ValueError(
+            "invalid generated close transition: " + "; ".join(map(str, trace_findings))
+        )
+    head = append_transcript(head, close_index, close_message["message_digest"])
+    entries.append(
+        {
+            "kind": "message",
+            "accepted_event_index": close_index,
+            "message": close_message,
+            "expected_head": head,
+        }
+    )
 
     party_conflict = copy.deepcopy(entries[1]["message"])
     party_conflict["payload"]["acceptance_digest"] = _digest("a")
     party_conflict = populate_digests(party_conflict)
-    op_original = build_message(registry, context, "evaluation_start", serial=4001)
+    op_original = build_message(registry, full_context, "evaluation_start", serial=4001)
     op_changed_key = _mutated(
         op_original,
         lambda x: x["identity"].__setitem__(
@@ -642,7 +846,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         ),
     )
     cb_original = build_message(
-        registry, context, "result_acceptance_notice", serial=5001
+        registry, full_context, "result_acceptance_notice", serial=5001
     )
     cb_changed_key = _mutated(
         cb_original,
@@ -706,7 +910,7 @@ def main(argv: list[str] | None = None) -> int:
     root = args.root.resolve()
     try:
         files = generated_files(root)
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as error:
         print(f"message-vectors: error: {error}", file=sys.stderr)
         return 1
     mismatches = []

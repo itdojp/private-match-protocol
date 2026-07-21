@@ -62,6 +62,10 @@ The principal choices are:
 11. Keep Party-message `STALE_MESSAGE` separate from timer failures by declaring
     `CLOCK_DOMAIN_INVALID`, `CLOCK_ROLLBACK`, and `CLOCK_JUMP_EXCEEDED`, all
     projected to Parties as `CLOCK_ERROR`.
+12. Bind one session proposal digest at creation and require each Party to accept
+    that exact digest through a Party-specific immutable transition before its
+    participant slot can be bound. Acceptance and binding are not interchangeable
+    paths.
 
 ## Options considered
 

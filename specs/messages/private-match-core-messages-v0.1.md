@@ -142,7 +142,7 @@ The normative machine-readable mapping is
 | Message type | Delivery class | State-machine event | Transcript rule |
 | --- | --- | --- | --- |
 | `session_proposal` | coordinator command | `create_session` | Accepted mutation |
-| `session_acceptance` | Party message | `bind_participant_a/b` | Accepted mutation |
+| `session_acceptance` | Party message | `accept_session_a/b` | Accepted mutation |
 | `participant_binding` | Party message | `bind_participant_a/b` | Accepted mutation |
 | `policy_acceptance` | Party message | `accept_policy` | Accepted mutation |
 | `commitment_registration` | Party message | `register_commitment_a/b` | Accepted mutation |
@@ -160,10 +160,12 @@ The normative machine-readable mapping is
 | `close_notice` | coordinator command | `close_session` | Accepted mutation |
 | `expiry_notice` | derived output | timer source event | Excluded; source timer may enter |
 
-`session_acceptance` and `participant_binding` both map to the existing bind
-relations. The former records acceptance of the proposed session together with
-the binding; the latter is the dedicated binding representation. This draft
-does not add a second session-acceptance state transition.
+`session_acceptance` and `participant_binding` are separate. `create_session`
+fixes one proposal digest; each Party then records an immutable, Party-specific
+acceptance of that exact digest. A Party cannot enter either participant-binding
+transition until its acceptance exists. The acceptance message does not bind
+the participant/key slot, and the binding message cannot substitute for
+proposal acceptance.
 
 ## Result confidentiality
 
@@ -200,8 +202,13 @@ real disclosure.
 
 The coordinator clock remains authoritative. Party `issued_at` is auxiliary and
 must fall inside the state-machine skew and stale-message policy. Expired
-messages and verification material fail closed. Timer inputs use the state
-machine's clock taxonomy, not Party `STALE_MESSAGE` semantics.
+messages and verification material fail closed. Material validity requires
+`not_before <= issued_at < not_after` and also
+`not_before <= authoritative_time < not_after`; revocation always fails closed.
+Authentication, sender, and material key IDs must be equal. Machine-readable
+subject metadata additionally binds the Party participant, Coordinator actor,
+or integration-profile ID/version/instance to the current context. Timer inputs
+use the state machine's clock taxonomy, not Party `STALE_MESSAGE` semantics.
 
 All failures occur before accepted transcript mutation. A normalized Party
 response may state a reviewed category and retry/new-session disposition, but
@@ -223,3 +230,14 @@ uniqueness, state-machine mappings, payload and message digests,
 verification-material metadata, replay identities, transcript chains, and
 prohibited data classes. It does not contact a network or verify an actual
 cryptographic authenticator.
+
+The expected transcript is executed as an evolving abstract state trace.
+Participants begin unbound; commitment-pair and attempt values begin as `null`;
+the selected integration-profile state also begins as `null` and is established
+from the session-proposal payload by `create_session`; acceptance precedes
+binding; budget precedes commitments; and each message binds the state
+immediately before its transition. Registry sources have structured
+parameter/field destinations and exact consuming transition operations. Unknown,
+unused, duplicate, or incorrectly consumed destinations fail validation.
+Security-sensitive YAML rejects duplicate mapping keys, and semantic identifiers
+are checked before lookup indexes are built.

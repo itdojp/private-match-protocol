@@ -30,7 +30,8 @@
     "parameter_flow_contracts",
     "envelope_binding_contracts",
     "failure_projection_semantics",
-    "canonical_transcript_semantics"
+    "canonical_transcript_semantics",
+    "session_acceptance_semantics"
   ],
   "properties": {
     "schema_version": {
@@ -147,6 +148,34 @@
     },
     "canonical_transcript_semantics": {
       "$ref": "#/$defs/canonicalTranscript"
+    },
+    "session_acceptance_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proposal_binding",
+        "party_acceptance",
+        "binding_prerequisite",
+        "downgrade_prevention"
+      ],
+      "properties": {
+        "proposal_binding": {
+          "type": "string",
+          "minLength": 1
+        },
+        "party_acceptance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "binding_prerequisite": {
+          "type": "string",
+          "minLength": 1
+        },
+        "downgrade_prevention": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
   },
   "$defs": {

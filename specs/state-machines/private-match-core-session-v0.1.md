@@ -190,8 +190,8 @@ has whole-map or peer-entry access.
 
 ### Machine-readable event-parameter flow
 
-All 17 abstract event-parameter records have field-level catalogs. The YAML also
-contains 72 predicate/operation contracts that list each required
+All 20 abstract event-parameter records have field-level catalogs. The YAML also
+contains 84 predicate/operation contracts that list each required
 `parameter_reads` path. This makes session and policy context, sender identity,
 message replay identity, participant/key binding, policy acceptance digest,
 commitment, attempt, contribution, local result, receipt, consent, extension,
@@ -216,7 +216,7 @@ The major transition families are:
 
 | Stage | Events | Phase effect |
 | --- | --- | --- |
-| Creation | `create_session` | `UNINITIALIZED` to `CREATED` |
+| Creation and acceptance | `create_session`, `accept_session_a`, `accept_session_b` | Create, then record Party-specific exact-proposal acceptance |
 | Participant binding | `bind_participant_a`, `bind_participant_b` | Remain `CREATED` until both are bound, then `PARTICIPANTS_BOUND` |
 | Policy and budget | `accept_policy`, `reserve_query_budget` | Reserve only after both accept; then `COMMITMENTS_PENDING` |
 | Commitment | `register_commitment_a`, `register_commitment_b` | Bind once; then `COMMITTED` |
@@ -232,7 +232,7 @@ The major transition families are:
 | Duplicate | party, operation, and profile retry events | No-op and return the delivery-class-specific prior normalized response |
 | New evaluation | `request_new_evaluation_session` | No change to current session; require new authorization and binding |
 
-The YAML contains 39 transitions. Participant order, first/final binding,
+The YAML contains 41 transitions. Proposal acceptance, participant order, first/final binding,
 result acceptance, conflict, deadline crossing, extension authorization, and
 delivery-class retry paths have distinct guards and atomic effects.
 
@@ -548,9 +548,17 @@ The machine-readable artifact supplies:
 - unresolved nondeterminism; and
 - environment assumptions.
 
-The current model has 12 phases, 42 state variables, 17 parameter catalogs, 72
-parameter-flow contracts, 6 envelope-binding contracts, 27 events, 39
-transitions, 12 invariants, and 33 failure codes.
+The current model has 12 phases, 46 state variables, 20 parameter catalogs, 84
+parameter-flow contracts, 6 envelope-binding contracts, 29 events, 41
+transitions, 14 invariants, and 33 failure codes.
+
+`create_session` binds one `session_proposal_digest` and the abstract reviewed
+integration-profile binding supplied by that proposal. Both are unbound in the
+pre-create state. Party A and Party B then use separate acceptance events to bind
+their own immutable proposal and acceptance digests. Every participant-binding
+transition has a Party-specific exact-proposal-acceptance guard. One Party cannot
+satisfy the other Party's prerequisite, and an acceptance for another proposal
+cannot bind a slot.
 
 Candidate fairness assumptions include weak fairness for the authoritative timer
 while a later bounded `TimeDomain` point exists, atomic expiry when the threshold

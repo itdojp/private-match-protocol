@@ -50,6 +50,8 @@ REQUIRED_ACTORS = {
 }
 REQUIRED_EVENTS = {
     "create_session",
+    "accept_session_a",
+    "accept_session_b",
     "bind_participant_a",
     "bind_participant_b",
     "accept_policy",
@@ -80,6 +82,8 @@ REQUIRED_EVENTS = {
 REQUIRED_STATE_VARIABLES = {
     "phase",
     "session_id",
+    "session_proposal_digest",
+    "session_acceptance",
     "protocol_profile",
     "policy_binding",
     "intended_audience",
@@ -120,6 +124,7 @@ REQUIRED_INVARIANTS = {
     "INV-RESULT-SYMMETRY",
     "INV-COMMITMENT-IMMUTABILITY",
     "INV-SESSION-BINDING",
+    "INV-SESSION-ACCEPTANCE",
     "INV-NO-REPLAY",
     "INV-IDEMPOTENCY",
     "INV-ONE-EVALUATION",
@@ -3017,6 +3022,65 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                 f"core phase graph cannot reach: {', '.join(sorted(unreachable))}",
             )
         )
+
+    # Issue #5 hardening: proposal acceptance is a distinct, immutable
+    # prerequisite.  A binding transition must never provide an alternate
+    # path around Party-specific exact-proposal acceptance.
+    acceptance_semantics = model.get("session_acceptance_semantics", {})
+    if set(acceptance_semantics) != {
+        "proposal_binding",
+        "party_acceptance",
+        "binding_prerequisite",
+        "downgrade_prevention",
+    }:
+        findings.append(
+            _finding(
+                "session-acceptance",
+                "session_acceptance_semantics",
+                "complete proposal, Party acceptance, prerequisite, and downgrade semantics are required",
+            )
+        )
+    create = transition_index.get("TR-CREATE", {})
+    create_effect = next(
+        (item for item in create.get("effects", []) if item.get("id") == "E-CREATE"),
+        {},
+    )
+    if (
+        "session_proposal_digest" not in create_effect.get("writes", [])
+        or "selected_integration_profile_binding" not in create_effect.get("writes", [])
+        or "session_proposal_parameter.proposal_digest"
+        not in create_effect.get("parameter_reads", [])
+        or "session_proposal_parameter.selected_integration_profile_binding"
+        not in create_effect.get("parameter_reads", [])
+    ):
+        findings.append(
+            _finding(
+                "session-acceptance",
+                "TR-CREATE.E-CREATE",
+                "creation must bind the exact proposal digest and selected profile",
+            )
+        )
+    for party in ("A", "B"):
+        acceptance = transition_index.get(f"TR-ACCEPT-SESSION-{party}", {})
+        if acceptance.get("event") != f"accept_session_{party.lower()}":
+            findings.append(
+                _finding(
+                    "session-acceptance",
+                    f"TR-ACCEPT-SESSION-{party}",
+                    "Party acceptance must have its own event and transition",
+                )
+            )
+        for suffix in ("FIRST", "COMPLETE"):
+            binding = transition_index.get(f"TR-BIND-{party}-{suffix}", {})
+            guard_ids = {item.get("id") for item in binding.get("guards", [])}
+            if f"G-SESSION-ACCEPTED-{party}" not in guard_ids:
+                findings.append(
+                    _finding(
+                        "session-acceptance",
+                        f"TR-BIND-{party}-{suffix}",
+                        "participant binding requires Party-specific exact-proposal acceptance",
+                    )
+                )
 
     return sorted(set(findings))
 

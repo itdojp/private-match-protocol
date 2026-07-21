@@ -16,9 +16,10 @@ messages:
   - party_b_client
   payload:
     required_fields:
-    - session_parameters_digest
-    - session_expires_at
     - clock_policy
+    - proposal_digest
+    - selected_integration_profile
+    - session_expires_at
     prohibited_fields:
     - raw_identifiers
     - normalized_identifiers
@@ -39,17 +40,194 @@ messages:
   replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
   transcript_participation: accepted-mutating-event
   privacy_classification: public-routing-metadata
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.session_parameters_digest -> session_parameters_digest
-  - payload.session_expires_at -> session_expires_at
-  - payload.clock_policy -> clock_policy
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.proposal_digest
+    destination:
+      kind: event-parameter
+      parameter: session_proposal_parameter
+      field: proposal_digest
+      consumed_by:
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: payload.session_expires_at
+    destination:
+      kind: event-parameter
+      parameter: clock_policy
+      field: session_expiry
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-CLOCK-POLICY
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: payload.clock_policy.allowed_clock_skew_seconds
+    destination:
+      kind: event-parameter
+      parameter: clock_policy
+      field: allowed_skew
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-CLOCK-POLICY
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: payload.clock_policy.message_stale_threshold_seconds
+    destination:
+      kind: event-parameter
+      parameter: clock_policy
+      field: stale_threshold
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-CLOCK-POLICY
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: payload.clock_policy.evaluation_timeout_seconds
+    destination:
+      kind: event-parameter
+      parameter: clock_policy
+      field: evaluation_timeout
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-CLOCK-POLICY
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-CREATE
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-CREATE
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: message.identity.actor_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: actor_id
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-OPERATION-DEDUP
+      - transition: TR-CREATE
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.operation_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: operation_id
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-OPERATION-DEDUP
+      - transition: TR-CREATE
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.idempotency_key
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: idempotency_key
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-OPERATION-DEDUP
+      - transition: TR-CREATE
+        operation: E-ACCEPT-OPERATION
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_operation_digest
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-OPERATION-DEDUP
+      - transition: TR-CREATE
+        operation: E-ACCEPT-OPERATION
+  - source: message.issued_at
+    destination:
+      kind: event-parameter
+      parameter: clock_policy
+      field: authoritative_time
+      consumed_by:
+      - transition: TR-CREATE
+        operation: G-CLOCK-POLICY
+      - transition: TR-CREATE
+        operation: E-CREATE
+  - source: payload.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_proposal_parameter
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-CREATE
+        operation: E-CREATE
 - message_type: session_acceptance
   message_version: '0.1'
   delivery_class: party_message
@@ -63,8 +241,6 @@ messages:
   payload:
     required_fields:
     - proposal_digest
-    - participant_id
-    - participant_key_id
     - acceptance_digest
     prohibited_fields:
     - raw_identifiers
@@ -80,28 +256,244 @@ messages:
     - secret_input
   state_machine:
     events:
-    - bind_participant_a
-    - bind_participant_b
+    - accept_session_a
+    - accept_session_b
     transitions:
-    - TR-BIND-A-COMPLETE
-    - TR-BIND-A-FIRST
-    - TR-BIND-B-COMPLETE
-    - TR-BIND-B-FIRST
+    - TR-ACCEPT-SESSION-A
+    - TR-ACCEPT-SESSION-B
   replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
   transcript_participation: accepted-mutating-event
   privacy_classification: public-routing-metadata
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.proposal_digest -> proposal_digest
-  - payload.participant_id -> participant_id
-  - payload.participant_key_id -> participant_key_id
-  - payload.acceptance_digest -> acceptance_digest
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.proposal_digest
+    destination:
+      kind: event-parameter
+      parameter: session_acceptance_parameter
+      field: proposal_digest
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-SESSION-PROPOSAL-A
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-SESSION-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-SESSION-PROPOSAL-B
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-SESSION-B
+  - source: payload.acceptance_digest
+    destination:
+      kind: event-parameter
+      parameter: session_acceptance_parameter
+      field: acceptance_digest
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-SESSION-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-SESSION-B
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.sender_participant_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sender_participant_id
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.message_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: message_id
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.nonce
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: nonce
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.sequence
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sequence
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.issued_at
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: issued_at
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_event_digest
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-MESSAGE
 - message_type: participant_binding
   message_version: '0.1'
   delivery_class: party_message
@@ -140,16 +532,344 @@ messages:
   replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
   transcript_participation: accepted-mutating-event
   privacy_classification: public-routing-metadata
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.participant_id -> participant_id
-  - payload.participant_key_id -> participant_key_id
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.participant_id
+    destination:
+      kind: event-parameter
+      parameter: participant_binding_parameter
+      field: participant_id
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: E-BIND-A-COMPLETE
+      - transition: TR-BIND-A-FIRST
+        operation: E-BIND-A
+      - transition: TR-BIND-B-COMPLETE
+        operation: E-BIND-B-COMPLETE
+      - transition: TR-BIND-B-FIRST
+        operation: E-BIND-B
+  - source: payload.participant_key_id
+    destination:
+      kind: event-parameter
+      parameter: participant_binding_parameter
+      field: key_id
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: E-BIND-A-COMPLETE
+      - transition: TR-BIND-A-FIRST
+        operation: E-BIND-A
+      - transition: TR-BIND-B-COMPLETE
+        operation: E-BIND-B-COMPLETE
+      - transition: TR-BIND-B-FIRST
+        operation: E-BIND-B
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-BIND-A-COMPLETE
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-BIND-A-FIRST
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-BIND-A-FIRST
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-BIND-B-COMPLETE
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-BIND-B-FIRST
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-BIND-B-FIRST
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-BIND-A-COMPLETE
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-BIND-A-FIRST
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-BIND-A-FIRST
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-BIND-B-COMPLETE
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-BIND-B-FIRST
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-BIND-B-FIRST
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-BIND-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.sender_participant_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sender_participant_id
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.message_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: message_id
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.nonce
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: nonce
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.sequence
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sequence
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.issued_at
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: issued_at
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-BIND-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-FIRST
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-BIND-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-BIND-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-FIRST
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-BIND-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_event_digest
+      consumed_by:
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-BIND-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-BIND-B-FIRST
+        operation: E-ACCEPT-MESSAGE
 - message_type: policy_acceptance
   message_version: '0.1'
   delivery_class: party_message
@@ -186,17 +906,242 @@ messages:
   replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
   transcript_participation: accepted-mutating-event
   privacy_classification: public-routing-metadata
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.policy_id -> policy_id
-  - payload.policy_version -> policy_version
-  - payload.acceptance_digest -> acceptance_digest
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.policy_id
+    destination:
+      kind: event-parameter
+      parameter: policy_acceptance_parameter
+      field: policy_id
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-ACCEPT-POLICY-A
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-ACCEPT-POLICY-B
+  - source: payload.policy_version
+    destination:
+      kind: event-parameter
+      parameter: policy_acceptance_parameter
+      field: policy_version
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-ACCEPT-POLICY-A
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-ACCEPT-POLICY-B
+  - source: payload.acceptance_digest
+    destination:
+      kind: event-parameter
+      parameter: policy_acceptance_parameter
+      field: acceptance_digest
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-ACCEPT-POLICY-A
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-ACCEPT-POLICY-B
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.sender_participant_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sender_participant_id
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.message_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: message_id
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.nonce
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: nonce
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.sequence
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sequence
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.issued_at
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: issued_at
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_event_digest
+      consumed_by:
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACCEPT-POLICY-B
+        operation: E-ACCEPT-MESSAGE
 - message_type: commitment_registration
   message_version: '0.1'
   delivery_class: party_message
@@ -235,16 +1180,334 @@ messages:
   replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
   transcript_participation: accepted-mutating-event
   privacy_classification: opaque-protocol-artifact
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.opaque_commitment -> opaque_commitment
-  - payload.commitment_pair_id -> commitment_pair_id
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.opaque_commitment
+    destination:
+      kind: event-parameter
+      parameter: commitment_parameter
+      field: opaque_commitment
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: E-COMMIT-A-PAIR
+      - transition: TR-COMMIT-A-FIRST
+        operation: E-COMMIT-A
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: E-COMMIT-B-PAIR
+      - transition: TR-COMMIT-B-FIRST
+        operation: E-COMMIT-B
+  - source: payload.commitment_pair_id
+    destination:
+      kind: special
+      special: context-derived-assertion
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-COMMIT-A-FIRST
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-COMMIT-B-FIRST
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-COMMIT-A-FIRST
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-COMMIT-B-FIRST
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-CONTEXT-BINDING
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.sender_participant_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sender_participant_id
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.message_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: message_id
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.nonce
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: nonce
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.sequence
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sequence
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.issued_at
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: issued_at
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-COMMIT-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-COMMIT-B-FIRST
+        operation: E-ACCEPT-MESSAGE
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_event_digest
+      consumed_by:
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-A-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-A-FIRST
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-COMPLETE
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-COMMIT-B-FIRST
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-COMMIT-B-FIRST
+        operation: E-ACCEPT-MESSAGE
 - message_type: query_budget_reservation
   message_version: '0.1'
   delivery_class: coordinator_command
@@ -277,15 +1540,146 @@ messages:
   replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
   transcript_participation: accepted-mutating-event
   privacy_classification: public-routing-metadata
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.authorization_ref -> authorization_ref
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.authorization_ref
+    destination:
+      kind: event-parameter
+      parameter: query_budget_authorization_ref
+      field: authorization_ref
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-BUDGET-AUTHORIZED
+      - transition: TR-RESERVE-BUDGET
+        operation: E-RESERVE-BUDGET
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-RESERVE-BUDGET
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-RESERVE-BUDGET
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-CONTEXT-BINDING
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.actor_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: actor_id
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-OPERATION-DEDUP
+      - transition: TR-RESERVE-BUDGET
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.operation_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: operation_id
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-OPERATION-DEDUP
+      - transition: TR-RESERVE-BUDGET
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.idempotency_key
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: idempotency_key
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-OPERATION-DEDUP
+      - transition: TR-RESERVE-BUDGET
+        operation: E-ACCEPT-OPERATION
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_operation_digest
+      consumed_by:
+      - transition: TR-RESERVE-BUDGET
+        operation: G-OPERATION-DEDUP
+      - transition: TR-RESERVE-BUDGET
+        operation: E-ACCEPT-OPERATION
 - message_type: evaluation_start
   message_version: '0.1'
   delivery_class: coordinator_command
@@ -319,16 +1713,150 @@ messages:
   replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
   transcript_participation: accepted-mutating-event
   privacy_classification: public-routing-metadata
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.evaluation_attempt_id -> evaluation_attempt_id
-  - payload.evaluation_deadline -> evaluation_deadline
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: evaluation_attempt_parameter
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: E-START-EVALUATION
+      - transition: TR-START-EVALUATION
+        operation: E-SET-EVALUATION-DEADLINE
+  - source: payload.evaluation_deadline
+    destination:
+      kind: special
+      special: policy-derived-assertion
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-START-EVALUATION
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-START-EVALUATION
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-CONTEXT-BINDING
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.actor_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: actor_id
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-OPERATION-DEDUP
+      - transition: TR-START-EVALUATION
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.operation_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: operation_id
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-OPERATION-DEDUP
+      - transition: TR-START-EVALUATION
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.idempotency_key
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: idempotency_key
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-OPERATION-DEDUP
+      - transition: TR-START-EVALUATION
+        operation: E-ACCEPT-OPERATION
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_operation_digest
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-OPERATION-DEDUP
+      - transition: TR-START-EVALUATION
+        operation: E-ACCEPT-OPERATION
 - message_type: evaluation_contribution
   message_version: '0.1'
   delivery_class: party_message
@@ -363,15 +1891,222 @@ messages:
   replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
   transcript_participation: accepted-mutating-event
   privacy_classification: opaque-protocol-artifact
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.contribution_ref -> contribution_ref
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.contribution_ref
+    destination:
+      kind: event-parameter
+      parameter: evaluation_contribution_parameter
+      field: contribution_ref
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: E-CONTRIBUTION-A
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: E-CONTRIBUTION-B
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-CONTEXT-BINDING
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.sender_participant_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sender_participant_id
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.message_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: message_id
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.nonce
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: nonce
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.sequence
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sequence
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.issued_at
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: issued_at
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_event_digest
+      consumed_by:
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-SUBMIT-CONTRIBUTION-B
+        operation: E-ACCEPT-MESSAGE
 - message_type: opaque_receipt_ack
   message_version: '0.1'
   delivery_class: party_message
@@ -409,19 +2144,238 @@ messages:
   replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
   transcript_participation: accepted-mutating-event
   privacy_classification: opaque-protocol-artifact
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.opaque_receipt_ref -> opaque_receipt_ref
-  - payload.acknowledgment_status -> acknowledgment_status
-  - payload.profile_evidence_ref -> profile_evidence_ref
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
-  - absent.party_local_result -> selected-profile protected artifact; prohibited
-    from coordinator-readable JSON
+  - source: payload.opaque_receipt_ref
+    destination:
+      kind: event-parameter
+      parameter: opaque_receipt_parameter
+      field: opaque_receipt_ref
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-OPAQUE-RECEIPT
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-ACK-RECEIPT-A
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-OPAQUE-RECEIPT
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-ACK-RECEIPT-B
+  - source: payload.acknowledgment_status
+    destination:
+      kind: special
+      special: normalized-acknowledgment
+  - source: payload.profile_evidence_ref
+    destination:
+      kind: special
+      special: opaque-evidence-reference
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: absent.party_local_result
+    destination:
+      kind: special
+      special: prohibited-coordinator-field
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.sender_participant_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sender_participant_id
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.message_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: message_id
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.nonce
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: nonce
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.sequence
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sequence
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.issued_at
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: issued_at
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_event_digest
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-ACCEPT-MESSAGE
 - message_type: result_acceptance_notice
   message_version: '0.1'
   delivery_class: profile_callback
@@ -457,17 +2411,248 @@ messages:
   replay_or_idempotency_domain: (profile_id,profile_version,profile_instance_id,session_id,evaluation_attempt_id,callback_id/idempotency_key)
   transcript_participation: accepted-mutating-event
   privacy_classification: opaque-protocol-artifact
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.opaque_receipt_ref -> opaque_receipt_ref
-  - payload.acknowledgment_status -> acknowledgment_status
-  - payload.profile_evidence_ref -> profile_evidence_ref
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.opaque_receipt_ref
+    destination:
+      kind: event-parameter
+      parameter: opaque_receipt_parameter
+      field: opaque_receipt_ref
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-SAME-OPAQUE-RECEIPT
+  - source: payload.acknowledgment_status
+    destination:
+      kind: special
+      special: normalized-acknowledgment
+  - source: payload.profile_evidence_ref
+    destination:
+      kind: special
+      special: opaque-evidence-reference
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-CALLBACK-TRANSCRIPT-CHAIN
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-APPEND-CALLBACK-TRANSCRIPT
+      - transition: TR-RESULT-CONFLICT
+        operation: G-CALLBACK-TRANSCRIPT-CHAIN
+      - transition: TR-RESULT-CONFLICT
+        operation: E-APPEND-CALLBACK-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-CALLBACK-TRANSCRIPT-CHAIN
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-APPEND-CALLBACK-TRANSCRIPT
+      - transition: TR-RESULT-CONFLICT
+        operation: G-CALLBACK-TRANSCRIPT-CHAIN
+      - transition: TR-RESULT-CONFLICT
+        operation: E-APPEND-CALLBACK-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-CONTEXT-BINDING
+      - transition: TR-RESULT-CONFLICT
+        operation: G-CONTEXT-BINDING
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-CONTEXT-BINDING
+      - transition: TR-RESULT-CONFLICT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-CONTEXT-BINDING
+      - transition: TR-RESULT-CONFLICT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-CONTEXT-BINDING
+      - transition: TR-RESULT-CONFLICT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-CONTEXT-BINDING
+      - transition: TR-RESULT-CONFLICT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-CONTEXT-BINDING
+      - transition: TR-RESULT-CONFLICT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-CONTEXT-BINDING
+      - transition: TR-RESULT-CONFLICT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-CONTEXT-BINDING
+      - transition: TR-RESULT-CONFLICT
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.profile_id
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: profile_id
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+      - transition: TR-RESULT-CONFLICT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RESULT-CONFLICT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.profile_version
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: profile_version
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+      - transition: TR-RESULT-CONFLICT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RESULT-CONFLICT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.profile_instance_id
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: profile_instance_id
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+      - transition: TR-RESULT-CONFLICT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RESULT-CONFLICT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.callback_id
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: callback_id
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+      - transition: TR-RESULT-CONFLICT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RESULT-CONFLICT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.idempotency_key
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: idempotency_key
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+      - transition: TR-RESULT-CONFLICT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RESULT-CONFLICT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.session_id
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: session_id
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+      - transition: TR-RESULT-CONFLICT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RESULT-CONFLICT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+      - transition: TR-RESULT-CONFLICT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RESULT-CONFLICT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: canonical_callback_digest
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+      - transition: TR-RESULT-CONFLICT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RESULT-CONFLICT
+        operation: E-ACCEPT-PROFILE-CALLBACK
 - message_type: consent_grant
   message_version: '0.1'
   delivery_class: party_message
@@ -511,23 +2696,374 @@ messages:
   replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
   transcript_participation: accepted-mutating-event
   privacy_classification: public-routing-metadata
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.opaque_receipt_ref -> opaque_receipt_ref
-  - payload.disclosure_profile_id -> disclosure_profile_id
-  - payload.disclosure_profile_version -> disclosure_profile_version
-  - payload.scope -> scope
-  - payload.audience -> audience
-  - payload.issued_at -> issued_at
-  - payload.expires_at -> expires_at
-  - payload.consent_nonce -> consent_nonce
-  - payload.consent_artifact_digest -> consent_artifact_digest
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.opaque_receipt_ref
+    destination:
+      kind: event-parameter
+      parameter: consent_binding_parameter
+      field: opaque_receipt_ref
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-GRANT-CONSENT-A
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-GRANT-CONSENT-B
+  - source: payload.disclosure_profile_id
+    destination:
+      kind: event-parameter
+      parameter: consent_binding_parameter
+      field: disclosure_profile_id
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-GRANT-CONSENT-A
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-GRANT-CONSENT-B
+  - source: payload.disclosure_profile_version
+    destination:
+      kind: event-parameter
+      parameter: consent_binding_parameter
+      field: disclosure_profile_version
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-GRANT-CONSENT-A
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-GRANT-CONSENT-B
+  - source: payload.scope
+    destination:
+      kind: event-parameter
+      parameter: consent_binding_parameter
+      field: scope
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-GRANT-CONSENT-A
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-GRANT-CONSENT-B
+  - source: payload.audience
+    destination:
+      kind: event-parameter
+      parameter: consent_binding_parameter
+      field: audience
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-GRANT-CONSENT-A
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-GRANT-CONSENT-B
+  - source: payload.issued_at
+    destination:
+      kind: event-parameter
+      parameter: consent_binding_parameter
+      field: issued_at
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-TIME-VALID-A
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-GRANT-CONSENT-A
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-TIME-VALID-B
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-GRANT-CONSENT-B
+  - source: payload.expires_at
+    destination:
+      kind: event-parameter
+      parameter: consent_binding_parameter
+      field: expires_at
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-TIME-VALID-A
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-GRANT-CONSENT-A
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-TIME-VALID-B
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-GRANT-CONSENT-B
+  - source: payload.consent_nonce
+    destination:
+      kind: event-parameter
+      parameter: consent_binding_parameter
+      field: consent_nonce
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-GRANT-CONSENT-A
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-GRANT-CONSENT-B
+  - source: payload.consent_artifact_digest
+    destination:
+      kind: event-parameter
+      parameter: consent_binding_parameter
+      field: consent_artifact_digest
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-GRANT-CONSENT-A
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-GRANT-CONSENT-B
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONTEXT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.sender_participant_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sender_participant_id
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.message_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: message_id
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.nonce
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: nonce
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.sequence
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sequence
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.issued_at
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: issued_at
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_event_digest
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: consent_binding_parameter
+      field: session_id
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-GRANT-CONSENT-A
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-GRANT-CONSENT-B
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: consent_binding_parameter
+      field: participant_set
+      consumed_by:
+      - transition: TR-GRANT-CONSENT-A
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-A
+        operation: E-GRANT-CONSENT-A
+      - transition: TR-GRANT-CONSENT-B
+        operation: G-CONSENT-BINDING
+      - transition: TR-GRANT-CONSENT-B
+        operation: E-GRANT-CONSENT-B
 - message_type: consent_withdrawal
   message_version: '0.1'
   delivery_class: party_message
@@ -565,17 +3101,254 @@ messages:
   replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
   transcript_participation: accepted-mutating-event
   privacy_classification: public-routing-metadata
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.consent_nonce -> consent_nonce
-  - payload.consent_artifact_digest -> consent_artifact_digest
-  - payload.reason_category -> reason_category
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-APPEND-PARTY-TRANSCRIPT
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-PARTY-TRANSCRIPT-CHAIN
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-APPEND-PARTY-TRANSCRIPT
+  - source: payload.consent_nonce
+    destination:
+      kind: event-parameter
+      parameter: consent_withdrawal_parameter
+      field: consent_nonce
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-CONSENT-A-VALID
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-WITHDRAW-CONSENT-A
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-CONSENT-B-VALID
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-WITHDRAW-CONSENT-B
+  - source: payload.consent_artifact_digest
+    destination:
+      kind: event-parameter
+      parameter: consent_withdrawal_parameter
+      field: consent_artifact_digest
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-CONSENT-A-VALID
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-WITHDRAW-CONSENT-A
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-CONSENT-B-VALID
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-WITHDRAW-CONSENT-B
+  - source: payload.reason_category
+    destination:
+      kind: event-parameter
+      parameter: consent_withdrawal_parameter
+      field: reason_category
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-CONSENT-A-VALID
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-WITHDRAW-CONSENT-A
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-CONSENT-B-VALID
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-WITHDRAW-CONSENT-B
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-CONTEXT-BINDING
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-CONTEXT-BINDING
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.sender_participant_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sender_participant_id
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.message_id
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: message_id
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.nonce
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: nonce
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.sequence
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: sequence
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.identity.issued_at
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: issued_at
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-MESSAGE-TIME-VALID
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: replay_envelope
+      field: canonical_event_digest
+      consumed_by:
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-A
+        operation: E-ACCEPT-MESSAGE
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: G-ORDER-AND-REPLAY
+      - transition: TR-WITHDRAW-CONSENT-B
+        operation: E-ACCEPT-MESSAGE
 - message_type: disclosure_extension_authorization
   message_version: '0.1'
   delivery_class: coordinator_command
@@ -612,19 +3385,216 @@ messages:
   replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
   transcript_participation: accepted-mutating-event
   privacy_classification: public-routing-metadata
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.profile_id -> profile_id
-  - payload.profile_version -> profile_version
-  - payload.scope -> scope
-  - payload.audience -> audience
-  - payload.authorization_ref -> authorization_ref
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.profile_id
+    destination:
+      kind: event-parameter
+      parameter: disclosure_extension_parameter
+      field: profile_id
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-PROFILE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-SCOPE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-AUDIENCE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-PROFILE-REVIEWED
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: E-AUTHORIZE-DISCLOSURE
+  - source: payload.profile_version
+    destination:
+      kind: event-parameter
+      parameter: disclosure_extension_parameter
+      field: profile_version
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-PROFILE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-SCOPE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-AUDIENCE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-PROFILE-REVIEWED
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: E-AUTHORIZE-DISCLOSURE
+  - source: payload.scope
+    destination:
+      kind: event-parameter
+      parameter: disclosure_extension_parameter
+      field: scope
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-PROFILE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-SCOPE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-AUDIENCE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-PROFILE-REVIEWED
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: E-AUTHORIZE-DISCLOSURE
+  - source: payload.audience
+    destination:
+      kind: event-parameter
+      parameter: disclosure_extension_parameter
+      field: audience
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-PROFILE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-SCOPE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-AUDIENCE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-PROFILE-REVIEWED
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: E-AUTHORIZE-DISCLOSURE
+  - source: payload.authorization_ref
+    destination:
+      kind: event-parameter
+      parameter: disclosure_extension_parameter
+      field: authorization_ref
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-PROFILE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-SCOPE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONSENT-AUDIENCE-BINDING
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-PROFILE-REVIEWED
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: E-AUTHORIZE-DISCLOSURE
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONTEXT-BINDING
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.actor_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: actor_id
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-OPERATION-DEDUP
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.operation_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: operation_id
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-OPERATION-DEDUP
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.idempotency_key
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: idempotency_key
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-OPERATION-DEDUP
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: E-ACCEPT-OPERATION
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_operation_digest
+      consumed_by:
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: G-OPERATION-DEDUP
+      - transition: TR-AUTHORIZE-DISCLOSURE-EXTENSION
+        operation: E-ACCEPT-OPERATION
 - message_type: disclosure_completion_notice
   message_version: '0.1'
   delivery_class: profile_callback
@@ -641,6 +3611,7 @@ messages:
     - scope
     - audience
     - completion_ref
+    - authorization_ref
     prohibited_fields:
     - raw_identifiers
     - normalized_identifiers
@@ -661,19 +3632,260 @@ messages:
   replay_or_idempotency_domain: (profile_id,profile_version,profile_instance_id,session_id,evaluation_attempt_id,callback_id/idempotency_key)
   transcript_participation: accepted-mutating-event
   privacy_classification: public-routing-metadata
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.profile_id -> profile_id
-  - payload.profile_version -> profile_version
-  - payload.scope -> scope
-  - payload.audience -> audience
-  - payload.completion_ref -> completion_ref
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.profile_id
+    destination:
+      kind: event-parameter
+      parameter: disclosure_extension_parameter
+      field: profile_id
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-PROFILE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-SCOPE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-AUDIENCE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-REVIEWED
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-COMPLETE-DISCLOSURE
+  - source: payload.profile_version
+    destination:
+      kind: event-parameter
+      parameter: disclosure_extension_parameter
+      field: profile_version
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-PROFILE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-SCOPE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-AUDIENCE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-REVIEWED
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-COMPLETE-DISCLOSURE
+  - source: payload.scope
+    destination:
+      kind: event-parameter
+      parameter: disclosure_extension_parameter
+      field: scope
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-PROFILE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-SCOPE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-AUDIENCE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-REVIEWED
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-COMPLETE-DISCLOSURE
+  - source: payload.audience
+    destination:
+      kind: event-parameter
+      parameter: disclosure_extension_parameter
+      field: audience
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-PROFILE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-SCOPE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-AUDIENCE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-REVIEWED
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-COMPLETE-DISCLOSURE
+  - source: payload.completion_ref
+    destination:
+      kind: special
+      special: opaque-evidence-reference
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CALLBACK-TRANSCRIPT-CHAIN
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-APPEND-CALLBACK-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CALLBACK-TRANSCRIPT-CHAIN
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-APPEND-CALLBACK-TRANSCRIPT
+  - source: payload.authorization_ref
+    destination:
+      kind: event-parameter
+      parameter: disclosure_extension_parameter
+      field: authorization_ref
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-PROFILE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-SCOPE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONSENT-AUDIENCE-BINDING
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-REVIEWED
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-COMPLETE-DISCLOSURE
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONTEXT-BINDING
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.profile_id
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: profile_id
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.profile_version
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: profile_version
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.profile_instance_id
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: profile_instance_id
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.callback_id
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: callback_id
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.idempotency_key
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: idempotency_key
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.session_id
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: session_id
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.identity.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: canonical_callback_digest
+      consumed_by:
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RECORD-DISCLOSURE-COMPLETION
+        operation: E-ACCEPT-PROFILE-CALLBACK
 - message_type: abort_notice
   message_version: '0.1'
   delivery_class: coordinator_command
@@ -707,15 +3919,146 @@ messages:
   replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
   transcript_participation: accepted-mutating-event
   privacy_classification: internal-coordinator-detail
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.internal_failure_code -> internal_failure_code
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.internal_failure_code
+    destination:
+      kind: event-parameter
+      parameter: normalized_failure_parameter
+      field: failure_code
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-ABORT-REASON
+      - transition: TR-ABORT
+        operation: E-ABORT
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-ABORT
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-ABORT
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-CONTEXT-BINDING
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.actor_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: actor_id
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-OPERATION-DEDUP
+      - transition: TR-ABORT
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.operation_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: operation_id
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-OPERATION-DEDUP
+      - transition: TR-ABORT
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.idempotency_key
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: idempotency_key
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-OPERATION-DEDUP
+      - transition: TR-ABORT
+        operation: E-ACCEPT-OPERATION
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_operation_digest
+      consumed_by:
+      - transition: TR-ABORT
+        operation: G-OPERATION-DEDUP
+      - transition: TR-ABORT
+        operation: E-ACCEPT-OPERATION
 - message_type: normalized_error_notice
   message_version: '0.1'
   delivery_class: derived_transition
@@ -752,17 +4095,32 @@ messages:
   replay_or_idempotency_domain: no external acceptance or retry domain
   transcript_participation: derived-notice-excluded
   privacy_classification: party-safe-normalized-notice
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.party_error_category -> party_error_category
-  - payload.retry_class -> retry_class
-  - payload.new_session_required -> new_session_required
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.party_error_category
+    destination:
+      kind: special
+      special: normalized-party-projection
+  - source: payload.retry_class
+    destination:
+      kind: special
+      special: normalized-party-projection
+  - source: payload.new_session_required
+    destination:
+      kind: special
+      special: normalized-party-projection
+  - source: message.message_digest
+    destination:
+      kind: special
+      special: derived-notice-digest
+  - source: message.prior_transcript_digest
+    destination:
+      kind: special
+      special: derived-notice-prior-reference
 - message_type: close_notice
   message_version: '0.1'
   delivery_class: coordinator_command
@@ -796,15 +4154,140 @@ messages:
   replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
   transcript_participation: accepted-mutating-event
   privacy_classification: public-routing-metadata
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.reason_category -> reason_category
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.reason_category
+    destination:
+      kind: special
+      special: normalized-party-projection
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_message_digest
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-CLOSE
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.prior_transcript_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: prior_transcript_digest
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-OPERATION-TRANSCRIPT-CHAIN
+      - transition: TR-CLOSE
+        operation: E-APPEND-OPERATION-TRANSCRIPT
+  - source: message.session_context.session_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: session_id
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-CONTEXT-BINDING
+  - source: message.protocol_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: protocol_profile
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.policy
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: policy_binding
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.participants
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: participant_binding
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.intended_audience
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: intended_audience
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.commitment_pair_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: commitment_pair_id
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.evaluation_attempt_id
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: evaluation_attempt_id
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-CONTEXT-BINDING
+  - source: message.session_context.selected_integration_profile
+    destination:
+      kind: event-parameter
+      parameter: session_context
+      field: selected_integration_profile_binding
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-CONTEXT-BINDING
+  - source: message.identity.actor_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: actor_id
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-OPERATION-DEDUP
+      - transition: TR-CLOSE
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.operation_id
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: operation_id
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-OPERATION-DEDUP
+      - transition: TR-CLOSE
+        operation: E-ACCEPT-OPERATION
+  - source: message.identity.idempotency_key
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: idempotency_key
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-OPERATION-DEDUP
+      - transition: TR-CLOSE
+        operation: E-ACCEPT-OPERATION
+  - source: message.message_digest
+    destination:
+      kind: event-parameter
+      parameter: operation_envelope
+      field: canonical_operation_digest
+      consumed_by:
+      - transition: TR-CLOSE
+        operation: G-OPERATION-DEDUP
+      - transition: TR-CLOSE
+        operation: E-ACCEPT-OPERATION
 - message_type: expiry_notice
   message_version: '0.1'
   delivery_class: derived_transition
@@ -845,16 +4328,28 @@ messages:
   replay_or_idempotency_domain: no external acceptance or retry domain
   transcript_participation: derived-notice-excluded
   privacy_classification: party-safe-normalized-notice
-  failure_behavior: fail closed without transcript mutation; return only a reviewed
-    Party category where the audience includes a Party
+  failure_behavior: fail closed without transcript mutation; return only a reviewed Party category where
+    the audience includes a Party
   version_compatibility: exact-version-only; unknown fields and versions fail closed
-  authentication_requirement: external messages require selected non-none authentication;
-    this draft selects no algorithm
+  authentication_requirement: external messages require selected non-none authentication; this draft selects
+    no algorithm
   parameter_sources:
-  - payload.party_error_category -> party_error_category
-  - payload.observed_at -> observed_at
-  - message.message_digest -> state canonical event/operation/callback digest
-  - message.prior_transcript_digest -> state transcript chain guard
+  - source: payload.party_error_category
+    destination:
+      kind: special
+      special: normalized-party-projection
+  - source: payload.observed_at
+    destination:
+      kind: special
+      special: normalized-party-projection
+  - source: message.message_digest
+    destination:
+      kind: special
+      special: derived-notice-digest
+  - source: message.prior_transcript_digest
+    destination:
+      kind: special
+      special: derived-notice-prior-reference
 internal_event_contracts:
 - id: authoritative_timer_event
   delivery_class: timer
@@ -877,5 +4372,4 @@ internal_event_contracts:
   transcript_participation: excluded
   state_machine_events:
   - request_new_evaluation_session
-  canonical_digest_source: none; pure local guidance does not mutate authoritative
-    state
+  canonical_digest_source: none; pure local guidance does not mutate authoritative state

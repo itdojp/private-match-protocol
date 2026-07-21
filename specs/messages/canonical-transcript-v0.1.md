@@ -133,6 +133,12 @@ index, and replaces the transcript head. A persistence mechanism is not defined
 here, but a later implementation must not acknowledge a state mutation while
 persisting a different transcript position.
 
+Timer append is exception-atomic. The next index, canonical timer digest, and
+next head are first computed as local values. The authoritative index and head
+are assigned together only after all computations succeed. Invalid timer values,
+malformed digests, prior-head mismatch, and the `uint64` bound leave both fields
+unchanged.
+
 ## Included and excluded relations
 
 Included exactly once:

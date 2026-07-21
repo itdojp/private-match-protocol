@@ -39,6 +39,24 @@ Draft `private-match-core/v0.1` uses:
 The complete construction is normative in the
 [canonical transcript contract](../../specs/messages/canonical-transcript-v0.1.md).
 
+Verification-material authorization is subject-specific, not role-only. The
+synthetic registry binds each material to a Party participant, Coordinator, or
+selected integration-profile ID/version/instance. Authentication, sender, and
+material key IDs must agree. Both message issue time and
+Coordinator-authoritative verification time must be inside the material's
+half-open validity interval; revocation always fails closed. These checks do not
+select an algorithm or establish real key ownership.
+
+Conformance uses an evolving abstract state trace rather than an initially
+fully populated session. Session acceptance and participant binding are separate
+events, and the former is a real prerequisite. The integration-profile state is
+unbound before `create_session` and is atomically established from the reviewed
+session-proposal field rather than appearing as future state in pre-create
+context. Registry mappings name catalog
+parameter fields and consuming transition operations. Security-sensitive YAML
+and semantic identifiers reject ambiguity before index construction. Timer
+transcript append computes all values before an exception-atomic assignment.
+
 ## RFC 8785 implementation decision
 
 The reviewed Python dependency is `rfc8785==0.1.4` from Trail of Bits.

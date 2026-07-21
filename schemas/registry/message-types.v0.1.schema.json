@@ -227,8 +227,100 @@
           "minItems": 1,
           "uniqueItems": true,
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source",
+              "destination"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "pattern": "^(payload|message|absent)\\.[A-Za-z0-9_.]+$"
+              },
+              "destination": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "parameter",
+                      "field",
+                      "consumed_by"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "event-parameter"
+                      },
+                      "parameter": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "field": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "consumed_by": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "transition",
+                            "operation"
+                          ],
+                          "properties": {
+                            "transition": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                            },
+                            "operation": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "special"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "special"
+                      },
+                      "special": {
+                        "enum": [
+                          "structured-expansion",
+                          "context-derived-assertion",
+                          "policy-derived-assertion",
+                          "normalized-acknowledgment",
+                          "opaque-evidence-reference",
+                          "normalized-party-projection",
+                          "consent-reference",
+                          "authenticated-only",
+                          "derived-notice-digest",
+                          "derived-notice-prior-reference",
+                          "prohibited-coordinator-field"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
           }
         }
       }

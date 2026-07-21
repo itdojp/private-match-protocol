@@ -37,11 +37,12 @@
         "mode",
         "algorithm_id",
         "key_id",
-        "allowed_senders",
         "status",
         "not_before",
         "not_after",
-        "test_only"
+        "test_only",
+        "subject_binding_id",
+        "subject"
       ],
       "properties": {
         "verification_material_id": {
@@ -69,17 +70,6 @@
           "maxLength": 160,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
         },
-        "allowed_senders": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 160,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
-          }
-        },
         "status": {
           "enum": [
             "active",
@@ -97,6 +87,95 @@
         },
         "test_only": {
           "const": true
+        },
+        "subject_binding_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+        },
+        "subject": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "actor",
+                "participant_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "party"
+                },
+                "actor": {
+                  "enum": [
+                    "party_a_client",
+                    "party_b_client"
+                  ]
+                },
+                "participant_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "actor"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "coordinator"
+                },
+                "actor": {
+                  "const": "coordinator"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "actor",
+                "profile_id",
+                "profile_version",
+                "profile_instance_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "integration-profile"
+                },
+                "actor": {
+                  "const": "selected_integration_profile"
+                },
+                "profile_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                },
+                "profile_version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                },
+                "profile_instance_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+                }
+              }
+            }
+          ]
         }
       }
     }
