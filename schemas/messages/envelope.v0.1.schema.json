@@ -1176,17 +1176,10 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "opaque_commitment",
-        "commitment_pair_id"
+        "opaque_commitment"
       ],
       "properties": {
         "opaque_commitment": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 160,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
-        },
-        "commitment_pair_id": {
           "type": "string",
           "minLength": 1,
           "maxLength": 160,

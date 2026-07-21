@@ -53,6 +53,53 @@ class MessageContractTests(unittest.TestCase):
             path.stem: canonical.strict_loads(path.read_bytes())
             for path in cls.valid_paths
         }
+        cls.expected = canonical.strict_loads(
+            (ROOT / validator.EXPECTED_DIGESTS).read_bytes()
+        )
+        cls.trace_messages = [
+            entry["message"]
+            for entry in cls.expected["entries"]
+            if entry["kind"] == "message"
+        ]
+
+    def runner_before(
+        self, message_type: str, actor: str | None = None
+    ) -> tuple[validator.AbstractStateRunner, validator.TranscriptState, dict]:
+        runner = validator.AbstractStateRunner(copy.deepcopy(self.context))
+        transcript = validator.TranscriptState()
+        for entry in self.expected["entries"]:
+            if entry["kind"] == "timer":
+                self.assertEqual(
+                    "ACCEPTED", transcript.accept_timer(entry["timer_event"])
+                )
+                runner.base_context["authoritative_time"] = entry["timer_event"][
+                    "new_authoritative_time"
+                ]
+                continue
+            message = entry["message"]
+            if message["message_type"] == message_type and (
+                actor is None or message["sender"]["actor"] == actor
+            ):
+                return runner, transcript, copy.deepcopy(message)
+            self.assertEqual(
+                [], runner.apply(message, self.registry, self.materials), message_type
+            )
+            self.assertEqual("ACCEPTED", transcript.accept_message(message))
+        self.fail(f"trace message not found: {message_type} {actor}")
+
+    def assert_runner_rejects_without_mutation(
+        self, runner: validator.AbstractStateRunner, message: dict
+    ) -> None:
+        transcript = validator.TranscriptState(head=message["prior_transcript_digest"])
+        before_runner = copy.deepcopy(runner.__dict__)
+        before_transcript = copy.deepcopy(transcript.__dict__)
+        outcome, findings = validator.apply_trace_message_atomically(
+            runner, transcript, message, self.registry, self.materials
+        )
+        self.assertEqual("REJECTED", outcome)
+        self.assertIn("state-trace", {item.code for item in findings})
+        self.assertEqual(before_runner, runner.__dict__)
+        self.assertEqual(before_transcript, transcript.__dict__)
 
     def test_repository_message_contract_is_valid(self) -> None:
         self.assertEqual([], validator.validate_repository(ROOT))
@@ -161,6 +208,25 @@ class MessageContractTests(unittest.TestCase):
                     "parameter-mapping-destination",
                     {item.code for item in findings},
                 )
+
+    def test_security_runner_mapping_cannot_be_disconnected(self) -> None:
+        state = strict_yaml_load(
+            (ROOT / validator.STATE_MACHINE_PATH).read_text(encoding="utf-8")
+        )
+        mutated = copy.deepcopy(self.registry)
+        acceptance = next(
+            item
+            for item in mutated["messages"]
+            if item["message_type"] == "session_acceptance"
+        )
+        acceptance["parameter_sources"] = [
+            item
+            for item in acceptance["parameter_sources"]
+            if item["source"]
+            != "trusted.authenticated_subject.verification_material_id"
+        ]
+        findings = validator.registry_findings(mutated, state, self.message_schema)
+        self.assertIn("state-runner-mapping", {item.code for item in findings})
 
     def test_semantic_registry_ids_are_duplicate_rejecting(self) -> None:
         state = strict_yaml_load(
@@ -399,7 +465,7 @@ class MessageContractTests(unittest.TestCase):
                     message, self.registry, self.materials, stage
                 ),
             )
-            self.assertEqual([], runner.apply(message, self.registry))
+            self.assertEqual([], runner.apply(message, self.registry, self.materials))
             self.assertEqual("ACCEPTED", state.accept_message(message))
             seen.append(message["message_type"])
         self.assertLess(
@@ -408,6 +474,286 @@ class MessageContractTests(unittest.TestCase):
         self.assertEqual(2, seen.count("session_acceptance"))
         self.assertEqual(2, seen.count("participant_binding"))
         self.assertEqual("CLOSED", runner.phase)
+
+    def test_session_acceptance_subject_must_equal_later_party_binding(self) -> None:
+        runner, _, binding = self.runner_before("participant_binding", "party_a_client")
+        self.assertEqual(
+            "urn:private-match:test:key:party-a:v0.1",
+            runner.session_acceptance["a"]["key_id"],
+        )
+        self.assertEqual(
+            [], runner.apply(copy.deepcopy(binding), self.registry, self.materials)
+        )
+
+        runner, _, changed = self.runner_before("participant_binding", "party_a_client")
+        changed["sender"]["key_id"] = "urn:private-match:test:key:party-a:other:v0.1"
+        changed["payload"]["participant_key_id"] = changed["sender"]["key_id"]
+        changed["authentication"].update(
+            {
+                "key_id": changed["sender"]["key_id"],
+                "verification_material_id": "urn:private-match:test:material:party-a-other-key:v0.1",
+            }
+        )
+        changed = canonical.populate_digests(changed)
+        self.assert_runner_rejects_without_mutation(runner, changed)
+
+    def test_same_key_with_different_participant_cannot_reuse_acceptance(self) -> None:
+        runner, _, changed = self.runner_before("participant_binding", "party_a_client")
+        other = "urn:private-match:test:participant:other"
+        changed["sender"]["participant_id"] = other
+        changed["identity"]["sender_participant_id"] = other
+        changed["payload"]["participant_id"] = other
+        changed["authentication"]["verification_material_id"] = (
+            "urn:private-match:test:material:party-a-wrong-participant:v0.1"
+        )
+        changed = canonical.populate_digests(changed)
+        self.assert_runner_rejects_without_mutation(runner, changed)
+
+    def test_party_a_acceptance_cannot_authorize_party_b_binding(self) -> None:
+        runner = validator.AbstractStateRunner(copy.deepcopy(self.context))
+        proposal = copy.deepcopy(self.trace_messages[0])
+        acceptance_a = copy.deepcopy(self.trace_messages[1])
+        binding_b = next(
+            copy.deepcopy(item)
+            for item in self.trace_messages
+            if item["message_type"] == "participant_binding"
+            and item["sender"]["actor"] == "party_b_client"
+        )
+        self.assertEqual([], runner.apply(proposal, self.registry, self.materials))
+        self.assertEqual([], runner.apply(acceptance_a, self.registry, self.materials))
+        binding_b["identity"]["sequence"] = runner.next_sequence["b"]
+        binding_b = canonical.populate_digests(binding_b)
+        self.assert_runner_rejects_without_mutation(runner, binding_b)
+
+    def test_exact_duplicate_session_acceptance_is_transcript_idempotent(self) -> None:
+        acceptance = copy.deepcopy(self.expected["duplicate_vectors"]["party_exact"])
+        state = validator.TranscriptState(head=acceptance["prior_transcript_digest"])
+        self.assertEqual("ACCEPTED", state.accept_message(acceptance))
+        before = (state.head, state.accepted_event_index)
+        self.assertEqual(
+            "EXACT_DUPLICATE", state.accept_message(copy.deepcopy(acceptance))
+        )
+        self.assertEqual(before, (state.head, state.accepted_event_index))
+
+    def test_commitment_pair_digest_binds_complete_context(self) -> None:
+        base = {
+            "protocol_profile": "private-match-core/v0.1",
+            "policy_binding": copy.deepcopy(self.context["session_context"]["policy"]),
+            "session_id": self.context["session_context"]["session_id"],
+            "participant_binding": {
+                "party_a": {
+                    "participant_id": "urn:private-match:test:participant:a",
+                    "key_id": "urn:private-match:test:key:party-a:v0.1",
+                },
+                "party_b": {
+                    "participant_id": "urn:private-match:test:participant:b",
+                    "key_id": "urn:private-match:test:key:party-b:v0.1",
+                },
+            },
+            "selected_integration_profile_binding": {
+                "profile_id": "urn:private-match:test:profile:synthetic",
+                "profile_version": "0.1",
+                "profile_instance_id": "urn:private-match:test:profile-instance:0001",
+            },
+            "commitment_a": "urn:private-match:test:opaque-commitment:a",
+            "commitment_b": "urn:private-match:test:opaque-commitment:b",
+        }
+        expected = canonical.commitment_pair_digest(**base)
+        self.assertRegex(expected, r"^sha256:[0-9a-f]{64}$")
+        mutations = {
+            "commitment A": ("commitment_a", "urn:test:changed:a"),
+            "commitment B": ("commitment_b", "urn:test:changed:b"),
+            "session": ("session_id", "urn:test:session:changed"),
+            "policy": (
+                "policy_binding",
+                {"policy_id": "urn:test:policy:other", "policy_version": "0.1"},
+            ),
+            "participants": (
+                "participant_binding",
+                {
+                    **base["participant_binding"],
+                    "party_b": {
+                        "participant_id": "urn:test:participant:changed",
+                        "key_id": "urn:private-match:test:key:party-b:v0.1",
+                    },
+                },
+            ),
+            "profile": (
+                "selected_integration_profile_binding",
+                {
+                    **base["selected_integration_profile_binding"],
+                    "profile_instance_id": "urn:test:profile-instance:changed",
+                },
+            ),
+        }
+        for name, (field, value) in mutations.items():
+            with self.subTest(name=name):
+                changed = copy.deepcopy(base)
+                changed[field] = value
+                self.assertNotEqual(
+                    expected, canonical.commitment_pair_digest(**changed)
+                )
+
+    def test_commitment_pair_is_derived_once_in_canonical_party_order(self) -> None:
+        runner, _, commitment_a = self.runner_before(
+            "commitment_registration", "party_a_client"
+        )
+        commitment_b = next(
+            copy.deepcopy(item)
+            for item in self.trace_messages
+            if item["message_type"] == "commitment_registration"
+            and item["sender"]["actor"] == "party_b_client"
+        )
+        reverse = copy.deepcopy(runner)
+
+        self.assertEqual([], runner.apply(commitment_a, self.registry, self.materials))
+        self.assertIsNone(runner.commitment_pair_id)
+        self.assertEqual([], runner.apply(commitment_b, self.registry, self.materials))
+        forward_digest = runner.commitment_pair_id
+
+        self.assertEqual([], reverse.apply(commitment_b, self.registry, self.materials))
+        self.assertIsNone(reverse.commitment_pair_id)
+        self.assertEqual([], reverse.apply(commitment_a, self.registry, self.materials))
+        self.assertEqual(forward_digest, reverse.commitment_pair_id)
+        self.assertRegex(forward_digest, r"^sha256:[0-9a-f]{64}$")
+
+        changed = copy.deepcopy(commitment_a)
+        changed["payload"]["opaque_commitment"] = "urn:test:commitment:mutated"
+        changed = canonical.populate_digests(changed)
+        self.assert_runner_rejects_without_mutation(runner, changed)
+
+    def test_party_supplied_commitment_pair_identifier_is_rejected(self) -> None:
+        message = copy.deepcopy(self.messages["commitment-registration-a"])
+        message["payload"]["commitment_pair_id"] = "sha256:" + "a" * 64
+        findings = validator._schema_findings(
+            message, self.message_schema, "commitment-registration"
+        )
+        self.assertIn("schema", {item.code for item in findings})
+        manifest = strict_yaml_load(
+            (ROOT / validator.INVALID_MANIFEST).read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "party-supplied-commitment-pair-id",
+            {item["id"] for item in manifest["cases"]},
+        )
+
+    def test_policy_acceptance_executes_exact_binding_guard_atomically(self) -> None:
+        runner, _, policy = self.runner_before("policy_acceptance", "party_a_client")
+        for field, value in (
+            ("policy_id", "urn:test:policy:other"),
+            ("policy_version", "9.9"),
+        ):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(policy)
+                changed["payload"][field] = value
+                changed = canonical.populate_digests(changed)
+                self.assert_runner_rejects_without_mutation(
+                    copy.deepcopy(runner), changed
+                )
+
+    def test_receipt_guards_require_contributions_status_and_equal_refs(self) -> None:
+        runner, _, contribution_b = self.runner_before(
+            "evaluation_contribution", "party_b_client"
+        )
+        receipt_a = next(
+            copy.deepcopy(item)
+            for item in self.trace_messages
+            if item["message_type"] == "opaque_receipt_ack"
+            and item["sender"]["actor"] == "party_a_client"
+        )
+        self.assert_runner_rejects_without_mutation(runner, receipt_a)
+        self.assertEqual(
+            [], runner.apply(contribution_b, self.registry, self.materials)
+        )
+        self.assertEqual([], runner.apply(receipt_a, self.registry, self.materials))
+
+        receipt_b = next(
+            copy.deepcopy(item)
+            for item in self.trace_messages
+            if item["message_type"] == "opaque_receipt_ack"
+            and item["sender"]["actor"] == "party_b_client"
+        )
+        wrong_ref = copy.deepcopy(receipt_b)
+        wrong_ref["payload"]["opaque_receipt_ref"] = "urn:test:receipt:other"
+        wrong_ref = canonical.populate_digests(wrong_ref)
+        self.assert_runner_rejects_without_mutation(runner, wrong_ref)
+
+        wrong_status = copy.deepcopy(receipt_b)
+        wrong_status["payload"]["acknowledgment_status"] = "BOTH_ACKNOWLEDGED"
+        wrong_status = canonical.populate_digests(wrong_status)
+        self.assert_runner_rejects_without_mutation(runner, wrong_status)
+
+    def test_result_callback_requires_bilateral_matching_acknowledgments(self) -> None:
+        runner, _, receipt_a = self.runner_before(
+            "opaque_receipt_ack", "party_a_client"
+        )
+        callback = next(
+            copy.deepcopy(item)
+            for item in self.trace_messages
+            if item["message_type"] == "result_acceptance_notice"
+        )
+        self.assert_runner_rejects_without_mutation(runner, callback)
+        self.assertEqual([], runner.apply(receipt_a, self.registry, self.materials))
+        receipt_b = next(
+            copy.deepcopy(item)
+            for item in self.trace_messages
+            if item["message_type"] == "opaque_receipt_ack"
+            and item["sender"]["actor"] == "party_b_client"
+        )
+        self.assertEqual([], runner.apply(receipt_b, self.registry, self.materials))
+        for field, value in (
+            ("opaque_receipt_ref", "urn:test:receipt:other"),
+            ("acknowledgment_status", "ACKNOWLEDGED"),
+        ):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(callback)
+                changed["payload"][field] = value
+                changed = canonical.populate_digests(changed)
+                self.assert_runner_rejects_without_mutation(
+                    copy.deepcopy(runner), changed
+                )
+        for field, value in (
+            ("profile_instance_id", "urn:test:profile-instance:other"),
+            ("session_id", "urn:test:session:other"),
+            ("evaluation_attempt_id", "urn:test:attempt:other"),
+        ):
+            with self.subTest(identity_field=field):
+                changed = copy.deepcopy(callback)
+                changed["identity"][field] = value
+                changed = canonical.populate_digests(changed)
+                self.assert_runner_rejects_without_mutation(
+                    copy.deepcopy(runner), changed
+                )
+        self.assertEqual([], runner.apply(callback, self.registry, self.materials))
+
+    def test_consent_guard_executes_receipt_profile_scope_audience_and_time(
+        self,
+    ) -> None:
+        runner, _, consent_a = self.runner_before("consent_grant", "party_a_client")
+        self.assertEqual([], runner.apply(consent_a, self.registry, self.materials))
+        consent_b = next(
+            copy.deepcopy(item)
+            for item in self.trace_messages
+            if item["message_type"] == "consent_grant"
+            and item["sender"]["actor"] == "party_b_client"
+        )
+        mutations = {
+            "receipt": ("opaque_receipt_ref", "urn:test:receipt:other"),
+            "profile id": ("disclosure_profile_id", "urn:test:profile:other"),
+            "profile version": ("disclosure_profile_version", "9.9"),
+            "scope": ("scope", ["urn:test:scope:other"]),
+            "audience": ("audience", ["party_b_client"]),
+            "expired": ("expires_at", "2026-07-21T00:00:20Z"),
+        }
+        for name, (field, value) in mutations.items():
+            with self.subTest(name=name):
+                changed = copy.deepcopy(consent_b)
+                changed["payload"][field] = value
+                changed = canonical.populate_digests(changed)
+                self.assert_runner_rejects_without_mutation(
+                    copy.deepcopy(runner), changed
+                )
+        self.assertEqual([], runner.apply(consent_b, self.registry, self.materials))
 
     def test_future_state_context_and_binding_bypass_fail_closed(self) -> None:
         expected = canonical.strict_loads(
@@ -433,18 +779,24 @@ class MessageContractTests(unittest.TestCase):
             and item["sender"]["actor"] == "party_a_client"
         )
         runner = validator.AbstractStateRunner(copy.deepcopy(self.context))
-        self.assertEqual([], runner.apply(proposal, self.registry))
+        self.assertEqual([], runner.apply(proposal, self.registry, self.materials))
         bypass = copy.deepcopy(runner)
         self.assertIn(
             "state-trace",
-            {item.code for item in bypass.apply(binding_a, self.registry)},
+            {
+                item.code
+                for item in bypass.apply(binding_a, self.registry, self.materials)
+            },
         )
-        self.assertEqual([], runner.apply(acceptance_a, self.registry))
+        self.assertEqual([], runner.apply(acceptance_a, self.registry, self.materials))
         wrong_proposal = copy.deepcopy(messages[2])
         wrong_proposal["payload"]["proposal_digest"] = "sha256:" + "f" * 64
         self.assertIn(
             "state-trace",
-            {item.code for item in runner.apply(wrong_proposal, self.registry)},
+            {
+                item.code
+                for item in runner.apply(wrong_proposal, self.registry, self.materials)
+            },
         )
         for field, value in (
             ("commitment_pair_id", "urn:private-match:test:commitment-pair:future"),

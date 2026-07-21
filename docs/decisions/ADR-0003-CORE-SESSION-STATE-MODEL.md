@@ -66,6 +66,17 @@ The principal choices are:
     that exact digest through a Party-specific immutable transition before its
     participant slot can be bound. Acceptance and binding are not interchangeable
     paths.
+13. Bind each Party acceptance to the trusted participant, key, subject-binding,
+    and verification-material projection created after material validation. The
+    later participant binding must match that record exactly; v0.1 has no
+    in-session key-rotation transition.
+14. Derive `commitment_pair_id` only after both commitments exist, using fixed
+    A/B slot order, RFC 8785, SHA-256, and the
+    `private-match-commitment-pair/v0.1` domain over the complete versioned
+    context. Party-supplied pair identifiers are forbidden.
+15. Execute policy, contribution, receipt/callback, and consent cross-message
+    bindings in the abstract conformance runner. A failed guard leaves state,
+    replay indexes, transcript, budget, and audit unchanged.
 
 ## Options considered
 
@@ -116,6 +127,28 @@ proposal or acknowledgment and B cannot read A's. The selected integration
 profile's access remains profile-dependent. Formal equality testing is a global
 specification predicate, not permission for an implementation actor to read the
 peer entry.
+
+### Acceptance subject binding and commitment-pair authority
+
+**Option A:** Treat a Party role label or a later binding payload as sufficient
+to associate session acceptance with a participant/key.
+
+**Option B:** Store the validated material subject with each Party acceptance
+and require the later participant binding to match participant, key,
+subject-binding ID, and material ID exactly.
+
+Option B was selected. The event parameter is a trusted post-validation
+projection, not a wire-controlled claim. A second active key with the same role
+does not inherit the prior acceptance. Because v0.1 defines no rotation
+transition, a different key or material requires a new session.
+
+For the pair identifier, a Party claim or equality between two Party claims was
+rejected because neither construction proves binding to the accepted
+commitments. The coordinator instead derives the identifier on the second
+commitment using canonical A/B slots and the complete protocol, policy, session,
+participant, selected-profile, and commitment context. The construction is an
+identity binding only and is not evidence of PET security, commitment truth, or
+input completeness.
 
 ### Budget consumption at evaluation start versus result acceptance
 

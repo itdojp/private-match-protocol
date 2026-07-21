@@ -26,6 +26,7 @@ from canonicalize_message import (
     append_transcript,
     bounded_error,
     canonicalize,
+    commitment_pair_digest,
     message_digest,
     payload_digest,
     strict_loads,
@@ -66,6 +67,71 @@ EXTERNAL_DELIVERY_CLASSES = {
     "coordinator_command",
     "profile_callback",
     "derived_transition",
+}
+
+TRUSTED_SUBJECT_SOURCES = {
+    "trusted.authenticated_subject.actor",
+    "trusted.authenticated_subject.participant_id",
+    "trusted.authenticated_subject.key_id",
+    "trusted.authenticated_subject.subject_binding_id",
+    "trusted.authenticated_subject.verification_material_id",
+}
+
+# These State Machine parameter paths are not merely documentary registry
+# destinations: AbstractStateRunner executes the corresponding cross-message
+# binding checks.  Registry validation fails if a required path is disconnected.
+RUNNER_SECURITY_PARAMETER_READS = {
+    "session_acceptance": {
+        "session_acceptance_parameter.proposal_digest",
+        "session_acceptance_parameter.acceptance_digest",
+        *(
+            source.replace(
+                "trusted.authenticated_subject", "authenticated_subject_parameter"
+            )
+            for source in TRUSTED_SUBJECT_SOURCES
+        ),
+    },
+    "participant_binding": {
+        "participant_binding_parameter.participant_id",
+        "participant_binding_parameter.key_id",
+        *(
+            source.replace(
+                "trusted.authenticated_subject", "authenticated_subject_parameter"
+            )
+            for source in TRUSTED_SUBJECT_SOURCES
+        ),
+    },
+    "policy_acceptance": {
+        "policy_acceptance_parameter.policy_id",
+        "policy_acceptance_parameter.policy_version",
+        "policy_acceptance_parameter.acceptance_digest",
+    },
+    "commitment_registration": {"commitment_parameter.opaque_commitment"},
+    "evaluation_contribution": {"evaluation_contribution_parameter.contribution_ref"},
+    "opaque_receipt_ack": {
+        "opaque_receipt_parameter.opaque_receipt_ref",
+        "opaque_receipt_parameter.acknowledgment_status",
+        "opaque_receipt_parameter.profile_evidence_ref",
+    },
+    "result_acceptance_notice": {
+        "opaque_receipt_parameter.opaque_receipt_ref",
+        "opaque_receipt_parameter.acknowledgment_status",
+        "opaque_receipt_parameter.profile_evidence_ref",
+    },
+    "consent_grant": {
+        f"consent_binding_parameter.{field}"
+        for field in (
+            "opaque_receipt_ref",
+            "disclosure_profile_id",
+            "disclosure_profile_version",
+            "scope",
+            "audience",
+            "issued_at",
+            "expires_at",
+            "consent_nonce",
+            "consent_artifact_digest",
+        )
+    },
 }
 
 
@@ -206,6 +272,125 @@ def _material_index(materials: dict[str, Any]) -> dict[str, dict[str, Any]]:
         materials.get("materials", []), ("verification_material_id",)
     )
     return {str(key[0]): value for key, value in composite.items()}
+
+
+def authenticated_subject_parameter(
+    message: dict[str, Any],
+    materials: dict[str, Any],
+    authoritative_time: Any,
+) -> tuple[dict[str, Any] | None, list[Finding]]:
+    """Derive the trusted State Machine subject projection fail closed.
+
+    This value is deliberately not copied from a wire parameter.  It is created
+    only after the synthetic material registry has bound the sender, key,
+    subject, validity interval, and current authoritative verification time.
+    """
+
+    findings: list[Finding] = []
+    authentication = message.get("authentication", {})
+    sender = message.get("sender", {})
+    if not isinstance(authentication, dict) or not isinstance(sender, dict):
+        return None, [
+            _finding(
+                "authentication-subject",
+                "message",
+                "trusted subject requires sender and authentication objects",
+            )
+        ]
+    material_id = authentication.get("verification_material_id")
+    material = _material_index(materials).get(str(material_id))
+    if material is None:
+        return None, [
+            _finding(
+                "authentication-subject",
+                "message.authentication.verification_material_id",
+                "trusted subject requires known verification material",
+            )
+        ]
+    subject = material.get("subject", {})
+    if not isinstance(subject, dict):
+        subject = {}
+    for condition, path, detail in (
+        (
+            material.get("status") == "active",
+            "message.authentication.verification_material_id",
+            "trusted subject requires active verification material",
+        ),
+        (
+            authentication.get("key_id")
+            == sender.get("key_id")
+            == material.get("key_id"),
+            "message.authentication.key_id",
+            "sender, authentication, and material key IDs must match",
+        ),
+        (
+            authentication.get("mode") == material.get("mode")
+            and authentication.get("algorithm_id") == material.get("algorithm_id"),
+            "message.authentication",
+            "authentication mode and algorithm must match the reviewed material",
+        ),
+        (
+            subject.get("actor") == sender.get("actor"),
+            "message.sender.actor",
+            "material subject actor must match sender",
+        ),
+        (
+            subject.get("kind") != "party"
+            or subject.get("participant_id") == sender.get("participant_id"),
+            "message.sender.participant_id",
+            "material subject participant must match sender",
+        ),
+        (
+            sender.get("actor") not in PARTY_ACTORS or subject.get("kind") == "party",
+            "message.authentication.verification_material_id",
+            "Party event requires a Party verification-material subject",
+        ),
+    ):
+        if not condition:
+            findings.append(_finding("authentication-subject", path, detail))
+    issued = _parse_time(message.get("issued_at"), "message.issued_at", findings)
+    authoritative = _parse_time(
+        authoritative_time, "context.authoritative_time", findings
+    )
+    not_before = _parse_time(
+        material.get("not_before"), "material.not_before", findings
+    )
+    not_after = _parse_time(material.get("not_after"), "material.not_after", findings)
+    if issued and not_before and issued < not_before:
+        findings.append(
+            _finding(
+                "authentication-subject", "message.issued_at", "material not valid"
+            )
+        )
+    if issued and not_after and issued >= not_after:
+        findings.append(
+            _finding("authentication-subject", "message.issued_at", "material expired")
+        )
+    if authoritative and not_before and authoritative < not_before:
+        findings.append(
+            _finding(
+                "authentication-subject",
+                "context.authoritative_time",
+                "material not valid at authoritative time",
+            )
+        )
+    if authoritative and not_after and authoritative >= not_after:
+        findings.append(
+            _finding(
+                "authentication-subject",
+                "context.authoritative_time",
+                "material expired at authoritative time",
+            )
+        )
+    if findings:
+        return None, sorted(set(findings))
+    return {
+        "actor": subject.get("actor"),
+        "participant_id": subject.get("participant_id"),
+        "key_id": material.get("key_id"),
+        "subject_binding_id": material.get("subject_binding_id"),
+        "verification_material_id": material_id,
+    }, []
 
 
 def semantic_message_findings(
@@ -764,13 +949,15 @@ class AbstractStateRunner:
     base_context: dict[str, Any]
     phase: str = "UNINITIALIZED"
     proposal_digest: str | None = None
-    session_acceptance: dict[str, str | None] = field(
+    session_acceptance: dict[str, dict[str, Any] | None] = field(
         default_factory=lambda: {"a": None, "b": None}
     )
     participants: dict[str, dict[str, str] | None] = field(
         default_factory=lambda: {"party_a": None, "party_b": None}
     )
-    policy_accepted: set[str] = field(default_factory=set)
+    policy_acceptance: dict[str, dict[str, Any] | None] = field(
+        default_factory=lambda: {"a": None, "b": None}
+    )
     budget_reserved: bool = False
     commitments: dict[str, str | None] = field(
         default_factory=lambda: {"a": None, "b": None}
@@ -778,10 +965,16 @@ class AbstractStateRunner:
     commitment_pair_id: str | None = None
     evaluation_attempt_id: str | None = None
     selected_integration_profile: dict[str, str] | None = None
-    contributions: set[str] = field(default_factory=set)
-    receipt_acks: set[str] = field(default_factory=set)
-    accepted_result: bool = False
-    consents: set[str] = field(default_factory=set)
+    contributions: dict[str, str | None] = field(
+        default_factory=lambda: {"a": None, "b": None}
+    )
+    receipt_acks: dict[str, dict[str, Any] | None] = field(
+        default_factory=lambda: {"a": None, "b": None}
+    )
+    accepted_receipt: dict[str, Any] | None = None
+    consents: dict[str, dict[str, Any] | None] = field(
+        default_factory=lambda: {"a": None, "b": None}
+    )
     next_sequence: dict[str, int] = field(default_factory=lambda: {"a": 0, "b": 0})
 
     def context(self, prior_head: str) -> dict[str, Any]:
@@ -796,7 +989,12 @@ class AbstractStateRunner:
         )
         return context
 
-    def apply(self, message: dict[str, Any], registry: dict[str, Any]) -> list[Finding]:
+    def apply(
+        self,
+        message: dict[str, Any],
+        registry: dict[str, Any],
+        materials: dict[str, Any],
+    ) -> list[Finding]:
         """Validate one enabled transition and atomically apply its abstract effect."""
 
         before = copy.deepcopy(self.__dict__)
@@ -813,6 +1011,15 @@ class AbstractStateRunner:
         )
         payload = message.get("payload", {})
         transition: str | None = None
+        trusted_subject: dict[str, Any] | None = None
+
+        if party:
+            trusted_subject, subject_findings = authenticated_subject_parameter(
+                message,
+                materials,
+                self.base_context.get("authoritative_time"),
+            )
+            findings.extend(subject_findings)
 
         def require(condition: bool, detail: str) -> None:
             if not condition:
@@ -839,8 +1046,22 @@ class AbstractStateRunner:
             require(
                 self.session_acceptance[party] is None, "acceptance slot is immutable"
             )
+            require(
+                trusted_subject is not None
+                and trusted_subject.get("actor") == f"party_{party}_client",
+                "acceptance requires the validated Party-slot subject projection",
+            )
             if not findings:
-                self.session_acceptance[party] = payload.get("acceptance_digest")
+                self.session_acceptance[party] = {
+                    "proposal_digest": payload.get("proposal_digest"),
+                    "acceptance_digest": payload.get("acceptance_digest"),
+                    "participant_id": trusted_subject.get("participant_id"),
+                    "key_id": trusted_subject.get("key_id"),
+                    "subject_binding_id": trusted_subject.get("subject_binding_id"),
+                    "verification_material_id": trusted_subject.get(
+                        "verification_material_id"
+                    ),
+                }
         elif message_type == "participant_binding" and party:
             other = "b" if party == "a" else "a"
             transition = (
@@ -857,6 +1078,21 @@ class AbstractStateRunner:
                 self.participants[f"party_{party}"] is None,
                 "participant slot is already bound",
             )
+            acceptance = self.session_acceptance[party] or {}
+            require(
+                trusted_subject is not None
+                and payload.get("participant_id")
+                == acceptance.get("participant_id")
+                == trusted_subject.get("participant_id")
+                and payload.get("participant_key_id")
+                == acceptance.get("key_id")
+                == trusted_subject.get("key_id")
+                and acceptance.get("subject_binding_id")
+                == trusted_subject.get("subject_binding_id")
+                and acceptance.get("verification_material_id")
+                == trusted_subject.get("verification_material_id"),
+                "participant binding must equal the immutable accepted authenticated subject",
+            )
             if not findings:
                 self.participants[f"party_{party}"] = {
                     "participant_id": payload.get("participant_id"),
@@ -870,13 +1106,29 @@ class AbstractStateRunner:
                 self.phase == "PARTICIPANTS_BOUND",
                 "policy acceptance requires both participants bound",
             )
+            expected_policy = self.base_context.get("session_context", {}).get(
+                "policy", {}
+            )
+            require(
+                payload.get("policy_id") == expected_policy.get("policy_id")
+                and payload.get("policy_version")
+                == expected_policy.get("policy_version"),
+                "policy acceptance must equal the current policy ID and version",
+            )
+            require(
+                self.policy_acceptance[party] is None,
+                "Party policy acceptance slot is immutable",
+            )
             if not findings:
-                self.policy_accepted.add(party)
+                self.policy_acceptance[party] = {
+                    key: payload.get(key)
+                    for key in ("policy_id", "policy_version", "acceptance_digest")
+                }
         elif message_type == "query_budget_reservation":
             transition = "TR-RESERVE-BUDGET"
             require(
                 self.phase == "PARTICIPANTS_BOUND"
-                and self.policy_accepted == {"a", "b"},
+                and all(self.policy_acceptance.values()),
                 "budget reservation requires bilateral policy acceptance",
             )
             if not findings:
@@ -893,10 +1145,32 @@ class AbstractStateRunner:
                 self.phase == "COMMITMENTS_PENDING",
                 "commitment requires budget reservation",
             )
+            require(
+                self.commitments[party] is None,
+                "Party commitment slot is immutable",
+            )
             if not findings:
                 self.commitments[party] = payload.get("opaque_commitment")
                 if all(self.commitments.values()):
-                    self.commitment_pair_id = payload.get("commitment_pair_id")
+                    require(
+                        self.commitment_pair_id is None,
+                        "commitment pair identifier is immutable",
+                    )
+                    if not findings:
+                        session = self.base_context["session_context"]
+                        self.commitment_pair_id = commitment_pair_digest(
+                            protocol_profile=(
+                                f"{message['protocol_profile']}/v{message['protocol_version']}"
+                            ),
+                            policy_binding=copy.deepcopy(session["policy"]),
+                            session_id=session["session_id"],
+                            participant_binding=copy.deepcopy(self.participants),
+                            selected_integration_profile_binding=copy.deepcopy(
+                                self.selected_integration_profile or {}
+                            ),
+                            commitment_a=str(self.commitments["a"]),
+                            commitment_b=str(self.commitments["b"]),
+                        )
                     self.phase = "COMMITTED"
         elif message_type == "evaluation_start":
             transition = "TR-START-EVALUATION"
@@ -913,23 +1187,106 @@ class AbstractStateRunner:
         elif message_type == "evaluation_contribution" and party:
             transition = f"TR-SUBMIT-CONTRIBUTION-{party.upper()}"
             require(self.phase == "EVALUATING", "contribution requires EVALUATING")
+            require(
+                self.contributions[party] is None,
+                "Party contribution slot is immutable",
+            )
             if not findings:
-                self.contributions.add(party)
+                self.contributions[party] = payload.get("contribution_ref")
         elif message_type == "opaque_receipt_ack" and party:
             transition = f"TR-ACK-RECEIPT-{party.upper()}"
             require(
                 self.phase == "EVALUATING", "receipt acknowledgment requires EVALUATING"
             )
+            require(
+                all(self.contributions.values()),
+                "receipt acknowledgment requires both evaluation contributions",
+            )
+            require(
+                self.receipt_acks[party] is None,
+                "Party receipt acknowledgment slot is immutable",
+            )
+            require(
+                payload.get("acknowledgment_status") == "ACKNOWLEDGED",
+                "Party receipt status must be ACKNOWLEDGED",
+            )
+            session_context = message.get("session_context", {})
+            require(
+                isinstance(session_context, dict)
+                and session_context.get("session_id")
+                == self.base_context.get("session_context", {}).get("session_id")
+                and session_context.get("evaluation_attempt_id")
+                == self.evaluation_attempt_id
+                and session_context.get("selected_integration_profile")
+                == self.selected_integration_profile,
+                "Party receipt must bind the current session, profile, and attempt",
+            )
+            peer_ack = self.receipt_acks["b" if party == "a" else "a"]
+            if peer_ack is not None:
+                require(
+                    payload.get("opaque_receipt_ref")
+                    == peer_ack.get("opaque_receipt_ref"),
+                    "Party opaque receipt references must match exactly",
+                )
             if not findings:
-                self.receipt_acks.add(party)
+                self.receipt_acks[party] = {
+                    key: copy.deepcopy(payload.get(key))
+                    for key in (
+                        "opaque_receipt_ref",
+                        "acknowledgment_status",
+                        "profile_evidence_ref",
+                    )
+                }
         elif message_type == "result_acceptance_notice":
             transition = "TR-ACCEPT-SYMMETRIC-RESULT"
             require(
-                self.phase == "EVALUATING" and self.receipt_acks == {"a", "b"},
+                self.phase == "EVALUATING" and all(self.receipt_acks.values()),
                 "result acceptance requires bilateral acknowledgments",
             )
+            ack_a, ack_b = self.receipt_acks["a"] or {}, self.receipt_acks["b"] or {}
+            require(
+                ack_a.get("opaque_receipt_ref")
+                == ack_b.get("opaque_receipt_ref")
+                == payload.get("opaque_receipt_ref"),
+                "Party and callback opaque receipt references must match exactly",
+            )
+            require(
+                ack_a.get("acknowledgment_status")
+                == ack_b.get("acknowledgment_status")
+                == "ACKNOWLEDGED"
+                and payload.get("acknowledgment_status") == "BOTH_ACKNOWLEDGED",
+                "callback requires two ACKNOWLEDGED Party records and BOTH_ACKNOWLEDGED status",
+            )
+            require(
+                bool(payload.get("profile_evidence_ref")),
+                "result callback requires an opaque profile evidence reference",
+            )
+            identity = message.get("identity", {})
+            require(
+                isinstance(identity, dict)
+                and all(
+                    identity.get(key)
+                    == (self.selected_integration_profile or {}).get(key)
+                    for key in (
+                        "profile_id",
+                        "profile_version",
+                        "profile_instance_id",
+                    )
+                )
+                and identity.get("session_id")
+                == self.base_context.get("session_context", {}).get("session_id")
+                and identity.get("evaluation_attempt_id") == self.evaluation_attempt_id,
+                "result callback must bind the current profile, session, and attempt",
+            )
             if not findings:
-                self.accepted_result = True
+                self.accepted_receipt = {
+                    key: copy.deepcopy(payload.get(key))
+                    for key in (
+                        "opaque_receipt_ref",
+                        "acknowledgment_status",
+                        "profile_evidence_ref",
+                    )
+                }
                 self.phase = "RESULT_ACCEPTED"
         elif message_type == "consent_grant" and party:
             transition = f"TR-GRANT-CONSENT-{party.upper()}"
@@ -937,8 +1294,47 @@ class AbstractStateRunner:
                 self.phase in {"RESULT_ACCEPTED", "CONSENT_PENDING"},
                 "consent requires accepted result",
             )
+            require(
+                self.accepted_receipt is not None
+                and payload.get("opaque_receipt_ref")
+                == self.accepted_receipt.get("opaque_receipt_ref"),
+                "consent receipt must equal the accepted bilateral receipt",
+            )
+            require(
+                self.consents[party] is None,
+                "Party consent slot is immutable and cannot be reused",
+            )
+            issued = _parse_time(
+                payload.get("issued_at"), f"{message_type}.issued_at", findings
+            )
+            expires = _parse_time(
+                payload.get("expires_at"), f"{message_type}.expires_at", findings
+            )
+            authoritative = _parse_time(
+                self.base_context.get("authoritative_time"),
+                "context.authoritative_time",
+                findings,
+            )
+            require(
+                bool(issued and expires and authoritative)
+                and issued < expires
+                and issued <= authoritative < expires,
+                "consent must be active at coordinator authoritative time",
+            )
+            other = self.consents["b" if party == "a" else "a"]
+            if other is not None:
+                for key in (
+                    "disclosure_profile_id",
+                    "disclosure_profile_version",
+                    "scope",
+                    "audience",
+                ):
+                    require(
+                        payload.get(key) == other.get(key),
+                        f"bilateral consent {key} must match exactly",
+                    )
             if not findings:
-                self.consents.add(party)
+                self.consents[party] = copy.deepcopy(payload)
                 self.phase = "CONSENT_PENDING"
         elif message_type == "close_notice":
             transition = "TR-CLOSE"
@@ -980,6 +1376,33 @@ class AbstractStateRunner:
             self.__dict__.clear()
             self.__dict__.update(before)
         return sorted(set(findings))
+
+
+def apply_trace_message_atomically(
+    runner: AbstractStateRunner,
+    transcript: TranscriptState,
+    message: dict[str, Any],
+    registry: dict[str, Any],
+    materials: dict[str, Any],
+) -> tuple[str, list[Finding]]:
+    """Apply state, dedup, and transcript effects as one abstract transaction."""
+
+    classification = transcript.dedup.classify(message, commit=False)
+    if classification in {"EXACT_DUPLICATE", "REPLAY_CONFLICT", "EXCLUDED"}:
+        return transcript.accept_message(message), []
+    candidate_runner = copy.deepcopy(runner)
+    findings = candidate_runner.apply(message, registry, materials)
+    if findings:
+        return "REJECTED", findings
+    candidate_transcript = copy.deepcopy(transcript)
+    outcome = candidate_transcript.accept_message(message)
+    if outcome != "ACCEPTED":
+        return outcome, []
+    runner.__dict__.clear()
+    runner.__dict__.update(candidate_runner.__dict__)
+    transcript.__dict__.clear()
+    transcript.__dict__.update(candidate_transcript.__dict__)
+    return outcome, []
 
 
 def registry_findings(
@@ -1094,6 +1517,8 @@ def registry_findings(
             | identity_sources.get(str(delivery), set())
             | {"absent.party_local_result"}
         )
+        if item.get("message_type") in {"session_acceptance", "participant_binding"}:
+            allowed_sources |= TRUSTED_SUBJECT_SOURCES
         observed_sources: list[str] = []
         observed_destinations: list[str] = []
         for mapping in item.get("parameter_sources", []):
@@ -1192,6 +1617,7 @@ def registry_findings(
             for source in observed_sources
             if not source.startswith(("payload.", "message."))
             and source != "absent.party_local_result"
+            and source not in TRUSTED_SUBJECT_SOURCES
         }
         protected_result_marker = "absent.party_local_result" in observed_sources
         protected_result_marker_invalid = protected_result_marker != (
@@ -1248,6 +1674,19 @@ def registry_findings(
                     "parameter-mapping-destination",
                     str(item.get("message_type")),
                     "event-parameter destination must be mapped exactly once",
+                )
+            )
+        runner_required = RUNNER_SECURITY_PARAMETER_READS.get(
+            str(item.get("message_type")), set()
+        )
+        missing_runner_paths = sorted(runner_required - mapped_state_paths)
+        if missing_runner_paths:
+            findings.append(
+                _finding(
+                    "state-runner-mapping",
+                    str(item.get("message_type")),
+                    "security-relevant State Machine destinations are not executed: "
+                    + ", ".join(missing_runner_paths),
                 )
             )
         if message_schema is not None:
@@ -1539,20 +1978,25 @@ def validate_repository(root: Path) -> list[Finding]:
             if entry.get("kind") == "message":
                 message = entry["message"]
                 stage_context = runner.context(state.head)
-                findings.extend(
-                    semantic_message_findings(
+                message_findings = semantic_message_findings(
+                    message,
+                    loaded["registry"],
+                    loaded["materials"],
+                    stage_context,
+                    path=f"{EXPECTED_DIGESTS}.entries.{index - 1}.message",
+                )
+                findings.extend(message_findings)
+                if message_findings:
+                    outcome = "REJECTED"
+                else:
+                    outcome, trace_findings = apply_trace_message_atomically(
+                        runner,
+                        state,
                         message,
                         loaded["registry"],
                         loaded["materials"],
-                        stage_context,
-                        path=f"{EXPECTED_DIGESTS}.entries.{index - 1}.message",
                     )
-                )
-                next_runner = copy.deepcopy(runner)
-                findings.extend(next_runner.apply(message, loaded["registry"]))
-                outcome = state.accept_message(message)
-                if outcome == "ACCEPTED":
-                    runner = next_runner
+                    findings.extend(trace_findings)
             else:
                 outcome = state.accept_timer(entry["timer_event"])
                 if outcome == "ACCEPTED":

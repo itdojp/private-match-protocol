@@ -190,8 +190,8 @@ has whole-map or peer-entry access.
 
 ### Machine-readable event-parameter flow
 
-All 20 abstract event-parameter records have field-level catalogs. The YAML also
-contains 84 predicate/operation contracts that list each required
+All 21 abstract event-parameter records have field-level catalogs. The YAML also
+contains 92 predicate/operation contracts that list each required
 `parameter_reads` path. This makes session and policy context, sender identity,
 message replay identity, participant/key binding, policy acceptance digest,
 commitment, attempt, contribution, local result, receipt, consent, extension,
@@ -232,6 +232,12 @@ The major transition families are:
 | Duplicate | party, operation, and profile retry events | No-op and return the delivery-class-specific prior normalized response |
 | New evaluation | `request_new_evaluation_session` | No change to current session; require new authorization and binding |
 
+Session acceptance stores the trusted participant, key, subject-binding, and
+verification-material identity produced after material validation. Participant
+binding must equal that immutable Party-specific acceptance record; a different
+active material or key requires a new session because v0.1 has no rotation
+transition.
+
 The YAML contains 41 transitions. Proposal acceptance, participant order, first/final binding,
 result acceptance, conflict, deadline crossing, extension authorization, and
 delivery-class retry paths have distinct guards and atomic effects.
@@ -264,6 +270,14 @@ automatic fallback are forbidden. Conflict moves to `ABORTED` with normalized
 
 After `evaluation_started` becomes true, neither commitment, the commitment pair,
 policy/version binding, nor participant/key binding can change.
+
+The pair identifier is never Party supplied. On the second Party commitment the
+coordinator atomically derives `sha256:<64 lowercase hex>` from RFC 8785 bytes in
+fixed A/B slot order under `private-match-commitment-pair/v0.1`. The canonical
+input includes protocol profile, policy, session, participant bindings, selected
+integration profile, and both opaque commitments. Before the second commitment
+the identifier remains `NONE`. This construction binds identity only; it does
+not prove commitment truth, input completeness, or PET security.
 
 ### `INV-SESSION-BINDING`
 
@@ -348,8 +362,13 @@ particular operational budget, minimum set size, or abuse policy is sufficient.
 The parties derive their local result under a selected profile and acknowledge
 the profile-defined opaque receipt. Acceptance requires:
 
+- both profile contribution records exist;
 - both acknowledgments exist;
 - both reference exactly the same opaque receipt;
+- each Party status is `ACKNOWLEDGED` and the profile callback status is
+  `BOTH_ACKNOWLEDGED`;
+- the callback evidence and identity bind the current profile, session, and
+  evaluation attempt;
 - both local result values are identical and in the three-value result set;
 - no result has already been accepted for the commitment pair;
 - verification material exists and is current; and
@@ -371,6 +390,13 @@ Consent may be registered only after result acceptance. Each consent binds to:
 - `issued_at` and `expires_at`;
 - consent nonce; and
 - consent artifact digest.
+
+The abstract executor checks these values across messages rather than only
+checking phase prerequisites. A consent receipt must equal the accepted receipt;
+the bilateral profile ID/version, scope, and audience must match exactly; the
+coordinator-authoritative time must be inside the consent interval; and each
+Party nonce/digest slot is immutable. Failed cross-message guards are atomic and
+do not update state, dedup indexes, transcript, query budget, or audit state.
 
 v0.1 chooses **new session required** after consent expiry or withdrawal. Each
 party consent slot is single-use within the session. An accepted withdrawal

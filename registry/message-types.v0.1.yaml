@@ -294,6 +294,76 @@ messages:
         operation: E-ACCEPT-SESSION-A
       - transition: TR-ACCEPT-SESSION-B
         operation: E-ACCEPT-SESSION-B
+  - source: trusted.authenticated_subject.actor
+    destination:
+      kind: event-parameter
+      parameter: authenticated_subject_parameter
+      field: actor
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-AUTHENTICATED-SUBJECT-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-AUTHENTICATED-SUBJECT-B
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-SESSION-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-SESSION-B
+  - source: trusted.authenticated_subject.participant_id
+    destination:
+      kind: event-parameter
+      parameter: authenticated_subject_parameter
+      field: participant_id
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-AUTHENTICATED-SUBJECT-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-AUTHENTICATED-SUBJECT-B
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-SESSION-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-SESSION-B
+  - source: trusted.authenticated_subject.key_id
+    destination:
+      kind: event-parameter
+      parameter: authenticated_subject_parameter
+      field: key_id
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-AUTHENTICATED-SUBJECT-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-AUTHENTICATED-SUBJECT-B
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-SESSION-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-SESSION-B
+  - source: trusted.authenticated_subject.subject_binding_id
+    destination:
+      kind: event-parameter
+      parameter: authenticated_subject_parameter
+      field: subject_binding_id
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-AUTHENTICATED-SUBJECT-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-AUTHENTICATED-SUBJECT-B
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-SESSION-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-SESSION-B
+  - source: trusted.authenticated_subject.verification_material_id
+    destination:
+      kind: event-parameter
+      parameter: authenticated_subject_parameter
+      field: verification_material_id
+      consumed_by:
+      - transition: TR-ACCEPT-SESSION-A
+        operation: G-AUTHENTICATED-SUBJECT-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: G-AUTHENTICATED-SUBJECT-B
+      - transition: TR-ACCEPT-SESSION-A
+        operation: E-ACCEPT-SESSION-A
+      - transition: TR-ACCEPT-SESSION-B
+        operation: E-ACCEPT-SESSION-B
   - source: message.message_digest
     destination:
       kind: event-parameter
@@ -552,6 +622,14 @@ messages:
         operation: E-BIND-B-COMPLETE
       - transition: TR-BIND-B-FIRST
         operation: E-BIND-B
+      - transition: TR-BIND-A-FIRST
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-B-FIRST
+        operation: G-SESSION-ACCEPTED-B
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-SESSION-ACCEPTED-B
   - source: payload.participant_key_id
     destination:
       kind: event-parameter
@@ -566,6 +644,84 @@ messages:
         operation: E-BIND-B-COMPLETE
       - transition: TR-BIND-B-FIRST
         operation: E-BIND-B
+      - transition: TR-BIND-A-FIRST
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-B-FIRST
+        operation: G-SESSION-ACCEPTED-B
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-SESSION-ACCEPTED-B
+  - source: trusted.authenticated_subject.actor
+    destination:
+      kind: event-parameter
+      parameter: authenticated_subject_parameter
+      field: actor
+      consumed_by:
+      - transition: TR-BIND-A-FIRST
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-B-FIRST
+        operation: G-SESSION-ACCEPTED-B
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-SESSION-ACCEPTED-B
+  - source: trusted.authenticated_subject.participant_id
+    destination:
+      kind: event-parameter
+      parameter: authenticated_subject_parameter
+      field: participant_id
+      consumed_by:
+      - transition: TR-BIND-A-FIRST
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-B-FIRST
+        operation: G-SESSION-ACCEPTED-B
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-SESSION-ACCEPTED-B
+  - source: trusted.authenticated_subject.key_id
+    destination:
+      kind: event-parameter
+      parameter: authenticated_subject_parameter
+      field: key_id
+      consumed_by:
+      - transition: TR-BIND-A-FIRST
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-B-FIRST
+        operation: G-SESSION-ACCEPTED-B
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-SESSION-ACCEPTED-B
+  - source: trusted.authenticated_subject.subject_binding_id
+    destination:
+      kind: event-parameter
+      parameter: authenticated_subject_parameter
+      field: subject_binding_id
+      consumed_by:
+      - transition: TR-BIND-A-FIRST
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-B-FIRST
+        operation: G-SESSION-ACCEPTED-B
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-SESSION-ACCEPTED-B
+  - source: trusted.authenticated_subject.verification_material_id
+    destination:
+      kind: event-parameter
+      parameter: authenticated_subject_parameter
+      field: verification_material_id
+      consumed_by:
+      - transition: TR-BIND-A-FIRST
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-A-COMPLETE
+        operation: G-SESSION-ACCEPTED-A
+      - transition: TR-BIND-B-FIRST
+        operation: G-SESSION-ACCEPTED-B
+      - transition: TR-BIND-B-COMPLETE
+        operation: G-SESSION-ACCEPTED-B
   - source: message.message_digest
     destination:
       kind: event-parameter
@@ -922,6 +1078,10 @@ messages:
         operation: E-ACCEPT-POLICY-A
       - transition: TR-ACCEPT-POLICY-B
         operation: E-ACCEPT-POLICY-B
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-POLICY-NOT-ACCEPTED-A
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-POLICY-NOT-ACCEPTED-B
   - source: payload.policy_version
     destination:
       kind: event-parameter
@@ -932,6 +1092,10 @@ messages:
         operation: E-ACCEPT-POLICY-A
       - transition: TR-ACCEPT-POLICY-B
         operation: E-ACCEPT-POLICY-B
+      - transition: TR-ACCEPT-POLICY-A
+        operation: G-POLICY-NOT-ACCEPTED-A
+      - transition: TR-ACCEPT-POLICY-B
+        operation: G-POLICY-NOT-ACCEPTED-B
   - source: payload.acceptance_digest
     destination:
       kind: event-parameter
@@ -1155,7 +1319,6 @@ messages:
   payload:
     required_fields:
     - opaque_commitment
-    - commitment_pair_id
     prohibited_fields:
     - raw_identifiers
     - normalized_identifiers
@@ -1200,10 +1363,6 @@ messages:
         operation: E-COMMIT-B-PAIR
       - transition: TR-COMMIT-B-FIRST
         operation: E-COMMIT-B
-  - source: payload.commitment_pair_id
-    destination:
-      kind: special
-      special: context-derived-assertion
   - source: message.message_digest
     destination:
       kind: event-parameter
@@ -2166,12 +2325,32 @@ messages:
         operation: E-ACK-RECEIPT-B
   - source: payload.acknowledgment_status
     destination:
-      kind: special
-      special: normalized-acknowledgment
+      kind: event-parameter
+      parameter: opaque_receipt_parameter
+      field: acknowledgment_status
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-OPAQUE-RECEIPT
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-OPAQUE-RECEIPT
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-ACK-RECEIPT-A
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-ACK-RECEIPT-B
   - source: payload.profile_evidence_ref
     destination:
-      kind: special
-      special: opaque-evidence-reference
+      kind: event-parameter
+      parameter: opaque_receipt_parameter
+      field: profile_evidence_ref
+      consumed_by:
+      - transition: TR-ACK-RECEIPT-A
+        operation: G-OPAQUE-RECEIPT
+      - transition: TR-ACK-RECEIPT-B
+        operation: G-OPAQUE-RECEIPT
+      - transition: TR-ACK-RECEIPT-A
+        operation: E-ACK-RECEIPT-A
+      - transition: TR-ACK-RECEIPT-B
+        operation: E-ACK-RECEIPT-B
   - source: message.message_digest
     destination:
       kind: event-parameter
@@ -2425,14 +2604,34 @@ messages:
       consumed_by:
       - transition: TR-ACCEPT-SYMMETRIC-RESULT
         operation: G-SAME-OPAQUE-RECEIPT
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-RESULT
+      - transition: TR-RESULT-CONFLICT
+        operation: G-RESULT-CONFLICT
   - source: payload.acknowledgment_status
     destination:
-      kind: special
-      special: normalized-acknowledgment
+      kind: event-parameter
+      parameter: opaque_receipt_parameter
+      field: acknowledgment_status
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-SAME-OPAQUE-RECEIPT
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-RESULT
+      - transition: TR-RESULT-CONFLICT
+        operation: G-RESULT-CONFLICT
   - source: payload.profile_evidence_ref
     destination:
-      kind: special
-      special: opaque-evidence-reference
+      kind: event-parameter
+      parameter: opaque_receipt_parameter
+      field: profile_evidence_ref
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-SAME-OPAQUE-RECEIPT
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-RESULT
+      - transition: TR-RESULT-CONFLICT
+        operation: G-RESULT-CONFLICT
   - source: message.message_digest
     destination:
       kind: event-parameter

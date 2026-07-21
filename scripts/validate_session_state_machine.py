@@ -3032,6 +3032,8 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
         "party_acceptance",
         "binding_prerequisite",
         "downgrade_prevention",
+        "trusted_subject_projection",
+        "key_rotation_policy",
     }:
         findings.append(
             _finding(
@@ -3070,6 +3072,35 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                     "Party acceptance must have its own event and transition",
                 )
             )
+
+        trusted_paths = {
+            f"authenticated_subject_parameter.{field}"
+            for field in (
+                "actor",
+                "participant_id",
+                "key_id",
+                "subject_binding_id",
+                "verification_material_id",
+            )
+        }
+        acceptance_effect = next(
+            (
+                item
+                for item in acceptance.get("effects", [])
+                if item.get("id") == f"E-ACCEPT-SESSION-{party}"
+            ),
+            {},
+        )
+        if not trusted_paths.issubset(
+            set(acceptance_effect.get("parameter_reads", []))
+        ):
+            findings.append(
+                _finding(
+                    "session-acceptance",
+                    f"TR-ACCEPT-SESSION-{party}",
+                    "acceptance must atomically store the complete trusted subject projection",
+                )
+            )
         for suffix in ("FIRST", "COMPLETE"):
             binding = transition_index.get(f"TR-BIND-{party}-{suffix}", {})
             guard_ids = {item.get("id") for item in binding.get("guards", [])}
@@ -3081,6 +3112,120 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                         "participant binding requires Party-specific exact-proposal acceptance",
                     )
                 )
+            subject_guard = next(
+                (
+                    item
+                    for item in binding.get("guards", [])
+                    if item.get("id") == f"G-SESSION-ACCEPTED-{party}"
+                ),
+                {},
+            )
+            required_binding = trusted_paths | {
+                "participant_binding_parameter.participant_id",
+                "participant_binding_parameter.key_id",
+            }
+            if not required_binding.issubset(
+                set(subject_guard.get("parameter_reads", []))
+            ):
+                findings.append(
+                    _finding(
+                        "session-acceptance",
+                        f"TR-BIND-{party}-{suffix}",
+                        "binding must equal the accepted participant, key, subject, and material",
+                    )
+                )
+
+    commitment_semantics = model.get("commitment_pair_derivation", {})
+    if (
+        commitment_semantics.get("domain") != "private-match-commitment-pair/v0.1"
+        or commitment_semantics.get("canonicalization") != "RFC 8785 JCS"
+        or commitment_semantics.get("slot_order") != ["party_a", "party_b"]
+        or commitment_semantics.get("party_supplied_identifier") != "forbidden"
+        or set(commitment_semantics.get("canonical_fields", []))
+        != {
+            "protocol_profile",
+            "policy_binding",
+            "session_id",
+            "participant_binding.party_a",
+            "participant_binding.party_b",
+            "selected_integration_profile_binding",
+            "commitment_a",
+            "commitment_b",
+        }
+    ):
+        findings.append(
+            _finding(
+                "commitment-pair-derivation",
+                "commitment_pair_derivation",
+                "v0.1 requires the complete deterministic coordinator-derived A/B binding",
+            )
+        )
+    for transition_id in ("TR-COMMIT-A-COMPLETE", "TR-COMMIT-B-COMPLETE"):
+        transition = transition_index.get(transition_id, {})
+        guard = next(
+            (
+                item
+                for item in transition.get("guards", [])
+                if item.get("id") == "G-COMMITMENT-PAIR-CONTEXT"
+            ),
+            {},
+        )
+        if not {
+            "protocol_profile",
+            "policy_binding",
+            "session_id",
+            "participant_binding",
+            "selected_integration_profile_binding",
+            "commitment",
+            "commitment_pair_id",
+        }.issubset(set(guard.get("reads", []))):
+            findings.append(
+                _finding(
+                    "commitment-pair-derivation",
+                    transition_id,
+                    "second commitment must read the complete immutable derivation context",
+                )
+            )
+
+    cross_message = model.get("cross_message_binding_semantics", {})
+    rules = {
+        item.get("id"): item
+        for item in cross_message.get("rules", [])
+        if isinstance(item, dict)
+    }
+    required_rule_ids = {
+        "XMSG-SESSION-ACCEPTANCE-SUBJECT",
+        "XMSG-POLICY-ACCEPTANCE",
+        "XMSG-COMMITMENT-PAIR",
+        "XMSG-RECEIPT-ACCEPTANCE",
+        "XMSG-CONSENT-BINDING",
+    }
+    if set(rules) != required_rule_ids or "no state" not in str(
+        cross_message.get("atomic_failure_rule", "")
+    ):
+        findings.append(
+            _finding(
+                "cross-message-binding",
+                "cross_message_binding_semantics",
+                "all reviewed cross-message rules and atomic failure behavior are required",
+            )
+        )
+    catalog_paths = {
+        f"{parameter.get('id')}.{field.get('id')}"
+        for parameter in model.get("event_parameter_catalog", [])
+        for field in parameter.get("fields", [])
+    }
+    for rule_id, rule in rules.items():
+        unknown_paths = set(rule.get("required_parameter_paths", [])) - catalog_paths
+        if unknown_paths:
+            findings.append(
+                _finding(
+                    "cross-message-binding",
+                    rule_id,
+                    "unknown required parameter paths: "
+                    + ", ".join(sorted(unknown_paths)),
+                )
+            )
 
     return sorted(set(findings))
 

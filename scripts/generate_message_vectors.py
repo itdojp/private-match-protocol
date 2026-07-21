@@ -24,6 +24,7 @@ from validate_messages import AbstractStateRunner
 
 REGISTRY_PATH = Path("registry/message-types.v0.1.yaml")
 CONTEXT_PATH = Path("conformance/messages/context.v0.1.yaml")
+MATERIAL_PATH = Path("conformance/messages/verification-materials.v0.1.yaml")
 VALID_DIR = Path("conformance/messages/valid")
 INVALID_DIR = Path("conformance/messages/invalid")
 EXPECTED_PATH = Path("conformance/messages/expected-digests/vectors.v0.1.json")
@@ -107,7 +108,6 @@ def _payload(message_type: str, party: str | None = None) -> dict[str, Any]:
         },
         "commitment_registration": {
             "opaque_commitment": f"urn:private-match:test:opaque-commitment:{slot}",
-            "commitment_pair_id": "urn:private-match:test:commitment-pair:0001",
         },
         "query_budget_reservation": {
             "authorization_ref": "urn:private-match:test:budget-authorization:0001"
@@ -295,6 +295,7 @@ def _canonical_file(value: Any) -> bytes:
 def generated_files(root: Path) -> dict[Path, bytes]:
     registry = _load_yaml(root / REGISTRY_PATH)
     context = _load_yaml(root / CONTEXT_PATH)
+    materials = _load_yaml(root / MATERIAL_PATH)
     context["prior_transcript_digest"] = transcript_genesis_digest()
     files: dict[Path, bytes] = {
         CONTEXT_PATH: yaml.safe_dump(context, sort_keys=False).encode()
@@ -311,9 +312,6 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             "key_id": "urn:private-match:test:key:party-b:v0.1",
         },
     }
-    full_context["session_context"]["commitment_pair_id"] = (
-        "urn:private-match:test:commitment-pair:0001"
-    )
     full_context["session_context"]["evaluation_attempt_id"] = (
         "urn:private-match:test:evaluation:0001"
     )
@@ -337,7 +335,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             prior=stage_head,
             sequence=stage_runner.next_sequence[party] if party else None,
         )
-        stage_findings = stage_runner.apply(stage_message, registry)
+        stage_findings = stage_runner.apply(stage_message, registry, materials)
         if stage_findings:
             raise ValueError(
                 "invalid standalone vector stage: "
@@ -346,6 +344,9 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         stage_head = append_transcript(
             stage_head, stage_index, stage_message["message_digest"]
         )
+    full_context["session_context"]["commitment_pair_id"] = (
+        stage_runner.commitment_pair_id
+    )
     cases: list[tuple[str, str, str | None]] = [
         ("session-proposal", "session_proposal", None),
         ("session-acceptance-a", "session_acceptance", "a"),
@@ -418,6 +419,9 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     m = copy.deepcopy(base)
     m["unexpected"] = True
     add_invalid("unknown-field", m, "schema")
+    m = copy.deepcopy(built["commitment-registration-a"])
+    m["payload"]["commitment_pair_id"] = "sha256:" + "a" * 64
+    add_invalid("party-supplied-commitment-pair-id", populate_digests(m), "schema")
     m = copy.deepcopy(base)
     m["message_type"] = "unknown_message"
     add_invalid("unknown-message-type", m, "unknown-message-type")
@@ -772,7 +776,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             prior=head,
             sequence=runner.next_sequence[party] if party else None,
         )
-        trace_findings = runner.apply(message, registry)
+        trace_findings = runner.apply(message, registry, materials)
         if trace_findings:
             raise ValueError(
                 "invalid generated state trace: " + "; ".join(map(str, trace_findings))
@@ -814,7 +818,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         serial=1000 + close_index,
         prior=head,
     )
-    trace_findings = runner.apply(close_message, registry)
+    trace_findings = runner.apply(close_message, registry, materials)
     if trace_findings:
         raise ValueError(
             "invalid generated close transition: " + "; ".join(map(str, trace_findings))

@@ -30,6 +30,7 @@ MESSAGE_DOMAIN = "private-match-message/v0.1"
 TRANSCRIPT_DOMAIN = "private-match-transcript/v0.1"
 TRANSCRIPT_GENESIS_DOMAIN = "private-match-transcript-genesis/v0.1"
 TIMER_EVENT_DOMAIN = "private-match-timer-event/v0.1"
+COMMITMENT_PAIR_DOMAIN = "private-match-commitment-pair/v0.1"
 
 SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 MAX_JSON_BYTES = 1_048_576
@@ -195,6 +196,38 @@ def parse_digest(value: str) -> bytes:
 
 def payload_digest(payload: Any) -> str:
     return format_digest(digest_bytes(PAYLOAD_DOMAIN, canonicalize(payload)))
+
+
+def commitment_pair_digest(
+    *,
+    protocol_profile: str,
+    policy_binding: dict[str, Any],
+    session_id: str,
+    participant_binding: dict[str, Any],
+    selected_integration_profile_binding: dict[str, Any],
+    commitment_a: str,
+    commitment_b: str,
+) -> str:
+    """Derive the v0.1 commitment-pair identity in canonical A/B slot order.
+
+    The result binds two opaque commitments to reviewed session context.  It is
+    not evidence that either commitment is truthful and does not establish PET
+    security or input completeness.
+    """
+
+    value = {
+        "protocol_profile": protocol_profile,
+        "policy_binding": policy_binding,
+        "session_id": session_id,
+        "participant_binding": {
+            "party_a": participant_binding.get("party_a"),
+            "party_b": participant_binding.get("party_b"),
+        },
+        "selected_integration_profile_binding": selected_integration_profile_binding,
+        "commitment_a": commitment_a,
+        "commitment_b": commitment_b,
+    }
+    return format_digest(digest_bytes(COMMITMENT_PAIR_DOMAIN, canonicalize(value)))
 
 
 def authentication_input(message: dict[str, Any]) -> dict[str, Any]:

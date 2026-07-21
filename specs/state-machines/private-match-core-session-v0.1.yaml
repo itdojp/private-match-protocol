@@ -369,13 +369,21 @@ event_parameter_catalog:
     required: true
     description: Party-local decision value, never coordinator-visible.
 - id: opaque_receipt_parameter
-  type: opaque_profile_reference
-  description: High-entropy or confidential reference defined by the reviewed integration profile.
+  type: record<opaque_receipt_ref,acknowledgment_status,profile_evidence_ref>
+  description: Opaque receipt acknowledgment/callback binding; contains no plaintext result.
   fields:
   - id: opaque_receipt_ref
     type: opaque_high_entropy_reference
     required: true
     description: Profile-defined opaque receipt reference.
+  - id: acknowledgment_status
+    type: enum<ACKNOWLEDGED,BOTH_ACKNOWLEDGED>
+    required: true
+    description: Delivery-specific normalized acknowledgment status.
+  - id: profile_evidence_ref
+    type: opaque_profile_reference
+    required: true
+    description: Opaque profile evidence reference bound to the current profile/session/attempt.
 - id: consent_binding_parameter
   type: record<session,participants,receipt,profile,scope,audience,issued_at,expires_at,nonce,digest>
   description: Exact result-bound consent metadata; no disclosure payload.
@@ -573,6 +581,31 @@ event_parameter_catalog:
     description: Party-specific immutable acceptance artifact digest.
   type: record<proposal_digest,acceptance_digest>
   description: Party-specific exact-proposal acceptance evidence.
+- id: authenticated_subject_parameter
+  type: trusted_record<actor,participant_id,key_id,subject_binding_id,verification_material_id>
+  description: Trusted projection produced only after successful verification-material, sender, key, subject,
+    and validity checks; it is not a wire-controlled field.
+  fields:
+  - id: actor
+    type: actor_id
+    required: true
+    description: Authenticated actor from the reviewed verification-material subject.
+  - id: participant_id
+    type: opaque_participant_identifier
+    required: true
+    description: Authenticated Party participant identifier; NONE only for non-Party subjects.
+  - id: key_id
+    type: opaque_key_identifier
+    required: true
+    description: Authenticated key identifier shared by sender, authentication metadata, and material.
+  - id: subject_binding_id
+    type: opaque_identifier
+    required: true
+    description: Stable reviewed subject-binding registry identifier.
+  - id: verification_material_id
+    type: opaque_identifier
+    required: true
+    description: Validated material identifier used for this event.
 - id: consent_withdrawal_parameter
   type: record<consent_nonce,consent_artifact_digest,reason_category>
   description: Party withdrawal reference for the current active consent slot.
@@ -703,7 +736,7 @@ state_variables:
   coordinator_access: read-write
   description: Exact proposal digest; immutable after the first Party acceptance.
 - id: session_acceptance
-  type: map<party,record<proposal_digest,acceptance_digest>_or_none>
+  type: map<party,record<proposal_digest,acceptance_digest,participant_id,key_id,subject_binding_id,verification_material_id>_or_none>
   initial: '{A:NONE,B:NONE}'
   owner:
   - coordinator
@@ -712,7 +745,8 @@ state_variables:
   - party_a_client
   - party_b_client
   coordinator_access: read-write
-  description: Party-specific exact-proposal acceptance; each entry is immutable after acceptance.
+  description: Party-specific exact-proposal acceptance bound to the validated participant, key, subject-binding,
+    and verification material; each entry is immutable.
 - id: protocol_profile
   type: versioned_identifier
   initial: private-match-core/v0.1
@@ -762,8 +796,8 @@ state_variables:
   coordinator_access: read-write
   description: Party and key binding; immutable after evaluation begins.
 - id: policy_acceptance
-  type: map<party,boolean>
-  initial: '{A:false,B:false}'
+  type: map<party,record<policy_id,policy_version,acceptance_digest>_or_none>
+  initial: '{A:NONE,B:NONE}'
   owner:
   - coordinator
   visibility:
@@ -771,7 +805,8 @@ state_variables:
   - party_a_client
   - party_b_client
   coordinator_access: read-write
-  description: Per-party acceptance of the exact policy binding.
+  description: Per-party immutable acceptance record for the exact current policy ID/version and acceptance
+    digest.
 - id: commitment
   type: map<party,opaque_commitment>
   initial: '{A:NONE,B:NONE}'
@@ -786,7 +821,7 @@ state_variables:
   coordinator_access: read-write
   description: Opaque per-party commitments; immutable after evaluation begins.
 - id: commitment_pair_id
-  type: opaque_identifier
+  type: sha256_digest_or_none
   initial: NONE
   owner:
   - coordinator
@@ -797,7 +832,8 @@ state_variables:
   - party_b_client
   - selected_integration_profile
   coordinator_access: read-write
-  description: Binding over both commitments and versioned context without private input.
+  description: Coordinator-derived RFC 8785/SHA-256 binding over both opaque commitments and exact versioned
+    context in fixed A/B slot order; not a PET-security or input-truth proof.
 - id: evaluation_started
   type: boolean
   initial: 'false'
@@ -1352,6 +1388,7 @@ events:
   - session_context
   - replay_envelope
   - session_acceptance_parameter
+  - authenticated_subject_parameter
   delivery_class: party_message
   required_envelope: replay_envelope
   deduplication_domain: (session_id,sender_participant_id)
@@ -1384,6 +1421,7 @@ events:
   - session_context
   - replay_envelope
   - participant_binding_parameter
+  - authenticated_subject_parameter
   delivery_class: party_message
   required_envelope: replay_envelope
   deduplication_domain: (session_id,sender_participant_id)
@@ -1437,6 +1475,7 @@ events:
   - session_context
   - replay_envelope
   - session_acceptance_parameter
+  - authenticated_subject_parameter
   delivery_class: party_message
   required_envelope: replay_envelope
   deduplication_domain: (session_id,sender_participant_id)
@@ -1469,6 +1508,7 @@ events:
   - session_context
   - replay_envelope
   - participant_binding_parameter
+  - authenticated_subject_parameter
   delivery_class: party_message
   required_envelope: replay_envelope
   deduplication_domain: (session_id,sender_participant_id)
@@ -2598,6 +2638,19 @@ transitions:
     - replay_envelope.nonce
     - replay_envelope.sender_participant_id
     - replay_envelope.sequence
+  - id: G-AUTHENTICATED-SUBJECT-A
+    predicate: trusted_subject_matches_party_slot
+    reads: []
+    arguments:
+    - actor=party_a_client
+    - projection exists only after material/sender/key/subject/validity validation
+    - wire fields cannot override the trusted projection
+    parameter_reads:
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
   - id: G-SESSION-PROPOSAL-A
     predicate: exact_unaccepted_proposal
     reads:
@@ -2637,11 +2690,19 @@ transitions:
     operation: record_party_session_acceptance
     writes:
     - session_acceptance
-    arguments:
-    - atomically bind A proposal and acceptance digests; immutable after acceptance
     parameter_reads:
     - session_acceptance_parameter.proposal_digest
     - session_acceptance_parameter.acceptance_digest
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
+    arguments:
+    - atomically bind A proposal and acceptance digests
+    - store authenticated participant, key, subject_binding_id, and verification_material_id in A acceptance
+      slot
+    - slot is immutable; v0.1 defines no in-session key rotation
   - id: E-ACCEPT-MESSAGE
     operation: record_accepted_message
     writes:
@@ -2789,9 +2850,19 @@ transitions:
     - session_proposal_digest
     - session_acceptance
     arguments:
-    - A acceptance exists
-    - A.proposal_digest equals session_proposal_digest
-    parameter_reads: []
+    - A acceptance exists and proposal_digest equals session_proposal_digest
+    - binding participant_id and key_id equal the acceptance record
+    - current authenticated subject_binding_id and verification_material_id equal the acceptance record
+    - authenticated actor is party_a_client
+    - v0.1 has no key-rotation transition; any material or key change fails closed
+    parameter_reads:
+    - participant_binding_parameter.participant_id
+    - participant_binding_parameter.key_id
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
   - id: G-A-UNBOUND-FIRST
     predicate: all_equal
     reads:
@@ -2926,9 +2997,19 @@ transitions:
     - session_proposal_digest
     - session_acceptance
     arguments:
-    - A acceptance exists
-    - A.proposal_digest equals session_proposal_digest
-    parameter_reads: []
+    - A acceptance exists and proposal_digest equals session_proposal_digest
+    - binding participant_id and key_id equal the acceptance record
+    - current authenticated subject_binding_id and verification_material_id equal the acceptance record
+    - authenticated actor is party_a_client
+    - v0.1 has no key-rotation transition; any material or key change fails closed
+    parameter_reads:
+    - participant_binding_parameter.participant_id
+    - participant_binding_parameter.key_id
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
   - id: G-A-UNBOUND-B-BOUND
     predicate: all_equal
     reads:
@@ -3076,6 +3157,19 @@ transitions:
     - replay_envelope.nonce
     - replay_envelope.sender_participant_id
     - replay_envelope.sequence
+  - id: G-AUTHENTICATED-SUBJECT-B
+    predicate: trusted_subject_matches_party_slot
+    reads: []
+    arguments:
+    - actor=party_b_client
+    - projection exists only after material/sender/key/subject/validity validation
+    - wire fields cannot override the trusted projection
+    parameter_reads:
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
   - id: G-SESSION-PROPOSAL-B
     predicate: exact_unaccepted_proposal
     reads:
@@ -3115,11 +3209,19 @@ transitions:
     operation: record_party_session_acceptance
     writes:
     - session_acceptance
-    arguments:
-    - atomically bind B proposal and acceptance digests; immutable after acceptance
     parameter_reads:
     - session_acceptance_parameter.proposal_digest
     - session_acceptance_parameter.acceptance_digest
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
+    arguments:
+    - atomically bind B proposal and acceptance digests
+    - store authenticated participant, key, subject_binding_id, and verification_material_id in B acceptance
+      slot
+    - slot is immutable; v0.1 defines no in-session key rotation
   - id: E-ACCEPT-MESSAGE
     operation: record_accepted_message
     writes:
@@ -3226,9 +3328,19 @@ transitions:
     - session_proposal_digest
     - session_acceptance
     arguments:
-    - B acceptance exists
-    - B.proposal_digest equals session_proposal_digest
-    parameter_reads: []
+    - B acceptance exists and proposal_digest equals session_proposal_digest
+    - binding participant_id and key_id equal the acceptance record
+    - current authenticated subject_binding_id and verification_material_id equal the acceptance record
+    - authenticated actor is party_b_client
+    - v0.1 has no key-rotation transition; any material or key change fails closed
+    parameter_reads:
+    - participant_binding_parameter.participant_id
+    - participant_binding_parameter.key_id
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
   - id: G-B-UNBOUND-FIRST
     predicate: all_equal
     reads:
@@ -3342,9 +3454,19 @@ transitions:
     - session_proposal_digest
     - session_acceptance
     arguments:
-    - B acceptance exists
-    - B.proposal_digest equals session_proposal_digest
-    parameter_reads: []
+    - B acceptance exists and proposal_digest equals session_proposal_digest
+    - binding participant_id and key_id equal the acceptance record
+    - current authenticated subject_binding_id and verification_material_id equal the acceptance record
+    - authenticated actor is party_b_client
+    - v0.1 has no key-rotation transition; any material or key change fails closed
+    parameter_reads:
+    - participant_binding_parameter.participant_id
+    - participant_binding_parameter.key_id
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
   - id: G-B-UNBOUND-A-BOUND
     predicate: all_equal
     reads:
@@ -3454,12 +3576,16 @@ transitions:
   - *id005
   - *id006
   - id: G-POLICY-NOT-ACCEPTED-A
-    predicate: equals
+    predicate: unset_and_exact_policy_binding
     reads:
     - policy_acceptance
     arguments:
-    - A=false
-    parameter_reads: []
+    - A=NONE
+    - parameter policy_id equals policy_binding.policy_id
+    - parameter policy_version equals policy_binding.policy_version
+    parameter_reads:
+    - policy_acceptance_parameter.policy_id
+    - policy_acceptance_parameter.policy_version
   - id: G-MESSAGE-TIME-VALID
     predicate: message_time_within_policy
     reads:
@@ -3490,7 +3616,8 @@ transitions:
     writes:
     - policy_acceptance
     arguments:
-    - A=true for exact policy_binding
+    - atomically bind A policy_id, policy_version, and acceptance_digest
+    - slot is immutable and cannot satisfy the peer slot
     parameter_reads:
     - policy_acceptance_parameter.acceptance_digest
     - policy_acceptance_parameter.policy_id
@@ -3558,12 +3685,16 @@ transitions:
   - *id005
   - *id006
   - id: G-POLICY-NOT-ACCEPTED-B
-    predicate: equals
+    predicate: unset_and_exact_policy_binding
     reads:
     - policy_acceptance
     arguments:
-    - B=false
-    parameter_reads: []
+    - B=NONE
+    - parameter policy_id equals policy_binding.policy_id
+    - parameter policy_version equals policy_binding.policy_version
+    parameter_reads:
+    - policy_acceptance_parameter.policy_id
+    - policy_acceptance_parameter.policy_version
   - id: G-MESSAGE-TIME-VALID
     predicate: message_time_within_policy
     reads:
@@ -3594,7 +3725,8 @@ transitions:
     writes:
     - policy_acceptance
     arguments:
-    - B=true for exact policy_binding
+    - atomically bind B policy_id, policy_version, and acceptance_digest
+    - slot is immutable and cannot satisfy the peer slot
     parameter_reads:
     - policy_acceptance_parameter.acceptance_digest
     - policy_acceptance_parameter.policy_id
@@ -3675,12 +3807,14 @@ transitions:
     - any one-sided or differing binding is REPLAY_CONFLICT with no state change
   - *id005
   - id: G-BOTH-POLICY
-    predicate: all_true
+    predicate: both_policy_acceptances_match_binding
     reads:
     - policy_acceptance
+    - policy_binding
     arguments:
-    - A
-    - B
+    - A and B records are present
+    - each record policy_id and policy_version exactly equal current policy_binding
+    - each Party acceptance_digest is present and immutable
     parameter_reads: []
   - id: G-BUDGET-AUTHORIZED
     predicate: equals
@@ -3921,6 +4055,21 @@ transitions:
     arguments:
     - RESERVED
     parameter_reads: []
+  - id: G-COMMITMENT-PAIR-CONTEXT
+    predicate: complete_immutable_derivation_context
+    reads:
+    - protocol_profile
+    - policy_binding
+    - session_id
+    - participant_binding
+    - selected_integration_profile_binding
+    - commitment
+    - commitment_pair_id
+    arguments:
+    - protocol profile, policy, session, ordered participant slots, selected profile, and first commitment
+      are fully bound
+    - commitment_pair_id=NONE before the atomic second-commitment effect
+    parameter_reads: []
   - id: G-MESSAGE-TIME-VALID
     predicate: message_time_within_policy
     reads:
@@ -3953,7 +4102,11 @@ transitions:
     - commitment_pair_id
     - phase
     arguments:
-    - register A commitment and derive opaque commitment_pair_id over both commitments and versioned binding
+    - register A opaque commitment in its canonical slot
+    - derive commitment_pair_id with RFC 8785 and private-match-commitment-pair/v0.1 over protocol profile,
+      policy, session, ordered A/B participants, selected profile, commitment A, and commitment B
+    - write both the second commitment and derived sha256 identifier atomically exactly once
+    - Party input cannot provide or overwrite commitment_pair_id
     parameter_reads:
     - commitment_parameter.opaque_commitment
   - *id007
@@ -4145,6 +4298,21 @@ transitions:
     arguments:
     - RESERVED
     parameter_reads: []
+  - id: G-COMMITMENT-PAIR-CONTEXT
+    predicate: complete_immutable_derivation_context
+    reads:
+    - protocol_profile
+    - policy_binding
+    - session_id
+    - participant_binding
+    - selected_integration_profile_binding
+    - commitment
+    - commitment_pair_id
+    arguments:
+    - protocol profile, policy, session, ordered participant slots, selected profile, and first commitment
+      are fully bound
+    - commitment_pair_id=NONE before the atomic second-commitment effect
+    parameter_reads: []
   - id: G-MESSAGE-TIME-VALID
     predicate: message_time_within_policy
     reads:
@@ -4177,7 +4345,11 @@ transitions:
     - commitment_pair_id
     - phase
     arguments:
-    - register B commitment and derive opaque commitment_pair_id over both commitments and versioned binding
+    - register B opaque commitment in its canonical slot
+    - derive commitment_pair_id with RFC 8785 and private-match-commitment-pair/v0.1 over protocol profile,
+      policy, session, ordered A/B participants, selected profile, commitment A, and commitment B
+    - write both the second commitment and derived sha256 identifier atomically exactly once
+    - Party input cannot provide or overwrite commitment_pair_id
     parameter_reads:
     - commitment_parameter.opaque_commitment
   - *id007
@@ -4630,15 +4802,27 @@ transitions:
     arguments:
     - A
     parameter_reads: []
+  - id: G-CONTRIBUTIONS-COMPLETE
+    predicate: all_set
+    reads:
+    - evaluation_contribution
+    arguments:
+    - A
+    - B
+    parameter_reads: []
   - id: G-OPAQUE-RECEIPT
     predicate: profile_opaque_reference
     reads:
     - opaque_receipt_ref
     arguments:
-    - not a bare digest over MATCH|NO_MATCH|INDETERMINATE
-    - profile-defined high-entropy or confidential reference
+    - opaque_receipt_ref is not a bare digest over MATCH|NO_MATCH|INDETERMINATE
+    - acknowledgment_status=ACKNOWLEDGED
+    - profile_evidence_ref is opaque and bound to current profile/session/attempt
+    - if the peer acknowledgment exists, opaque_receipt_ref equals the peer reference
     parameter_reads:
     - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
   - id: G-LOCAL-RESULT-A
     predicate: event_parameter_one_of
     reads:
@@ -4679,10 +4863,14 @@ transitions:
     - opaque_receipt_ref
     - proposed_result_state
     arguments:
-    - record A opaque reference and party-local proposed result; coordinator sees opaque reference only
+    - record A opaque receipt, ACKNOWLEDGED status, profile evidence reference, and party-local proposed
+      result atomically
+    - coordinator projection excludes the local result and local-result binding
     parameter_reads:
     - local_result_parameter.local_result
     - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
   - *id007
   - *id004
   - id: E-APPEND-PARTY-TRANSCRIPT
@@ -4755,15 +4943,27 @@ transitions:
     arguments:
     - B
     parameter_reads: []
+  - id: G-CONTRIBUTIONS-COMPLETE
+    predicate: all_set
+    reads:
+    - evaluation_contribution
+    arguments:
+    - A
+    - B
+    parameter_reads: []
   - id: G-OPAQUE-RECEIPT
     predicate: profile_opaque_reference
     reads:
     - opaque_receipt_ref
     arguments:
-    - not a bare digest over MATCH|NO_MATCH|INDETERMINATE
-    - profile-defined high-entropy or confidential reference
+    - opaque_receipt_ref is not a bare digest over MATCH|NO_MATCH|INDETERMINATE
+    - acknowledgment_status=ACKNOWLEDGED
+    - profile_evidence_ref is opaque and bound to current profile/session/attempt
+    - if the peer acknowledgment exists, opaque_receipt_ref equals the peer reference
     parameter_reads:
     - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
   - id: G-LOCAL-RESULT-B
     predicate: event_parameter_one_of
     reads:
@@ -4804,10 +5004,14 @@ transitions:
     - opaque_receipt_ref
     - proposed_result_state
     arguments:
-    - record B opaque reference and party-local proposed result; coordinator sees opaque reference only
+    - record B opaque receipt, ACKNOWLEDGED status, profile evidence reference, and party-local proposed
+      result atomically
+    - coordinator projection excludes the local result and local-result binding
     parameter_reads:
     - local_result_parameter.local_result
     - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
   - *id007
   - *id004
   - id: E-APPEND-PARTY-TRANSCRIPT
@@ -4907,9 +5111,13 @@ transitions:
     - result_ack
     - opaque_receipt_ref
     arguments:
-    - A.ref=B.ref=opaque_receipt_ref
+    - A.ref=B.ref=callback opaque_receipt_ref
+    - A.status=B.status=ACKNOWLEDGED and callback status=BOTH_ACKNOWLEDGED
+    - callback profile evidence is bound to current profile/session/attempt
     parameter_reads:
     - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
   - id: G-SAME-PARTY-RESULT
     predicate: all_equal
     reads:
@@ -4968,9 +5176,13 @@ transitions:
     - phase
     arguments:
     - party-local values remain identical
+    - store accepted opaque receipt callback binding
     - accepted_evaluation_count=1
     - coordinator stores RESULT_ACCEPTED lifecycle only
-    parameter_reads: []
+    parameter_reads:
+    - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
   - *id004
   - id: E-ACCEPT-PROFILE-CALLBACK
     operation: record_profile_callback
@@ -5086,9 +5298,13 @@ transitions:
     - result_ack
     - proposed_result_state
     arguments:
-    - opaque receipt references differ
+    - Party opaque receipt references differ
     - party-local result values differ
-    parameter_reads: []
+    - callback receipt/status/profile binding disagrees with bilateral acknowledged state
+    parameter_reads:
+    - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
   - id: G-CALLBACK-TRANSCRIPT-CHAIN
     predicate: prior_transcript_matches
     reads:
@@ -5233,16 +5449,12 @@ transitions:
     - intended_audience
     - authoritative_time
     arguments:
-    - session
-    - participant set
-    - opaque receipt
-    - profile ID/version
-    - exact scope
-    - audience
-    - issued_at
-    - expires_at
-    - consent nonce
-    - artifact digest
+    - session and participant set equal current immutable bindings
+    - opaque receipt equals the accepted bilateral receipt
+    - profile ID/version, exact scope, and audience equal the first active Party consent when one exists
+    - issued_at < expires_at and authoritative_time is within the active interval
+    - nonce and artifact digest are Party-slot-specific and immutable
+    - withdrawn or expired consent cannot be reused in v0.1
     parameter_reads:
     - consent_binding_parameter.audience
     - consent_binding_parameter.consent_artifact_digest
@@ -5566,16 +5778,12 @@ transitions:
     - intended_audience
     - authoritative_time
     arguments:
-    - session
-    - participant set
-    - opaque receipt
-    - profile ID/version
-    - exact scope
-    - audience
-    - issued_at
-    - expires_at
-    - consent nonce
-    - artifact digest
+    - session and participant set equal current immutable bindings
+    - opaque receipt equals the accepted bilateral receipt
+    - profile ID/version, exact scope, and audience equal the first active Party consent when one exists
+    - issued_at < expires_at and authoritative_time is within the active interval
+    - nonce and artifact digest are Party-slot-specific and immutable
+    - withdrawn or expired consent cannot be reused in v0.1
     parameter_reads:
     - consent_binding_parameter.audience
     - consent_binding_parameter.consent_artifact_digest
@@ -7857,8 +8065,9 @@ invariants:
     parameter_reads: []
   violation_effect: reject COMMITMENT_MUTATION and abort when integrity is uncertain
 - id: INV-SESSION-ACCEPTANCE
-  statement: participant binding implies Party-specific immutable acceptance of the exact session proposal;
-    bilateral binding implies bilateral exact-proposal acceptance
+  statement: A bound participant implies the same Party previously accepted the exact immutable proposal
+    with the identical authenticated participant ID, key ID, subject-binding ID, and verification-material
+    ID; bilateral binding implies two separate exact-proposal acceptances.
   state_variables:
   - session_proposal_digest
   - session_acceptance
@@ -8969,13 +9178,17 @@ parameter_flow_contracts:
   required_parameter_reads:
   - local_result_parameter.local_result
   - opaque_receipt_parameter.opaque_receipt_ref
-  description: Every occurrence consumes this complete field set; omission or substitution fails closed.
+  - opaque_receipt_parameter.acknowledgment_status
+  - opaque_receipt_parameter.profile_evidence_ref
+  description: Atomically stores Party A local result and complete opaque receipt acknowledgment binding.
 - id: E-ACK-RECEIPT-B
   kind: operation
   required_parameter_reads:
   - local_result_parameter.local_result
   - opaque_receipt_parameter.opaque_receipt_ref
-  description: Every occurrence consumes this complete field set; omission or substitution fails closed.
+  - opaque_receipt_parameter.acknowledgment_status
+  - opaque_receipt_parameter.profile_evidence_ref
+  description: Atomically stores Party B local result and complete opaque receipt acknowledgment binding.
 - id: E-ADVANCE-AND-EXPIRE
   kind: operation
   required_parameter_reads:
@@ -9390,9 +9603,11 @@ parameter_flow_contracts:
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
 - id: G-OPAQUE-RECEIPT
   kind: predicate
-  required_parameter_reads:
+  required_parameter_reads: &id022
   - opaque_receipt_parameter.opaque_receipt_ref
-  description: Every occurrence consumes this complete field set; omission or substitution fails closed.
+  - opaque_receipt_parameter.acknowledgment_status
+  - opaque_receipt_parameter.profile_evidence_ref
+  description: Validates opaque receipt, ACKNOWLEDGED status, and profile evidence binding.
 - id: G-OPERATION-DEDUP
   kind: predicate
   required_parameter_reads:
@@ -9439,9 +9654,8 @@ parameter_flow_contracts:
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
 - id: G-SAME-OPAQUE-RECEIPT
   kind: predicate
-  required_parameter_reads:
-  - opaque_receipt_parameter.opaque_receipt_ref
-  description: Every occurrence consumes this complete field set; omission or substitution fails closed.
+  required_parameter_reads: *id022
+  description: Validates bilateral Party state against the complete profile callback receipt binding.
 - id: G-SESSION-EXPIRY-CROSSED
   kind: predicate
   required_parameter_reads:
@@ -9533,7 +9747,12 @@ parameter_flow_contracts:
   required_parameter_reads:
   - session_acceptance_parameter.acceptance_digest
   - session_acceptance_parameter.proposal_digest
-  description: Atomically records Party-specific exact-proposal acceptance.
+  - authenticated_subject_parameter.actor
+  - authenticated_subject_parameter.participant_id
+  - authenticated_subject_parameter.key_id
+  - authenticated_subject_parameter.subject_binding_id
+  - authenticated_subject_parameter.verification_material_id
+  description: Atomically stores exact proposal acceptance and its trusted authenticated subject binding.
 - id: G-SESSION-PROPOSAL-B
   kind: predicate
   required_parameter_reads:
@@ -9544,7 +9763,69 @@ parameter_flow_contracts:
   required_parameter_reads:
   - session_acceptance_parameter.acceptance_digest
   - session_acceptance_parameter.proposal_digest
-  description: Atomically records Party-specific exact-proposal acceptance.
+  - authenticated_subject_parameter.actor
+  - authenticated_subject_parameter.participant_id
+  - authenticated_subject_parameter.key_id
+  - authenticated_subject_parameter.subject_binding_id
+  - authenticated_subject_parameter.verification_material_id
+  description: Atomically stores exact proposal acceptance and its trusted authenticated subject binding.
+- id: G-AUTHENTICATED-SUBJECT-A
+  kind: predicate
+  required_parameter_reads: &id023
+  - authenticated_subject_parameter.actor
+  - authenticated_subject_parameter.participant_id
+  - authenticated_subject_parameter.key_id
+  - authenticated_subject_parameter.subject_binding_id
+  - authenticated_subject_parameter.verification_material_id
+  description: Consumes the complete trusted subject projection and enforces the Party slot.
+- id: G-SESSION-ACCEPTED-A
+  kind: predicate
+  required_parameter_reads:
+  - participant_binding_parameter.key_id
+  - participant_binding_parameter.participant_id
+  - authenticated_subject_parameter.actor
+  - authenticated_subject_parameter.participant_id
+  - authenticated_subject_parameter.key_id
+  - authenticated_subject_parameter.subject_binding_id
+  - authenticated_subject_parameter.verification_material_id
+  description: Requires binding payload and current trusted subject to equal the immutable Party acceptance
+    record.
+- id: G-POLICY-NOT-ACCEPTED-A
+  kind: predicate
+  required_parameter_reads:
+  - policy_acceptance_parameter.policy_id
+  - policy_acceptance_parameter.policy_version
+  description: Requires an empty Party slot and exact current policy ID/version.
+- id: G-AUTHENTICATED-SUBJECT-B
+  kind: predicate
+  required_parameter_reads: *id023
+  description: Consumes the complete trusted subject projection and enforces the Party slot.
+- id: G-SESSION-ACCEPTED-B
+  kind: predicate
+  required_parameter_reads:
+  - participant_binding_parameter.key_id
+  - participant_binding_parameter.participant_id
+  - authenticated_subject_parameter.actor
+  - authenticated_subject_parameter.participant_id
+  - authenticated_subject_parameter.key_id
+  - authenticated_subject_parameter.subject_binding_id
+  - authenticated_subject_parameter.verification_material_id
+  description: Requires binding payload and current trusted subject to equal the immutable Party acceptance
+    record.
+- id: G-POLICY-NOT-ACCEPTED-B
+  kind: predicate
+  required_parameter_reads:
+  - policy_acceptance_parameter.policy_id
+  - policy_acceptance_parameter.policy_version
+  description: Requires an empty Party slot and exact current policy ID/version.
+- id: E-ACCEPT-RESULT
+  kind: operation
+  required_parameter_reads: *id022
+  description: Atomically accepts only the complete reviewed receipt callback binding.
+- id: G-RESULT-CONFLICT
+  kind: predicate
+  required_parameter_reads: *id022
+  description: Classifies Party/callback receipt, status, or profile-binding disagreement fail closed.
 envelope_binding_contracts:
 - id: BIND-OPERATION-ACTOR
   delivery_class: coordinator_command
@@ -9625,12 +9906,128 @@ canonical_transcript_semantics:
     guidance, and nonmutating timer threshold no-op re-evaluation
   result_confidentiality: digest inputs bind opaque receipt and routing metadata; no bare hash of MATCH,
     NO_MATCH, or INDETERMINATE and no coordinator-readable plaintext result
+commitment_pair_derivation:
+  authority: coordinator
+  domain: private-match-commitment-pair/v0.1
+  canonicalization: RFC 8785 JCS
+  digest_algorithm: SHA-256
+  output_format: sha256:<64 lowercase hex>
+  slot_order:
+  - party_a
+  - party_b
+  canonical_fields:
+  - protocol_profile
+  - policy_binding
+  - session_id
+  - participant_binding.party_a
+  - participant_binding.party_b
+  - selected_integration_profile_binding
+  - commitment_a
+  - commitment_b
+  first_commitment_effect: store only the Party-slot opaque commitment; commitment_pair_id remains NONE
+  second_commitment_effect: atomically store the second commitment and derive commitment_pair_id exactly
+    once
+  party_supplied_identifier: forbidden
+  claim_boundary: Identity binding only; it proves neither commitment truth, input completeness, PET security,
+    nor production readiness.
+cross_message_binding_semantics:
+  atomic_failure_rule: A failed guard mutates no state, dedup index, transcript, budget, or audit record.
+  rules:
+  - id: XMSG-SESSION-ACCEPTANCE-SUBJECT
+    message_types:
+    - session_acceptance
+    - participant_binding
+    state_reads:
+    - session_acceptance
+    - participant_binding
+    required_parameter_paths:
+    - authenticated_subject_parameter.actor
+    - authenticated_subject_parameter.participant_id
+    - authenticated_subject_parameter.key_id
+    - authenticated_subject_parameter.subject_binding_id
+    - authenticated_subject_parameter.verification_material_id
+    - participant_binding_parameter.participant_id
+    - participant_binding_parameter.key_id
+    rule: Binding must exactly match the trusted authenticated subject stored by that Party acceptance;
+      peer slots and in-session key rotation are forbidden.
+  - id: XMSG-POLICY-ACCEPTANCE
+    message_types:
+    - policy_acceptance
+    state_reads:
+    - policy_binding
+    - policy_acceptance
+    required_parameter_paths:
+    - policy_acceptance_parameter.policy_id
+    - policy_acceptance_parameter.policy_version
+    - policy_acceptance_parameter.acceptance_digest
+    rule: Each Party immutable acceptance record must equal the current policy ID/version; one Party never
+      satisfies the peer slot.
+  - id: XMSG-COMMITMENT-PAIR
+    message_types:
+    - commitment_registration
+    - evaluation_start
+    state_reads:
+    - commitment
+    - commitment_pair_id
+    - protocol_profile
+    - policy_binding
+    - session_id
+    - participant_binding
+    - selected_integration_profile_binding
+    required_parameter_paths:
+    - commitment_parameter.opaque_commitment
+    rule: The second accepted commitment derives the pair identity exactly once in canonical A/B order;
+      evaluation requires that derived identity.
+  - id: XMSG-RECEIPT-ACCEPTANCE
+    message_types:
+    - evaluation_contribution
+    - opaque_receipt_ack
+    - result_acceptance_notice
+    state_reads:
+    - evaluation_contribution
+    - result_ack
+    - opaque_receipt_ref
+    - selected_integration_profile_binding
+    - evaluation_attempt_id
+    required_parameter_paths:
+    - evaluation_contribution_parameter.contribution_ref
+    - opaque_receipt_parameter.opaque_receipt_ref
+    - opaque_receipt_parameter.acknowledgment_status
+    - opaque_receipt_parameter.profile_evidence_ref
+    rule: Both contributions precede Party acknowledgments; both Party references and statuses plus the
+      profile callback reference/status/profile-session-attempt binding must agree before result acceptance.
+  - id: XMSG-CONSENT-BINDING
+    message_types:
+    - consent_grant
+    state_reads:
+    - opaque_receipt_ref
+    - consent
+    - disclosure_profile_ref
+    - participant_binding
+    - intended_audience
+    - authoritative_time
+    required_parameter_paths:
+    - consent_binding_parameter.opaque_receipt_ref
+    - consent_binding_parameter.disclosure_profile_id
+    - consent_binding_parameter.disclosure_profile_version
+    - consent_binding_parameter.scope
+    - consent_binding_parameter.audience
+    - consent_binding_parameter.issued_at
+    - consent_binding_parameter.expires_at
+    - consent_binding_parameter.consent_nonce
+    - consent_binding_parameter.consent_artifact_digest
+    rule: Consent binds the accepted receipt and exact shared profile/scope/audience during its valid
+      interval; Party slots, nonces, and digests are immutable.
 session_acceptance_semantics:
   proposal_binding: create_session binds one exact proposal digest and one abstract reviewed integration-profile
     binding; neither can change after first acceptance
-  party_acceptance: A and B acceptance slots are separate, immutable, and each binds proposal and Party
-    acceptance digests
-  binding_prerequisite: participant binding is enabled only after that Party accepted the exact bound
-    proposal
+  party_acceptance: A and B acceptance slots separately and immutably bind proposal digest, acceptance
+    digest, authenticated participant, key, subject-binding ID, and verification-material ID.
+  binding_prerequisite: Participant binding is enabled only when payload participant/key and the current
+    trusted authentication projection exactly equal that Party acceptance record.
   downgrade_prevention: session_acceptance and participant_binding map to separate events and transitions;
     neither substitutes for the other
+  trusted_subject_projection: Derived only after reviewed verification-material, sender, key, subject,
+    status, and authoritative-time validation; it is not a caller-controlled event field.
+  key_rotation_policy: No v0.1 in-session key/material rotation transition exists; a changed key, material,
+    or subject binding fails closed and requires a new session.

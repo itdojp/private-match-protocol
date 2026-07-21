@@ -4,6 +4,10 @@ cases:
   file: unknown-field.json
   context_file: session-acceptance-a.json
   expected_code: schema
+- id: party-supplied-commitment-pair-id
+  file: party-supplied-commitment-pair-id.json
+  context_file: commitment-registration-a.json
+  expected_code: schema
 - id: unknown-message-type
   file: unknown-message-type.json
   context_file: session-acceptance-a.json

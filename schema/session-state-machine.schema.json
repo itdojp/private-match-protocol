@@ -31,6 +31,8 @@
     "envelope_binding_contracts",
     "failure_projection_semantics",
     "canonical_transcript_semantics",
+    "commitment_pair_derivation",
+    "cross_message_binding_semantics",
     "session_acceptance_semantics"
   ],
   "properties": {
@@ -156,7 +158,9 @@
         "proposal_binding",
         "party_acceptance",
         "binding_prerequisite",
-        "downgrade_prevention"
+        "downgrade_prevention",
+        "trusted_subject_projection",
+        "key_rotation_policy"
       ],
       "properties": {
         "proposal_binding": {
@@ -174,6 +178,145 @@
         "downgrade_prevention": {
           "type": "string",
           "minLength": 1
+        },
+        "trusted_subject_projection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key_rotation_policy": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "commitment_pair_derivation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority",
+        "domain",
+        "canonicalization",
+        "digest_algorithm",
+        "output_format",
+        "slot_order",
+        "canonical_fields",
+        "first_commitment_effect",
+        "second_commitment_effect",
+        "party_supplied_identifier",
+        "claim_boundary"
+      ],
+      "properties": {
+        "authority": {
+          "const": "coordinator"
+        },
+        "domain": {
+          "const": "private-match-commitment-pair/v0.1"
+        },
+        "canonicalization": {
+          "const": "RFC 8785 JCS"
+        },
+        "digest_algorithm": {
+          "const": "SHA-256"
+        },
+        "output_format": {
+          "const": "sha256:<64 lowercase hex>"
+        },
+        "slot_order": {
+          "const": [
+            "party_a",
+            "party_b"
+          ]
+        },
+        "canonical_fields": {
+          "type": "array",
+          "minItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "first_commitment_effect": {
+          "type": "string",
+          "minLength": 1
+        },
+        "second_commitment_effect": {
+          "type": "string",
+          "minLength": 1
+        },
+        "party_supplied_identifier": {
+          "const": "forbidden"
+        },
+        "claim_boundary": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "cross_message_binding_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "atomic_failure_rule",
+        "rules"
+      ],
+      "properties": {
+        "atomic_failure_rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rules": {
+          "type": "array",
+          "minItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "message_types",
+              "state_reads",
+              "required_parameter_paths",
+              "rule"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^XMSG-[A-Z0-9-]+$"
+              },
+              "message_types": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "state_reads": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required_parameter_paths": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                }
+              },
+              "rule": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         }
       }
     }

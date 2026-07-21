@@ -47,6 +47,12 @@ Coordinator-authoritative verification time must be inside the material's
 half-open validity interval; revocation always fails closed. These checks do not
 select an algorithm or establish real key ownership.
 
+The successful check yields a trusted authentication-subject event parameter.
+Party session acceptance stores that participant, key, subject-binding ID, and
+material ID; later participant binding must match the stored record. The trusted
+projection is not copied from caller-controlled JSON, and v0.1 deliberately has
+no key-rotation path.
+
 Conformance uses an evolving abstract state trace rather than an initially
 fully populated session. Session acceptance and participant binding are separate
 events, and the former is a real prerequisite. The integration-profile state is
@@ -56,6 +62,11 @@ context. Registry mappings name catalog
 parameter fields and consuming transition operations. Security-sensitive YAML
 and semantic identifiers reject ambiguity before index construction. Timer
 transcript append computes all values before an exception-atomic assignment.
+The abstract runner additionally executes policy, contribution, bilateral
+receipt/callback, and consent bindings across the evolving trace; phase alone is
+not sufficient. Party commitment messages no longer assert a pair ID. The
+second commitment causes a deterministic RFC 8785/SHA-256 pair derivation under
+`private-match-commitment-pair/v0.1` in fixed A/B order.
 
 ## RFC 8785 implementation decision
 

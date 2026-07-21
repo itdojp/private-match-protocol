@@ -236,7 +236,7 @@
             "properties": {
               "source": {
                 "type": "string",
-                "pattern": "^(payload|message|absent)\\.[A-Za-z0-9_.]+$"
+                "pattern": "^(payload|message|absent|trusted)\\.[A-Za-z0-9_.]+$"
               },
               "destination": {
                 "oneOf": [

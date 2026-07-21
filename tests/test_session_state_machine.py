@@ -148,9 +148,60 @@ class SessionStateMachineTests(unittest.TestCase):
                 {
                     "session_acceptance_parameter.proposal_digest",
                     "session_acceptance_parameter.acceptance_digest",
+                    "authenticated_subject_parameter.actor",
+                    "authenticated_subject_parameter.participant_id",
+                    "authenticated_subject_parameter.key_id",
+                    "authenticated_subject_parameter.subject_binding_id",
+                    "authenticated_subject_parameter.verification_material_id",
                 },
                 set(effect["parameter_reads"]),
             )
+
+    def test_session_acceptance_binding_requires_trusted_subject_identity(self):
+        required = {
+            "authenticated_subject_parameter.actor",
+            "authenticated_subject_parameter.participant_id",
+            "authenticated_subject_parameter.key_id",
+            "authenticated_subject_parameter.subject_binding_id",
+            "authenticated_subject_parameter.verification_material_id",
+            "participant_binding_parameter.participant_id",
+            "participant_binding_parameter.key_id",
+        }
+        for party in ("A", "B"):
+            for suffix in ("FIRST", "COMPLETE"):
+                transition = self.transition(f"TR-BIND-{party}-{suffix}")
+                guard = next(
+                    item
+                    for item in transition["guards"]
+                    if item["id"] == f"G-SESSION-ACCEPTED-{party}"
+                )
+                self.assertEqual(required, set(guard["parameter_reads"]))
+
+    def test_commitment_pair_derivation_is_machine_readable_and_fail_closed(self):
+        semantics = self.model["commitment_pair_derivation"]
+        self.assertEqual("private-match-commitment-pair/v0.1", semantics["domain"])
+        self.assertEqual(["party_a", "party_b"], semantics["slot_order"])
+        self.assertEqual("forbidden", semantics["party_supplied_identifier"])
+        for transition_id in (
+            "TR-COMMIT-A-COMPLETE",
+            "TR-COMMIT-B-COMPLETE",
+        ):
+            guard = next(
+                item
+                for item in self.transition(transition_id)["guards"]
+                if item["id"] == "G-COMMITMENT-PAIR-CONTEXT"
+            )
+            self.assertIn("commitment_pair_id", guard["reads"])
+
+    def test_cross_message_binding_rules_are_complete_and_catalogued(self):
+        semantics = self.model["cross_message_binding_semantics"]
+        self.assertEqual(5, len(semantics["rules"]))
+        self.assertIn("no state", semantics["atomic_failure_rule"])
+        mutated = copy.deepcopy(self.model)
+        mutated["cross_message_binding_semantics"]["rules"][0][
+            "required_parameter_paths"
+        ][0] = "unknown_parameter.unknown_field"
+        self.assertIn("cross-message-binding", self.semantic_codes(mutated))
 
     def synthetic_disclosure_state(self):
         participants = {

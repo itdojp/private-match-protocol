@@ -162,10 +162,21 @@ The normative machine-readable mapping is
 
 `session_acceptance` and `participant_binding` are separate. `create_session`
 fixes one proposal digest; each Party then records an immutable, Party-specific
-acceptance of that exact digest. A Party cannot enter either participant-binding
-transition until its acceptance exists. The acceptance message does not bind
-the participant/key slot, and the binding message cannot substitute for
-proposal acceptance.
+acceptance of that exact digest together with the trusted authentication-subject
+projection produced after verification-material validation. The stored
+projection binds participant ID, key ID, subject-binding ID, and material ID. A
+Party cannot enter either participant-binding transition until its acceptance
+exists and the new binding equals that stored projection. A second active key
+for the same role does not satisfy the guard, v0.1 defines no in-session key
+rotation, and the binding message cannot substitute for proposal acceptance.
+
+`commitment_registration` carries only one Party-slot opaque commitment. It does
+not carry `commitment_pair_id`; that unknown field fails closed. When the second
+commitment arrives, the coordinator deterministically derives the pair ID as
+SHA-256 over the `private-match-commitment-pair/v0.1` domain and RFC 8785 bytes
+containing the protocol, policy, session, fixed A/B participant slots, selected
+profile, and both commitments. This is an identity binding, not proof of input
+truth, input completeness, or PET security.
 
 ## Result confidentiality
 
@@ -183,6 +194,10 @@ core JSON. The profile's protection properties are unestablished in this draft.
 `result_acceptance_notice` is a profile callback with the common opaque receipt,
 `BOTH_ACKNOWLEDGED`, and an opaque profile-evidence reference. It does not carry
 or hash a plaintext decision. A public receipt must not contain a secret input.
+The evolving conformance runner requires both contribution slots, two separate
+`ACKNOWLEDGED` Party records with the same receipt, and a callback bound to the
+current profile/session/attempt before accepting the result. These checks are
+atomic with transcript and dedup acceptance.
 
 Party notices expose only the reviewed `party_error_category`; detailed failure
 codes remain coordinator/private-assurance data. The internal `abort_notice`
@@ -192,6 +207,9 @@ may carry a declared abort code only to coordinator and assurance audiences.
 
 Consent payloads bind the accepted opaque receipt, versioned disclosure
 profile, exact scope, audience, issue/expiry times, nonce, and artifact digest.
+The first Party consent establishes the exact profile/scope/audience tuple for
+the second Party; a mismatch, expired interval, wrong receipt, or reused Party
+slot fails without state, dedup, transcript, budget, or audit mutation.
 `MATCH` is not blanket consent. Core messages carry no actual identity or
 private-data disclosure payload. Disclosure authorization and completion
 remain extension-only and fail closed without a separately reviewed profile.
@@ -207,8 +225,10 @@ messages and verification material fail closed. Material validity requires
 `not_before <= authoritative_time < not_after`; revocation always fails closed.
 Authentication, sender, and material key IDs must be equal. Machine-readable
 subject metadata additionally binds the Party participant, Coordinator actor,
-or integration-profile ID/version/instance to the current context. Timer inputs
-use the state machine's clock taxonomy, not Party `STALE_MESSAGE` semantics.
+or integration-profile ID/version/instance to the current context. The
+`authenticated_subject_parameter` is a trusted post-validation projection; it
+is not a caller-supplied wire field. Timer inputs use the state machine's clock
+taxonomy, not Party `STALE_MESSAGE` semantics.
 
 All failures occur before accepted transcript mutation. A normalized Party
 response may state a reviewed category and retry/new-session disposition, but
