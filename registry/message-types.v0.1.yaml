@@ -1,0 +1,881 @@
+schema_version: '0.1'
+registry_id: private-match-core-message-types/v0.1
+artifact_status: draft
+protocol_profile: private-match-core/v0.1
+unknown_type_behavior: fail-closed
+messages:
+- message_type: session_proposal
+  message_version: '0.1'
+  delivery_class: coordinator_command
+  direction: accepted-input
+  allowed_senders:
+  - coordinator
+  verifier: coordinator
+  intended_audience:
+  - party_a_client
+  - party_b_client
+  payload:
+    required_fields:
+    - session_parameters_digest
+    - session_expires_at
+    - clock_policy
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - create_session
+    transitions:
+    - TR-CREATE
+  replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: public-routing-metadata
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.session_parameters_digest -> session_parameters_digest
+  - payload.session_expires_at -> session_expires_at
+  - payload.clock_policy -> clock_policy
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: session_acceptance
+  message_version: '0.1'
+  delivery_class: party_message
+  direction: accepted-input
+  allowed_senders:
+  - party_a_client
+  - party_b_client
+  verifier: coordinator
+  intended_audience:
+  - coordinator
+  payload:
+    required_fields:
+    - proposal_digest
+    - participant_id
+    - participant_key_id
+    - acceptance_digest
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - bind_participant_a
+    - bind_participant_b
+    transitions:
+    - TR-BIND-A-COMPLETE
+    - TR-BIND-A-FIRST
+    - TR-BIND-B-COMPLETE
+    - TR-BIND-B-FIRST
+  replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: public-routing-metadata
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.proposal_digest -> proposal_digest
+  - payload.participant_id -> participant_id
+  - payload.participant_key_id -> participant_key_id
+  - payload.acceptance_digest -> acceptance_digest
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: participant_binding
+  message_version: '0.1'
+  delivery_class: party_message
+  direction: accepted-input
+  allowed_senders:
+  - party_a_client
+  - party_b_client
+  verifier: coordinator
+  intended_audience:
+  - coordinator
+  payload:
+    required_fields:
+    - participant_id
+    - participant_key_id
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - bind_participant_a
+    - bind_participant_b
+    transitions:
+    - TR-BIND-A-COMPLETE
+    - TR-BIND-A-FIRST
+    - TR-BIND-B-COMPLETE
+    - TR-BIND-B-FIRST
+  replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: public-routing-metadata
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.participant_id -> participant_id
+  - payload.participant_key_id -> participant_key_id
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: policy_acceptance
+  message_version: '0.1'
+  delivery_class: party_message
+  direction: accepted-input
+  allowed_senders:
+  - party_a_client
+  - party_b_client
+  verifier: coordinator
+  intended_audience:
+  - coordinator
+  payload:
+    required_fields:
+    - policy_id
+    - policy_version
+    - acceptance_digest
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - accept_policy
+    transitions:
+    - TR-ACCEPT-POLICY-A
+    - TR-ACCEPT-POLICY-B
+  replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: public-routing-metadata
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.policy_id -> policy_id
+  - payload.policy_version -> policy_version
+  - payload.acceptance_digest -> acceptance_digest
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: commitment_registration
+  message_version: '0.1'
+  delivery_class: party_message
+  direction: accepted-input
+  allowed_senders:
+  - party_a_client
+  - party_b_client
+  verifier: coordinator
+  intended_audience:
+  - coordinator
+  payload:
+    required_fields:
+    - opaque_commitment
+    - commitment_pair_id
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - register_commitment_a
+    - register_commitment_b
+    transitions:
+    - TR-COMMIT-A-COMPLETE
+    - TR-COMMIT-A-FIRST
+    - TR-COMMIT-B-COMPLETE
+    - TR-COMMIT-B-FIRST
+  replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: opaque-protocol-artifact
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.opaque_commitment -> opaque_commitment
+  - payload.commitment_pair_id -> commitment_pair_id
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: query_budget_reservation
+  message_version: '0.1'
+  delivery_class: coordinator_command
+  direction: accepted-input
+  allowed_senders:
+  - coordinator
+  verifier: coordinator
+  intended_audience:
+  - coordinator
+  payload:
+    required_fields:
+    - authorization_ref
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - reserve_query_budget
+    transitions:
+    - TR-RESERVE-BUDGET
+  replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: public-routing-metadata
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.authorization_ref -> authorization_ref
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: evaluation_start
+  message_version: '0.1'
+  delivery_class: coordinator_command
+  direction: accepted-input
+  allowed_senders:
+  - coordinator
+  verifier: coordinator
+  intended_audience:
+  - selected_integration_profile
+  payload:
+    required_fields:
+    - evaluation_attempt_id
+    - evaluation_deadline
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - start_evaluation
+    transitions:
+    - TR-START-EVALUATION
+  replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: public-routing-metadata
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.evaluation_attempt_id -> evaluation_attempt_id
+  - payload.evaluation_deadline -> evaluation_deadline
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: evaluation_contribution
+  message_version: '0.1'
+  delivery_class: party_message
+  direction: accepted-input
+  allowed_senders:
+  - party_a_client
+  - party_b_client
+  verifier: selected_integration_profile
+  intended_audience:
+  - selected_integration_profile
+  payload:
+    required_fields:
+    - contribution_ref
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - submit_evaluation_contribution
+    transitions:
+    - TR-SUBMIT-CONTRIBUTION-A
+    - TR-SUBMIT-CONTRIBUTION-B
+  replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: opaque-protocol-artifact
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.contribution_ref -> contribution_ref
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: opaque_receipt_ack
+  message_version: '0.1'
+  delivery_class: party_message
+  direction: accepted-input
+  allowed_senders:
+  - party_a_client
+  - party_b_client
+  verifier: coordinator
+  intended_audience:
+  - coordinator
+  payload:
+    required_fields:
+    - opaque_receipt_ref
+    - acknowledgment_status
+    - profile_evidence_ref
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - acknowledge_opaque_receipt_a
+    - acknowledge_opaque_receipt_b
+    transitions:
+    - TR-ACK-RECEIPT-A
+    - TR-ACK-RECEIPT-B
+  replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: opaque-protocol-artifact
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.opaque_receipt_ref -> opaque_receipt_ref
+  - payload.acknowledgment_status -> acknowledgment_status
+  - payload.profile_evidence_ref -> profile_evidence_ref
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+  - absent.party_local_result -> selected-profile protected artifact; prohibited
+    from coordinator-readable JSON
+- message_type: result_acceptance_notice
+  message_version: '0.1'
+  delivery_class: profile_callback
+  direction: accepted-input
+  allowed_senders:
+  - selected_integration_profile
+  verifier: coordinator
+  intended_audience:
+  - coordinator
+  payload:
+    required_fields:
+    - opaque_receipt_ref
+    - acknowledgment_status
+    - profile_evidence_ref
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - accept_symmetric_result
+    transitions:
+    - TR-ACCEPT-SYMMETRIC-RESULT
+    - TR-RESULT-CONFLICT
+  replay_or_idempotency_domain: (profile_id,profile_version,profile_instance_id,session_id,evaluation_attempt_id,callback_id/idempotency_key)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: opaque-protocol-artifact
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.opaque_receipt_ref -> opaque_receipt_ref
+  - payload.acknowledgment_status -> acknowledgment_status
+  - payload.profile_evidence_ref -> profile_evidence_ref
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: consent_grant
+  message_version: '0.1'
+  delivery_class: party_message
+  direction: accepted-input
+  allowed_senders:
+  - party_a_client
+  - party_b_client
+  verifier: coordinator
+  intended_audience:
+  - coordinator
+  payload:
+    required_fields:
+    - opaque_receipt_ref
+    - disclosure_profile_id
+    - disclosure_profile_version
+    - scope
+    - audience
+    - issued_at
+    - expires_at
+    - consent_nonce
+    - consent_artifact_digest
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - grant_consent_a
+    - grant_consent_b
+    transitions:
+    - TR-GRANT-CONSENT-A
+    - TR-GRANT-CONSENT-B
+  replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: public-routing-metadata
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.opaque_receipt_ref -> opaque_receipt_ref
+  - payload.disclosure_profile_id -> disclosure_profile_id
+  - payload.disclosure_profile_version -> disclosure_profile_version
+  - payload.scope -> scope
+  - payload.audience -> audience
+  - payload.issued_at -> issued_at
+  - payload.expires_at -> expires_at
+  - payload.consent_nonce -> consent_nonce
+  - payload.consent_artifact_digest -> consent_artifact_digest
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: consent_withdrawal
+  message_version: '0.1'
+  delivery_class: party_message
+  direction: accepted-input
+  allowed_senders:
+  - party_a_client
+  - party_b_client
+  verifier: coordinator
+  intended_audience:
+  - coordinator
+  payload:
+    required_fields:
+    - consent_nonce
+    - consent_artifact_digest
+    - reason_category
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - withdraw_consent_a
+    - withdraw_consent_b
+    transitions:
+    - TR-WITHDRAW-CONSENT-A
+    - TR-WITHDRAW-CONSENT-B
+  replay_or_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: public-routing-metadata
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.consent_nonce -> consent_nonce
+  - payload.consent_artifact_digest -> consent_artifact_digest
+  - payload.reason_category -> reason_category
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: disclosure_extension_authorization
+  message_version: '0.1'
+  delivery_class: coordinator_command
+  direction: accepted-input
+  allowed_senders:
+  - coordinator
+  verifier: coordinator
+  intended_audience:
+  - selected_integration_profile
+  payload:
+    required_fields:
+    - profile_id
+    - profile_version
+    - scope
+    - audience
+    - authorization_ref
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - authorize_disclosure_extension
+    transitions:
+    - TR-AUTHORIZE-DISCLOSURE-EXTENSION
+  replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: public-routing-metadata
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.profile_id -> profile_id
+  - payload.profile_version -> profile_version
+  - payload.scope -> scope
+  - payload.audience -> audience
+  - payload.authorization_ref -> authorization_ref
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: disclosure_completion_notice
+  message_version: '0.1'
+  delivery_class: profile_callback
+  direction: accepted-input
+  allowed_senders:
+  - selected_integration_profile
+  verifier: coordinator
+  intended_audience:
+  - coordinator
+  payload:
+    required_fields:
+    - profile_id
+    - profile_version
+    - scope
+    - audience
+    - completion_ref
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - record_disclosure_completion
+    transitions:
+    - TR-RECORD-DISCLOSURE-COMPLETION
+  replay_or_idempotency_domain: (profile_id,profile_version,profile_instance_id,session_id,evaluation_attempt_id,callback_id/idempotency_key)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: public-routing-metadata
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.profile_id -> profile_id
+  - payload.profile_version -> profile_version
+  - payload.scope -> scope
+  - payload.audience -> audience
+  - payload.completion_ref -> completion_ref
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: abort_notice
+  message_version: '0.1'
+  delivery_class: coordinator_command
+  direction: accepted-input
+  allowed_senders:
+  - coordinator
+  verifier: coordinator
+  intended_audience:
+  - coordinator
+  - assurance_pipeline
+  payload:
+    required_fields:
+    - internal_failure_code
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - abort_session
+    transitions:
+    - TR-ABORT
+  replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: internal-coordinator-detail
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.internal_failure_code -> internal_failure_code
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: normalized_error_notice
+  message_version: '0.1'
+  delivery_class: derived_transition
+  direction: derived-output
+  allowed_senders:
+  - coordinator
+  verifier: party_a_client_or_party_b_client
+  intended_audience:
+  - party_a_client
+  - party_b_client
+  payload:
+    required_fields:
+    - party_error_category
+    - retry_class
+    - new_session_required
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+    - internal_failure_code
+  state_machine:
+    events:
+    - reject_message
+    transitions:
+    - TR-REJECT-MESSAGE
+  replay_or_idempotency_domain: no external acceptance or retry domain
+  transcript_participation: derived-notice-excluded
+  privacy_classification: party-safe-normalized-notice
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.party_error_category -> party_error_category
+  - payload.retry_class -> retry_class
+  - payload.new_session_required -> new_session_required
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: close_notice
+  message_version: '0.1'
+  delivery_class: coordinator_command
+  direction: accepted-input
+  allowed_senders:
+  - coordinator
+  verifier: coordinator
+  intended_audience:
+  - party_a_client
+  - party_b_client
+  payload:
+    required_fields:
+    - reason_category
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+  state_machine:
+    events:
+    - close_session
+    transitions:
+    - TR-CLOSE
+  replay_or_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
+  transcript_participation: accepted-mutating-event
+  privacy_classification: public-routing-metadata
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.reason_category -> reason_category
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+- message_type: expiry_notice
+  message_version: '0.1'
+  delivery_class: derived_transition
+  direction: derived-output
+  allowed_senders:
+  - coordinator
+  verifier: party_a_client_or_party_b_client
+  intended_audience:
+  - party_a_client
+  - party_b_client
+  payload:
+    required_fields:
+    - party_error_category
+    - observed_at
+    prohibited_fields:
+    - raw_identifiers
+    - normalized_identifiers
+    - matching_elements
+    - non_matching_elements
+    - exact_intersection_count
+    - private_attributes
+    - plaintext_result
+    - local_result
+    - local_result_binding
+    - actual_disclosure_payload
+    - secret_input
+    - internal_failure_code
+  state_machine:
+    events:
+    - expire_session
+    - advance_authoritative_time
+    transitions:
+    - TR-ADVANCE-TIME-EXPIRE
+    - TR-ADVANCE-TIME-LIVE
+    - TR-ADVANCE-TIME-NOOP
+    - TR-CONSENT-EXPIRED
+    - TR-EVALUATION-TIMEOUT
+  replay_or_idempotency_domain: no external acceptance or retry domain
+  transcript_participation: derived-notice-excluded
+  privacy_classification: party-safe-normalized-notice
+  failure_behavior: fail closed without transcript mutation; return only a reviewed
+    Party category where the audience includes a Party
+  version_compatibility: exact-version-only; unknown fields and versions fail closed
+  authentication_requirement: external messages require selected non-none authentication;
+    this draft selects no algorithm
+  parameter_sources:
+  - payload.party_error_category -> party_error_category
+  - payload.observed_at -> observed_at
+  - message.message_digest -> state canonical event/operation/callback digest
+  - message.prior_transcript_digest -> state transcript chain guard
+internal_event_contracts:
+- id: authoritative_timer_event
+  delivery_class: timer
+  external_party_message: false
+  transcript_participation: accepted-mutating-event
+  state_machine_events:
+  - advance_authoritative_time
+  - expire_session
+  canonical_digest_source: RFC 8785 canonical timer-event bytes under private-match-timer-event/v0.1
+- id: reject_message_relation
+  delivery_class: derived_transition
+  external_party_message: false
+  transcript_participation: excluded
+  state_machine_events:
+  - reject_message
+  canonical_digest_source: none; rejected input never enters accepted transcript
+- id: new_session_guidance
+  delivery_class: local_guidance
+  external_party_message: false
+  transcript_participation: excluded
+  state_machine_events:
+  - request_new_evaluation_session
+  canonical_digest_source: none; pure local guidance does not mutate authoritative
+    state

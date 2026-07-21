@@ -112,6 +112,8 @@ REQUIRED_STATE_VARIABLES = {
     "selected_integration_profile_binding",
     "terminal_failure_code",
     "party_terminal_category",
+    "accepted_event_index",
+    "canonical_transcript_head",
 }
 REQUIRED_INVARIANTS = {
     "INV-REVEAL-SAFETY",
@@ -126,6 +128,7 @@ REQUIRED_INVARIANTS = {
     "INV-OPAQUE-RECEIPT",
     "INV-QUERY-BUDGET",
     "INV-COORDINATOR-OUTCOME-CONFIDENTIALITY",
+    "INV-CANONICAL-TRANSCRIPT",
 }
 REQUIRED_FAILURE_CODES = {
     "PARTICIPANT_MISMATCH",
@@ -197,7 +200,7 @@ PROHIBITED_AUDIT_FIELDS = {
 }
 REQUIRED_SCOPE_EXCLUSIONS = {
     "PET selection or cryptographic implementation",
-    "wire message fields or canonical encoding",
+    "transport-specific wire framing, production API fields, or persistence encoding",
     "transport, persistence, or production coordinator implementation",
     "actual identity, private-data, or disclosure payload",
     "TLA+ model checking or any production/security certification",
@@ -319,6 +322,33 @@ REQUIRED_ENVELOPE_BINDINGS = {
         "profile_callback",
         "profile_callback_envelope.evaluation_attempt_id",
         "state.evaluation_attempt_id",
+    ),
+}
+
+TRANSCRIPT_CLASS_CONTRACTS = {
+    "party_message": (
+        "G-PARTY-TRANSCRIPT-CHAIN",
+        "E-APPEND-PARTY-TRANSCRIPT",
+        "replay_envelope.prior_transcript_digest",
+        "replay_envelope.canonical_message_digest",
+    ),
+    "coordinator_command": (
+        "G-OPERATION-TRANSCRIPT-CHAIN",
+        "E-APPEND-OPERATION-TRANSCRIPT",
+        "operation_envelope.prior_transcript_digest",
+        "operation_envelope.canonical_message_digest",
+    ),
+    "profile_callback": (
+        "G-CALLBACK-TRANSCRIPT-CHAIN",
+        "E-APPEND-CALLBACK-TRANSCRIPT",
+        "profile_callback_envelope.prior_transcript_digest",
+        "profile_callback_envelope.canonical_message_digest",
+    ),
+    "timer": (
+        "G-TIMER-TRANSCRIPT-CHAIN",
+        "E-APPEND-TIMER-TRANSCRIPT",
+        "time_advance_parameter.prior_transcript_digest",
+        "time_advance_parameter.canonical_event_digest",
     ),
 }
 
@@ -931,6 +961,40 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
         for field_id in field_ids:
             parameter_paths.add(f"{parameter_id}.{field_id}")
 
+    required_transcript_parameter_fields = {
+        "replay_envelope": {
+            "prior_transcript_digest",
+            "canonical_message_digest",
+        },
+        "operation_envelope": {
+            "prior_transcript_digest",
+            "canonical_message_digest",
+        },
+        "profile_callback_envelope": {
+            "prior_transcript_digest",
+            "canonical_message_digest",
+        },
+        "time_advance_parameter": {
+            "prior_transcript_digest",
+            "canonical_event_digest",
+        },
+    }
+    for parameter_id, required_fields in required_transcript_parameter_fields.items():
+        actual_fields = {
+            field.get("id")
+            for field in parameter_catalog.get(parameter_id, {}).get("fields", [])
+            if isinstance(field, dict)
+        }
+        missing = sorted(required_fields - actual_fields)
+        if missing:
+            findings.append(
+                _finding(
+                    "canonical-transcript",
+                    f"event_parameter_catalog.{parameter_id}",
+                    "missing transcript fields: " + ", ".join(missing),
+                )
+            )
+
     flow_contracts = model.get("parameter_flow_contracts", [])
     contract_index: dict[tuple[str, str], dict[str, Any]] = {}
     for index, contract in enumerate(flow_contracts):
@@ -1422,6 +1486,74 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
             for item in transition.get("effects", [])
             if isinstance(item, dict)
         }
+        transcript_contract = TRANSCRIPT_CLASS_CONTRACTS.get(str(delivery_class))
+        if transition.get("mutating") and transcript_contract:
+            guard_id, effect_id, prior_path, digest_path = transcript_contract
+            if guard_id not in guard_ids or effect_id not in effect_ids:
+                findings.append(
+                    _finding(
+                        "canonical-transcript",
+                        transition.get("id", "transition"),
+                        "accepted mutating delivery must guard and atomically append the transcript",
+                    )
+                )
+            guard = next(
+                (
+                    item
+                    for item in transition.get("guards", [])
+                    if item.get("id") == guard_id
+                ),
+                {},
+            )
+            effect = next(
+                (
+                    item
+                    for item in transition.get("effects", [])
+                    if item.get("id") == effect_id
+                ),
+                {},
+            )
+            expected_reads = {prior_path, digest_path}
+            if (
+                not {"accepted_event_index", "canonical_transcript_head"}.issubset(
+                    set(guard.get("reads", []))
+                )
+                or set(guard.get("parameter_reads", [])) != expected_reads
+                or set(effect.get("parameter_reads", [])) != expected_reads
+                or set(effect.get("writes", []))
+                != {"accepted_event_index", "canonical_transcript_head"}
+            ):
+                findings.append(
+                    _finding(
+                        "canonical-transcript",
+                        transition.get("id", "transition"),
+                        "transcript guard/effect must bind the class digest and prior head exactly once",
+                    )
+                )
+            if "INV-CANONICAL-TRANSCRIPT" not in transition.get(
+                "related_invariants", []
+            ):
+                findings.append(
+                    _finding(
+                        "canonical-transcript",
+                        transition.get("id", "transition"),
+                        "mutating transition must reference INV-CANONICAL-TRANSCRIPT",
+                    )
+                )
+        elif not transition.get("mutating"):
+            all_transcript_ids = {
+                item
+                for contract in TRANSCRIPT_CLASS_CONTRACTS.values()
+                for item in contract[:2]
+            }
+            if (guard_ids | effect_ids) & all_transcript_ids:
+                findings.append(
+                    _finding(
+                        "canonical-transcript",
+                        transition.get("id", "transition"),
+                        "reject, duplicate, derived/local, and no-op relations must not append the transcript",
+                    )
+                )
         if transition.get("mutating") and delivery_class == "party_message":
             if (
                 not {"G-MESSAGE-TIME-VALID", "G-ORDER-AND-REPLAY"}.issubset(guard_ids)
@@ -2275,7 +2407,11 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                 )
             )
     live_time = transition_index.get("TR-ADVANCE-TIME-LIVE", {})
-    if _transition_writes(live_time) != {"authoritative_time"} or not {
+    if _transition_writes(live_time) != {
+        "authoritative_time",
+        "accepted_event_index",
+        "canonical_transcript_head",
+    } or not {
         "G-TIME-MONOTONIC",
         "G-TIME-DOMAIN",
         "G-TIME-INCREASES",
@@ -2285,7 +2421,7 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
             _finding(
                 "authoritative-time",
                 "TR-ADVANCE-TIME-LIVE",
-                "live clock transition must update only time and stay below every active deadline",
+                "live clock transition must update only time plus the accepted transcript and stay below every active deadline",
             )
         )
     expire_transition = transition_index.get("TR-ADVANCE-TIME-EXPIRE", {})
@@ -2704,6 +2840,80 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                     f"unapproved fields: {', '.join(sorted(unexpected))}",
                 )
             )
+
+    transcript = model.get("canonical_transcript_semantics", {})
+    genesis_label = b"private-match-transcript-genesis/v0.1"
+    expected_genesis = (
+        "sha256:"
+        + hashlib.sha256(
+            len(genesis_label).to_bytes(2, "big") + genesis_label
+        ).hexdigest()
+    )
+    expected_transcript_values = {
+        "ordering_authority": "coordinator",
+        "digest_algorithm": "SHA-256",
+        "payload_domain": "private-match-payload/v0.1",
+        "message_domain": "private-match-message/v0.1",
+        "transcript_domain": "private-match-transcript/v0.1",
+        "timer_event_domain": "private-match-timer-event/v0.1",
+        "genesis_domain": "private-match-transcript-genesis/v0.1",
+        "genesis_digest": expected_genesis,
+        "timer_digest_source": "time_advance_parameter.canonical_event_digest",
+    }
+    for key, expected in expected_transcript_values.items():
+        if transcript.get(key) != expected:
+            findings.append(
+                _finding(
+                    "canonical-transcript",
+                    f"canonical_transcript_semantics.{key}",
+                    f"must equal {expected}",
+                )
+            )
+    if transcript.get("external_message_digest_sources") != {
+        "party_message": "replay_envelope.canonical_message_digest",
+        "coordinator_command": "operation_envelope.canonical_message_digest",
+        "profile_callback": "profile_callback_envelope.canonical_message_digest",
+    }:
+        findings.append(
+            _finding(
+                "canonical-transcript",
+                "canonical_transcript_semantics.external_message_digest_sources",
+                "delivery-class digest sources must match the envelope catalog",
+            )
+        )
+    required_included = {"accepted", "mutating", "authoritative order"}
+    required_excluded = {
+        "rejected",
+        "conflicting duplicates",
+        "exact duplicates",
+        "derived notices",
+        "local guidance",
+        "no-op",
+    }
+    included_text = str(transcript.get("included_relations", "")).lower()
+    excluded_text = str(transcript.get("excluded_relations", "")).lower()
+    if not all(token in included_text for token in required_included) or not all(
+        token in excluded_text for token in required_excluded
+    ):
+        findings.append(
+            _finding(
+                "canonical-transcript",
+                "canonical_transcript_semantics",
+                "included and excluded accepted-event classes are incomplete",
+            )
+        )
+    if (
+        variable_index.get("canonical_transcript_head", {}).get("initial")
+        != expected_genesis
+        or variable_index.get("accepted_event_index", {}).get("initial") != "0"
+    ):
+        findings.append(
+            _finding(
+                "canonical-transcript",
+                "state_variables",
+                "transcript head/index initial values do not match the declared genesis",
+            )
+        )
 
     formal = model.get("formalization", {})
     if set(formal.get("state_variable_ids", [])) != variable_ids:

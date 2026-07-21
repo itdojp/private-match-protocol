@@ -202,7 +202,8 @@ instance, session, and attempt fields to the current transition/state.
 The validator rejects an unknown field path, a field not declared by the event,
 a missing contract field, a wrong parameter substitution, or a required event
 parameter that is declared but unused. These are abstract state-relation inputs;
-wire names and canonical encoding remain deferred to Protocol Issue #5.
+the Issue #5 registry now defines their canonical message sources; transport-specific
+framing remains outside both drafts.
 
 ## Transition relation
 
@@ -449,6 +450,30 @@ The machine distinguishes party resend, coordinator operation resend, profile
 callback resend, timer re-evaluation, transient new-message retry, continuation
 of the one bound evaluation, new-session retry, and non-retryable terminal
 failure. v0.1 defines no same-pair new-attempt transition.
+
+## Canonical accepted transcript
+
+Issue #5 adds `accepted_event_index` and `canonical_transcript_head` as
+coordinator-authoritative orthogonal variables. The genesis head, domain labels,
+JCS rules, authentication input, and append formula are defined in the
+[canonical transcript contract](../messages/canonical-transcript-v0.1.md).
+
+Each mutating Party message, coordinator command, profile callback, or timer
+transition checks that its supplied prior head equals the current head. The
+validated canonical message or timer-event digest is then appended atomically
+with the state mutation and the event index increments by exactly one. Party
+senders cannot choose the authoritative event index.
+
+The following do not append: rejected input, conflicting duplicate input, exact
+duplicate resend, derived outbound notice, local guidance, and same-threshold
+timer no-op. `INV-CANONICAL-TRANSCRIPT` and the semantic validator enforce this
+classification. The transcript does not replace sender sequence, nonce, dual
+operation/callback indexes, query-budget, or audit controls.
+
+Coordinator-readable transcript inputs contain opaque receipt and normalized
+lifecycle data, never the plaintext decision. Bare hashes of the three decision
+values remain prohibited. This is a structural requirement and not evidence
+that an unselected integration profile achieves outcome confidentiality.
 
 ## Generic abort
 

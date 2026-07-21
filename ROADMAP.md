@@ -39,6 +39,8 @@ Current draft artifacts:
 - [`private-match-core/v0.1` actors and trust boundaries](specs/ACTORS_AND_TRUST_BOUNDARIES.md)
 - [Privacy Leakage Contract v0.1](docs/PRIVACY_LEAKAGE_CONTRACT.md)
 - [Core session and disclosure state machine v0.1](specs/state-machines/private-match-core-session-v0.1.md)
+- [Versioned core message contract v0.1](specs/messages/private-match-core-messages-v0.1.md)
+- [Canonical transcript contract v0.1](specs/messages/canonical-transcript-v0.1.md)
 
 These artifacts remain `draft`; their presence does not satisfy the P1
 `candidate` exit criterion or select an integration profile.
@@ -52,12 +54,16 @@ Exit criteria:
 
 ## P2 — Message schemas and conformance
 
-- canonical message schemas
-- positive and negative test vectors
+- draft canonical message schemas and a versioned registry are present
+- draft positive, negative, substitution, replay, and transcript vectors are present
 - tamper, replay, expiry, and cross-session tests
 - reference verifier
 - compatibility rules
 - implementation-independent conformance runner
+
+The current artifacts establish a draft data/canonicalization contract only.
+They do not implement authentication, establish independent implementation
+conformance, or satisfy the P2 exit criteria.
 
 Exit criteria:
 

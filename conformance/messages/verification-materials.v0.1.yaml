@@ -1,0 +1,64 @@
+schema_version: '0.1'
+artifact_status: test-only
+scope: synthetic conformance vectors only; no production algorithm or key is selected
+materials:
+- verification_material_id: urn:private-match:test:material:party-a:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:party-a:v0.1
+  allowed_senders:
+  - party_a_client
+  status: active
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+- verification_material_id: urn:private-match:test:material:party-b:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:party-b:v0.1
+  allowed_senders:
+  - party_b_client
+  status: active
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+- verification_material_id: urn:private-match:test:material:coordinator:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:coordinator:v0.1
+  allowed_senders:
+  - coordinator
+  status: active
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+- verification_material_id: urn:private-match:test:material:profile:v0.1
+  mode: profile-attestation
+  algorithm_id: urn:private-match:test:profile-attestation-placeholder:v0.1
+  key_id: urn:private-match:test:key:profile:v0.1
+  allowed_senders:
+  - selected_integration_profile
+  status: active
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true
+- verification_material_id: urn:private-match:test:material:expired:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:expired:v0.1
+  allowed_senders:
+  - party_a_client
+  status: expired
+  not_before: '2026-01-01T00:00:00Z'
+  not_after: '2026-02-01T00:00:00Z'
+  test_only: true
+- verification_material_id: urn:private-match:test:material:revoked:v0.1
+  mode: signature
+  algorithm_id: urn:private-match:test:signature-placeholder:v0.1
+  key_id: urn:private-match:test:key:revoked:v0.1
+  allowed_senders:
+  - party_a_client
+  status: revoked
+  not_before: '2026-07-01T00:00:00Z'
+  not_after: '2026-08-01T00:00:00Z'
+  test_only: true

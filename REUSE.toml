@@ -7,6 +7,10 @@ path = [
   ".github/workflows/protocol-spec.yml",
   ".gitignore",
   "privacy/leakage-contract.v0.1.yaml",
+  "conformance/messages/**/*.json",
+  "conformance/messages/**/*.yaml",
+  "registry/**/*.yaml",
+  "schemas/**/*.json",
   "specs/state-machines/private-match-core-session-v0.1.yaml",
   "REUSE.toml",
   "requirements-build.in",
@@ -16,8 +20,13 @@ path = [
   "schema/leakage-contract.schema.json",
   "schema/session-state-machine.schema.json",
   "scripts/validate_leakage_contract.py",
+  "scripts/canonicalize_message.py",
+  "scripts/generate_message_vectors.py",
+  "scripts/validate_messages.py",
   "scripts/validate_session_state_machine.py",
+  "tests/test_canonical_transcript.py",
   "tests/test_leakage_contract.py",
+  "tests/test_message_contracts.py",
   "tests/test_session_state_machine.py",
 ]
 precedence = "aggregate"
@@ -34,6 +43,7 @@ path = [
   "docs/*.md",
   "docs/decisions/*.md",
   "specs/*.md",
+  "specs/messages/*.md",
   "specs/state-machines/*.md",
 ]
 precedence = "aggregate"

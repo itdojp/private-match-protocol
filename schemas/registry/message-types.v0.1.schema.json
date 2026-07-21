@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/itdojp/private-match-protocol/schemas/registry/message-types.v0.1.schema.json",
+  "title": "Private Match message type registry v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "registry_id",
+    "artifact_status",
+    "protocol_profile",
+    "unknown_type_behavior",
+    "messages",
+    "internal_event_contracts"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "0.1"
+    },
+    "registry_id": {
+      "const": "private-match-core-message-types/v0.1"
+    },
+    "artifact_status": {
+      "const": "draft"
+    },
+    "protocol_profile": {
+      "const": "private-match-core/v0.1"
+    },
+    "unknown_type_behavior": {
+      "const": "fail-closed"
+    },
+    "messages": {
+      "type": "array",
+      "minItems": 17,
+      "items": {
+        "$ref": "#/$defs/message"
+      }
+    },
+    "internal_event_contracts": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "$ref": "#/$defs/internal"
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_type",
+        "message_version",
+        "delivery_class",
+        "direction",
+        "allowed_senders",
+        "verifier",
+        "intended_audience",
+        "payload",
+        "state_machine",
+        "replay_or_idempotency_domain",
+        "transcript_participation",
+        "privacy_classification",
+        "failure_behavior",
+        "version_compatibility",
+        "authentication_requirement",
+        "parameter_sources"
+      ],
+      "properties": {
+        "message_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+        },
+        "message_version": {
+          "type": "string",
+          "const": "0.1"
+        },
+        "delivery_class": {
+          "type": "string",
+          "enum": [
+            "party_message",
+            "coordinator_command",
+            "profile_callback",
+            "derived_transition"
+          ]
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "accepted-input",
+            "derived-output"
+          ]
+        },
+        "allowed_senders": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+          }
+        },
+        "verifier": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+        },
+        "intended_audience": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+          }
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "required_fields",
+            "prohibited_fields"
+          ],
+          "properties": {
+            "required_fields": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+              }
+            },
+            "prohibited_fields": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+              }
+            }
+          }
+        },
+        "state_machine": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "events",
+            "transitions"
+          ],
+          "properties": {
+            "events": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+              }
+            },
+            "transitions": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+              }
+            }
+          }
+        },
+        "replay_or_idempotency_domain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transcript_participation": {
+          "type": "string",
+          "enum": [
+            "accepted-mutating-event",
+            "derived-notice-excluded"
+          ]
+        },
+        "privacy_classification": {
+          "type": "string",
+          "enum": [
+            "public-routing-metadata",
+            "opaque-protocol-artifact",
+            "party-safe-normalized-notice",
+            "internal-coordinator-detail"
+          ]
+        },
+        "failure_behavior": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version_compatibility": {
+          "const": "exact-version-only; unknown fields and versions fail closed"
+        },
+        "authentication_requirement": {
+          "const": "external messages require selected non-none authentication; this draft selects no algorithm"
+        },
+        "parameter_sources": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "internal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "delivery_class",
+        "external_party_message",
+        "transcript_participation",
+        "state_machine_events",
+        "canonical_digest_source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+        },
+        "delivery_class": {
+          "type": "string",
+          "enum": [
+            "timer",
+            "derived_transition",
+            "local_guidance"
+          ]
+        },
+        "external_party_message": {
+          "const": false
+        },
+        "transcript_participation": {
+          "type": "string",
+          "enum": [
+            "accepted-mutating-event",
+            "excluded"
+          ]
+        },
+        "state_machine_events": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+          }
+        },
+        "canonical_digest_source": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

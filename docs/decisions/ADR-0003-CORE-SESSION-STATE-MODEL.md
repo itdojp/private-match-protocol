@@ -265,6 +265,20 @@ versioned, reviewed transition that preserves query-budget and leakage controls.
 This evidence establishes draft consistency only. It does not establish
 cryptographic or implementation security.
 
+## Issue #5 canonical transcript amendment
+
+ADR-0004 adds a draft RFC 8785/SHA-256 message and accepted transcript contract
+without changing the decisions above. The state vector gains
+`accepted_event_index` and `canonical_transcript_head`. Every accepted mutating
+delivery relation atomically appends its validated canonical event digest.
+Rejects, conflicts, exact duplicates, derived notices, local guidance, and
+timer no-op remain nonmutating and do not append.
+
+This amendment preserves Party-local result visibility, coordinator outcome
+confidentiality, query-budget disposition, consent replacement, failure
+projection, and extension-only disclosure. It does not select authentication,
+PET, transport, persistence, or production semantics.
+
 ## Compatibility impact
 
 This adds the first session state-machine artifact for
@@ -283,7 +297,7 @@ profile. A future compatibility commitment requires a separate version decision.
 
 - concrete PET and threat profile;
 - opaque receipt construction and its evidence;
-- message schemas, canonical encoding, signatures, and transport;
+- actual signature/MAC/attestation algorithms, transport, and persistence;
 - persistence and transactional implementation;
 - business values for clock, expiry, minimum-set, and budget parameters;
 - any actual disclosure profile or payload;

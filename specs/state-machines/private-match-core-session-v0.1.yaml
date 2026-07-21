@@ -19,9 +19,10 @@ scope:
   - participant, policy, commitment, attempt, replay, ordering, budget, result, consent, and expiry semantics
   - extension guards for separately reviewed disclosure profiles
   - failure taxonomy and TLA+ readiness mapping
+  - canonical accepted-event transcript head and event-index binding
   excludes:
   - PET selection or cryptographic implementation
-  - wire message fields or canonical encoding
+  - transport-specific wire framing, production API fields, or persistence encoding
   - transport, persistence, or production coordinator implementation
   - actual identity, private-data, or disclosure payload
   - TLA+ model checking or any production/security certification
@@ -238,8 +239,9 @@ event_parameter_catalog:
     required: true
     description: Abstract reviewed integration-profile binding; no PET is selected here.
 - id: replay_envelope
-  type: record<sender_participant_id,message_id,nonce,sequence,issued_at,canonical_event_digest>
-  description: Party-message ordering, issued time, and exact-duplicate identity; wire encoding is deferred.
+  type: record<sender_participant_id,message_id,nonce,sequence,issued_at,canonical_event_digest,prior_transcript_digest,canonical_message_digest>
+  description: 'Party-message ordering, issued time, and exact-duplicate identity; wire representation
+    is defined by the Issue #5 draft message contract.'
   fields:
   - id: sender_participant_id
     type: opaque_participant_identifier
@@ -265,6 +267,15 @@ event_parameter_catalog:
     type: sha256_digest
     required: true
     description: Digest binding every envelope identity field and canonical event payload.
+  - id: prior_transcript_digest
+    type: sha256_digest
+    required: true
+    description: Accepted transcript head before this Party message; must equal coordinator state.
+  - id: canonical_message_digest
+    type: sha256_digest
+    required: true
+    description: RFC 8785 and domain-separated message digest derived after complete authentication-input
+      validation.
 - id: clock_policy
   type: record<authoritative_time,session_expiry,allowed_skew,stale_threshold,evaluation_timeout>
   description: Typed policy parameters, not fixed business durations.
@@ -447,7 +458,7 @@ event_parameter_catalog:
     required: true
     description: Coordinator-only detailed failure selected from the taxonomy.
 - id: operation_envelope
-  type: record<actor_id,operation_id,canonical_operation_digest,idempotency_key>
+  type: record<actor_id,operation_id,canonical_operation_digest,idempotency_key,prior_transcript_digest,canonical_message_digest>
   description: Coordinator-command identity in an actor-scoped operation domain; separate from the participant
     replay envelope.
   fields:
@@ -467,8 +478,16 @@ event_parameter_catalog:
     type: opaque_identifier
     required: true
     description: Independently unique actor-scoped idempotency key.
+  - id: prior_transcript_digest
+    type: sha256_digest
+    required: true
+    description: Accepted transcript head before this coordinator command.
+  - id: canonical_message_digest
+    type: sha256_digest
+    required: true
+    description: RFC 8785 and domain-separated coordinator-command message digest.
 - id: profile_callback_envelope
-  type: record<profile_id,profile_version,profile_instance_id,callback_id,canonical_callback_digest,idempotency_key,session_id,evaluation_attempt_id>
+  type: record<profile_id,profile_version,profile_instance_id,callback_id,canonical_callback_digest,idempotency_key,session_id,evaluation_attempt_id,prior_transcript_digest,canonical_message_digest>
   description: Reviewed profile callback identity bound to profile instance, session, and evaluation attempt.
   fields:
   - id: profile_id
@@ -503,8 +522,16 @@ event_parameter_catalog:
     type: opaque_identifier
     required: true
     description: Must equal current evaluation_attempt_id.
+  - id: prior_transcript_digest
+    type: sha256_digest
+    required: true
+    description: Accepted transcript head before this profile callback.
+  - id: canonical_message_digest
+    type: sha256_digest
+    required: true
+    description: RFC 8785 and domain-separated profile-callback message digest.
 - id: time_advance_parameter
-  type: record<new_authoritative_time,reason_or_source_class>
+  type: record<new_authoritative_time,reason_or_source_class,prior_transcript_digest,canonical_event_digest>
   description: Bounded coordinator-clock/environment time proposal; client time is never authoritative.
   fields:
   - id: new_authoritative_time
@@ -515,6 +542,14 @@ event_parameter_catalog:
     type: reviewed_clock_source_class
     required: true
     description: Bounded clock source/reason category.
+  - id: prior_transcript_digest
+    type: sha256_digest
+    required: true
+    description: Accepted transcript head before a mutating timer relation.
+  - id: canonical_event_digest
+    type: sha256_digest
+    required: true
+    description: Domain-separated digest of the canonical authoritative timer event.
 phases:
 - id: UNINITIALIZED
   terminal: false
@@ -1125,6 +1160,31 @@ state_variables:
   coordinator_access: read-write
   description: Reviewed normalized category derived from failure_taxonomy.party_error_category for Party
     projection.
+- id: accepted_event_index
+  type: non_negative_integer
+  initial: '0'
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - assurance_pipeline
+  coordinator_access: read-write
+  description: Monotonic coordinator-authoritative index incremented once for each accepted mutating event
+    and never for rejects, exact duplicates, derived notices, or no-ops.
+- id: canonical_transcript_head
+  type: sha256_digest
+  initial: sha256:200b23451f65992feacb88e782a16afb595bc32d386a4347bb318892cde2ff3c
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - party_a_client
+  - party_b_client
+  - selected_integration_profile
+  - assurance_pipeline
+  coordinator_access: read-write
+  description: Domain-separated accepted transcript head; it binds opaque message/event digests and does
+    not expose the plaintext decision outcome.
 events:
 - id: create_session
   initiator:
@@ -2195,6 +2255,18 @@ transitions:
     - clock_policy.evaluation_timeout
     - clock_policy.session_expiry
     - clock_policy.stale_threshold
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-CREATE
     operation: initialize_session
@@ -2252,6 +2324,20 @@ transitions:
     - operation_envelope.operation_id
     arguments:
     - atomically store both ID and idempotency-key indexes with the prior normalized response
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2290,6 +2376,7 @@ transitions:
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-BIND-A-FIRST
   event: bind_participant_a
   actor: party_a_client
@@ -2360,6 +2447,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-BIND-A
     operation: bind_once
@@ -2394,6 +2493,20 @@ transitions:
     - replay_envelope.sequence
     - session_context.session_id
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2431,6 +2544,7 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-BIND-A-COMPLETE
   event: bind_participant_a
   actor: party_a_client
@@ -2460,6 +2574,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-BIND-A-COMPLETE
     operation: bind_once
@@ -2474,6 +2600,20 @@ transitions:
     - participant_binding_parameter.participant_id
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2511,6 +2651,7 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-BIND-B-FIRST
   event: bind_participant_b
   actor: party_b_client
@@ -2540,6 +2681,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-BIND-B
     operation: bind_once
@@ -2553,6 +2706,20 @@ transitions:
     - participant_binding_parameter.participant_id
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2590,6 +2757,7 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-BIND-B-COMPLETE
   event: bind_participant_b
   actor: party_b_client
@@ -2619,6 +2787,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-BIND-B-COMPLETE
     operation: bind_once
@@ -2633,6 +2813,20 @@ transitions:
     - participant_binding_parameter.participant_id
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2670,6 +2864,7 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-ACCEPT-POLICY-A
   event: accept_policy
   actor: party_a_client
@@ -2698,6 +2893,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-ACCEPT-POLICY-A
     operation: set
@@ -2711,6 +2918,20 @@ transitions:
     - policy_acceptance_parameter.policy_version
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2747,6 +2968,7 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-ACCEPT-POLICY-B
   event: accept_policy
   actor: party_b_client
@@ -2775,6 +2997,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-ACCEPT-POLICY-B
     operation: set
@@ -2788,6 +3022,20 @@ transitions:
     - policy_acceptance_parameter.policy_version
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2824,6 +3072,7 @@ transitions:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-RESERVE-BUDGET
   event: reserve_query_budget
   actor: coordinator
@@ -2869,6 +3118,18 @@ transitions:
     - session_expires_at
     arguments: []
     parameter_reads: []
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-RESERVE-BUDGET
     operation: reserve
@@ -2892,6 +3153,20 @@ transitions:
     - operation_envelope.operation_id
     arguments:
     - atomically store both ID and idempotency-key indexes with the prior normalized response
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -2931,6 +3206,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-QUERY-BUDGET
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-COMMIT-A-FIRST
   event: register_commitment_a
   actor: party_a_client
@@ -2967,6 +3243,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-COMMIT-A
     operation: bind_once
@@ -2978,6 +3266,20 @@ transitions:
     - commitment_parameter.opaque_commitment
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -3015,6 +3317,7 @@ transitions:
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-COMMIT-A-COMPLETE
   event: register_commitment_a
   actor: party_a_client
@@ -3051,6 +3354,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-COMMIT-A-PAIR
     operation: bind_once
@@ -3064,6 +3379,20 @@ transitions:
     - commitment_parameter.opaque_commitment
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -3101,6 +3430,7 @@ transitions:
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-COMMIT-B-FIRST
   event: register_commitment_b
   actor: party_b_client
@@ -3137,6 +3467,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-COMMIT-B
     operation: bind_once
@@ -3148,6 +3490,20 @@ transitions:
     - commitment_parameter.opaque_commitment
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -3185,6 +3541,7 @@ transitions:
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-COMMIT-B-COMPLETE
   event: register_commitment_b
   actor: party_b_client
@@ -3221,6 +3578,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-COMMIT-B-PAIR
     operation: bind_once
@@ -3234,6 +3603,20 @@ transitions:
     - commitment_parameter.opaque_commitment
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -3271,6 +3654,7 @@ transitions:
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-START-EVALUATION
   event: start_evaluation
   actor: coordinator
@@ -3334,6 +3718,18 @@ transitions:
     - session_expires_at
     arguments: []
     parameter_reads: []
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-START-EVALUATION
     operation: consume_atomically
@@ -3369,6 +3765,20 @@ transitions:
     arguments:
     - authoritative_time + policy evaluation timeout
     - must be within TimeDomain
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -3412,6 +3822,7 @@ transitions:
   - INV-ONE-EVALUATION
   - INV-QUERY-BUDGET
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-SUBMIT-CONTRIBUTION-A
   event: submit_evaluation_contribution
   actor: party_a_client
@@ -3447,6 +3858,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-CONTRIBUTION-A
     operation: bind_once
@@ -3458,6 +3881,20 @@ transitions:
     - evaluation_contribution_parameter.contribution_ref
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: selected_integration_profile
     data:
@@ -3491,6 +3928,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
   - INV-ONE-EVALUATION
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-SUBMIT-CONTRIBUTION-B
   event: submit_evaluation_contribution
   actor: party_b_client
@@ -3526,6 +3964,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-CONTRIBUTION-B
     operation: bind_once
@@ -3537,6 +3987,20 @@ transitions:
     - evaluation_contribution_parameter.contribution_ref
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: selected_integration_profile
     data:
@@ -3570,6 +4034,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-COMMITMENT-IMMUTABILITY
   - INV-ONE-EVALUATION
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-ACK-RECEIPT-A
   event: acknowledge_opaque_receipt_a
   actor: party_a_client
@@ -3615,6 +4080,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-ACK-RECEIPT-A
     operation: set_if_unset_or_equal
@@ -3629,6 +4106,20 @@ transitions:
     - opaque_receipt_parameter.opaque_receipt_ref
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: party_a_client
     data:
@@ -3668,6 +4159,7 @@ transitions:
   - INV-RESULT-SYMMETRY
   - INV-OPAQUE-RECEIPT
   - INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-ACK-RECEIPT-B
   event: acknowledge_opaque_receipt_b
   actor: party_b_client
@@ -3713,6 +4205,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-ACK-RECEIPT-B
     operation: set_if_unset_or_equal
@@ -3727,6 +4231,20 @@ transitions:
     - opaque_receipt_parameter.opaque_receipt_ref
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: party_b_client
     data:
@@ -3766,6 +4284,7 @@ transitions:
   - INV-RESULT-SYMMETRY
   - INV-OPAQUE-RECEIPT
   - INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-ACCEPT-SYMMETRIC-RESULT
   event: accept_symmetric_result
   actor: selected_integration_profile
@@ -3849,6 +4368,18 @@ transitions:
     - session_expires_at
     arguments: []
     parameter_reads: []
+  - id: G-CALLBACK-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   effects:
   - id: E-ACCEPT-RESULT
     operation: set_and_increment
@@ -3878,6 +4409,20 @@ transitions:
     - profile_callback_envelope.session_id
     arguments:
     - atomically store both callback-ID and idempotency-key indexes with the prior normalized response
+  - id: E-APPEND-CALLBACK-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   visibility:
   - actor: party_a_client
     data:
@@ -3926,6 +4471,7 @@ transitions:
   - INV-ONE-EVALUATION
   - INV-OPAQUE-RECEIPT
   - INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-RESULT-CONFLICT
   event: accept_symmetric_result
   actor: selected_integration_profile
@@ -3964,6 +4510,18 @@ transitions:
     - opaque receipt references differ
     - party-local result values differ
     parameter_reads: []
+  - id: G-CALLBACK-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   effects:
   - id: E-RESULT-CONFLICT
     operation: fail_closed
@@ -4005,6 +4563,20 @@ transitions:
     - if evaluation_started=true then CONSUMED remains CONSUMED
     - never refund after result timeout failure or INDETERMINATE
     - opaque authorization ledger update is atomic
+  - id: E-APPEND-CALLBACK-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   visibility:
   - actor: party_a_client
     data:
@@ -4047,6 +4619,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-RESULT-SYMMETRY
   - INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-GRANT-CONSENT-A
   event: grant_consent_a
   actor: party_a_client
@@ -4134,6 +4707,18 @@ transitions:
     arguments:
     - issued_at <= authoritative_time + allowed_clock_skew
     - authoritative_time < expires_at <= session_expires_at
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-GRANT-CONSENT-A
     operation: bind_once
@@ -4160,6 +4745,20 @@ transitions:
     - consent_binding_parameter.session_id
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4201,6 +4800,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-RESULT-SYMMETRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-WITHDRAW-CONSENT-A
   event: withdraw_consent_a
   actor: party_a_client
@@ -4250,6 +4850,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-WITHDRAW-CONSENT-A
     operation: withdraw_and_terminalize
@@ -4307,6 +4919,20 @@ transitions:
     arguments:
     - append only audit_policy.allowed_fields
     parameter_reads: []
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4345,6 +4971,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-GRANT-CONSENT-B
   event: grant_consent_b
   actor: party_b_client
@@ -4432,6 +5059,18 @@ transitions:
     arguments:
     - issued_at <= authoritative_time + allowed_clock_skew
     - authoritative_time < expires_at <= session_expires_at
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-GRANT-CONSENT-B
     operation: bind_once
@@ -4458,6 +5097,20 @@ transitions:
     - consent_binding_parameter.session_id
   - *id006
   - *id003
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4499,6 +5152,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-RESULT-SYMMETRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-WITHDRAW-CONSENT-B
   event: withdraw_consent_b
   actor: party_b_client
@@ -4548,6 +5202,18 @@ transitions:
     - authoritative_time - message_stale_threshold <= issued_at
     - issued_at <= authoritative_time + allowed_clock_skew
     - client issued_at is not authoritative
+  - id: G-PARTY-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   effects:
   - id: E-WITHDRAW-CONSENT-B
     operation: withdraw_and_terminalize
@@ -4605,6 +5271,20 @@ transitions:
     arguments:
     - append only audit_policy.allowed_fields
     parameter_reads: []
+  - id: E-APPEND-PARTY-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - replay_envelope.prior_transcript_digest
+    - replay_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4643,6 +5323,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-AUTHORIZE-DISCLOSURE-EXTENSION
   event: authorize_disclosure_extension
   actor: coordinator
@@ -4776,6 +5457,18 @@ transitions:
     - CLOSED
     - ABORTED
     parameter_reads: []
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-AUTHORIZE-DISCLOSURE
     operation: set
@@ -4803,6 +5496,20 @@ transitions:
     - operation_envelope.operation_id
     arguments:
     - atomically store both ID and idempotency-key indexes with the prior normalized response
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4847,6 +5554,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-RECORD-DISCLOSURE-COMPLETION
   event: record_disclosure_completion
   actor: selected_integration_profile
@@ -4902,6 +5610,18 @@ transitions:
     arguments:
     - completion precedes no accepted withdrawal
     parameter_reads: []
+  - id: G-CALLBACK-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   effects:
   - id: E-COMPLETE-DISCLOSURE
     operation: set
@@ -4948,6 +5668,20 @@ transitions:
     - if evaluation_started=true then CONSUMED remains CONSUMED
     - never refund after result timeout failure or INDETERMINATE
     - opaque authorization ledger update is atomic
+  - id: E-APPEND-CALLBACK-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - profile_callback_envelope.prior_transcript_digest
+    - profile_callback_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -4990,6 +5724,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-REVEAL-SAFETY
   - INV-EXPIRY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-REJECT-MESSAGE
   event: reject_message
   actor: coordinator
@@ -5142,6 +5877,18 @@ transitions:
     - failure_code exists in failure_taxonomy
     - failure disposition=session-abort
     - party cannot supply coordinator-only failure code
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-ABORT
     operation: atomic_generic_abort
@@ -5174,6 +5921,20 @@ transitions:
     - operation_envelope.operation_id
     arguments:
     - atomically store both ID and idempotency-key indexes with the prior normalized response
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -5216,6 +5977,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-EXPIRY
   - INV-REVEAL-SAFETY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-ADVANCE-TIME-EXPIRE
   event: expire_session
   actor: coordinator
@@ -5250,6 +6012,18 @@ transitions:
     - time_advance_parameter.new_authoritative_time
     arguments:
     - new_authoritative_time >= session_expires_at
+  - id: G-TIMER-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   effects:
   - id: E-ADVANCE-AND-EXPIRE
     operation: atomic_time_and_expiry
@@ -5272,6 +6046,20 @@ transitions:
     - if evaluation_started=true then CONSUMED remains CONSUMED
     - append normalized expiry audit category
     - atomically derive party_terminal_category from failure_taxonomy
+  - id: E-APPEND-TIMER-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   visibility:
   - actor: coordinator
     data:
@@ -5309,6 +6097,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-EXPIRY
   - INV-REVEAL-SAFETY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-CLOSE
   event: close_session
   actor: coordinator
@@ -5343,6 +6132,18 @@ transitions:
     arguments:
     - AUTHORIZED
     parameter_reads: []
+  - id: G-OPERATION-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   effects:
   - id: E-CLOSE
     operation: set
@@ -5379,6 +6180,20 @@ transitions:
     - if evaluation_started=true then CONSUMED remains CONSUMED
     - never refund after result timeout failure or INDETERMINATE
     - opaque authorization ledger update is atomic
+  - id: E-APPEND-OPERATION-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - operation_envelope.prior_transcript_digest
+    - operation_envelope.canonical_message_digest
   visibility:
   - actor: coordinator
     data:
@@ -5417,6 +6232,7 @@ transitions:
   - INV-MINIMUM-DISCLOSURE
   - INV-EXPIRY
   - INV-REVEAL-SAFETY
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-RETRY-EXACT-DUPLICATE-A
   event: retry_idempotent_message
   actor: party_a_client
@@ -5882,6 +6698,18 @@ transitions:
     - new_authoritative_time < session_expires_at
     - if evaluating then new_authoritative_time < evaluation_deadline
     - if consent active then new_authoritative_time < each active consent expiry
+  - id: G-TIMER-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   effects:
   - id: E-ADVANCE-TIME-ONLY
     operation: set
@@ -5891,6 +6719,20 @@ transitions:
     - time_advance_parameter.new_authoritative_time
     arguments:
     - set authoritative_time=new_authoritative_time; no other state write
+  - id: E-APPEND-TIMER-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   visibility:
   - actor: coordinator
     data:
@@ -5935,6 +6777,7 @@ transitions:
   related_invariants:
   - INV-EXPIRY
   - INV-SESSION-BINDING
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-EVALUATION-TIMEOUT
   event: advance_authoritative_time
   actor: coordinator
@@ -5971,6 +6814,18 @@ transitions:
     arguments:
     - new_authoritative_time >= evaluation_deadline
     - new_authoritative_time < session_expires_at
+  - id: G-TIMER-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   effects:
   - id: E-TIMEOUT-AT-DEADLINE
     operation: atomic_time_and_abort
@@ -5992,6 +6847,20 @@ transitions:
     - CONSUMED remains CONSUMED; no refund
     - append normalized timeout audit category
     - atomically derive party_terminal_category from failure_taxonomy
+  - id: E-APPEND-TIMER-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   visibility:
   - actor: coordinator
     data:
@@ -6036,6 +6905,7 @@ transitions:
   - INV-ONE-EVALUATION
   - INV-EXPIRY
   - INV-QUERY-BUDGET
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-CONSENT-EXPIRED
   event: advance_authoritative_time
   actor: coordinator
@@ -6075,6 +6945,18 @@ transitions:
     - new_authoritative_time >= at least one active consent expires_at
     - new_authoritative_time < session_expires_at
     - same-session replacement forbidden
+  - id: G-TIMER-TRANSCRIPT-CHAIN
+    predicate: prior_transcript_matches
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - prior digest equals current canonical_transcript_head
+    - next accepted event index is current index plus one
+    - event digest is opaque and already validated under its delivery-class message contract
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   effects:
   - id: E-CONSENT-EXPIRY-ABORT
     operation: atomic_time_and_abort
@@ -6096,6 +6978,20 @@ transitions:
     - CONSUMED remains CONSUMED; no refund
     - append normalized consent-expiry audit category
     - atomically derive party_terminal_category from failure_taxonomy
+  - id: E-APPEND-TIMER-TRANSCRIPT
+    operation: append_canonical_transcript
+    writes:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - atomically increment the accepted event index once
+    - SHA-256(domain(private-match-transcript/v0.1) || prior digest bytes || uint64be(index) || accepted
+      event digest bytes)
+    - never append rejects, exact duplicates, conflicting duplicates, derived notices, local guidance,
+      or timer no-op
+    parameter_reads:
+    - time_advance_parameter.prior_transcript_digest
+    - time_advance_parameter.canonical_event_digest
   visibility:
   - actor: coordinator
     data:
@@ -6140,6 +7036,7 @@ transitions:
   - INV-REVEAL-SAFETY
   - INV-EXPIRY
   - INV-QUERY-BUDGET
+  - INV-CANONICAL-TRANSCRIPT
 - id: TR-RETRY-EXACT-OPERATION
   event: retry_idempotent_operation
   actor: coordinator
@@ -6647,6 +7544,45 @@ invariants:
     parameter_reads: []
   violation_effect: reject the profile or artifact; outcome confidentiality remains unestablished until
     evidenced
+- id: INV-CANONICAL-TRANSCRIPT
+  statement: The coordinator appends each accepted mutating event digest exactly once in authoritative
+    order; rejected, duplicate, derived-notice, local-guidance, and no-op relations do not change the
+    head.
+  state_variables:
+  - accepted_event_index
+  - canonical_transcript_head
+  - accepted_message_records
+  - operation_by_id
+  - operation_by_key
+  - callback_by_id
+  - callback_by_key
+  conditions:
+  - id: I-TRANSCRIPT-MONOTONIC
+    predicate: append_once_in_authoritative_order
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    arguments:
+    - accepted_event_index increases by exactly one per accepted mutating event
+    - canonical_transcript_head changes only through the reviewed domain-separated append relation
+    parameter_reads: []
+  - id: I-TRANSCRIPT-NO-DUPLICATE
+    predicate: nonmutating_delivery_does_not_append
+    reads:
+    - accepted_event_index
+    - canonical_transcript_head
+    - accepted_message_records
+    - operation_by_id
+    - operation_by_key
+    - callback_by_id
+    - callback_by_key
+    arguments:
+    - exact duplicate returns prior response without transcript mutation
+    - conflict and rejected message do not append
+    - derived notice, local guidance, and same-threshold timer no-op do not append
+    parameter_reads: []
+  violation_effect: fail closed with no state, budget, audit, or transcript mutation; conflicting identity
+    reuse is REPLAY_CONFLICT
 query_budget_semantics:
   authority: coordinator
   reservation_required_before_evaluation: true
@@ -7196,6 +8132,8 @@ formalization:
   - selected_integration_profile_binding
   - terminal_failure_code
   - party_terminal_category
+  - accepted_event_index
+  - canonical_transcript_head
   initial_predicate:
   - variable: phase
     operator: equals
@@ -7236,6 +8174,12 @@ formalization:
   - variable: party_terminal_category
     operator: equals
     value: NONE
+  - variable: accepted_event_index
+    operator: equals
+    value: '0'
+  - variable: canonical_transcript_head
+    operator: equals
+    value: sha256:200b23451f65992feacb88e782a16afb595bc32d386a4347bb318892cde2ff3c
   event_relation:
   - event: create_session
     transitions:
@@ -7330,9 +8274,10 @@ formalization:
   - event: retry_idempotent_profile_callback
     transitions:
     - TR-RETRY-EXACT-PROFILE-CALLBACK
-  next_state_relation: disjunction of delivery-class-specific enabled transition relations; explicit advance_authoritative_time/expire_session
-    clock relations prevent rollback or a live post-deadline window; stuttering is limited to realizable
-    exact-envelope responses, timer threshold no-op, derived rejection, and local guidance
+  next_state_relation: disjunction of delivery-class-specific enabled transition relations; each accepted
+    mutating relation atomically applies its protocol effects and the canonical transcript append; exact
+    duplicates, rejects, conflicts, derived notices, local guidance, and timer no-op stutter without transcript
+    mutation; authoritative clock relations prevent rollback or a live post-deadline window
   invariant_ids:
   - INV-REVEAL-SAFETY
   - INV-RESULT-SYMMETRY
@@ -7346,6 +8291,7 @@ formalization:
   - INV-OPAQUE-RECEIPT
   - INV-QUERY-BUDGET
   - INV-COORDINATOR-OUTCOME-CONFIDENTIALITY
+  - INV-CANONICAL-TRANSCRIPT
   fairness_candidates:
   - weak fairness for the authoritative timer relation while a later TimeDomain point exists
   - weak fairness for atomic expire_session when a proposed timer value reaches session_expires_at
@@ -7387,6 +8333,8 @@ formalization:
   - selected profile eventually supplies valid or invalid verification status without exposing coordinator
     plaintext outcome
   - transport authenticates sender and protects content, but transport is outside this artifact
+  - coordinator is the unique authority for accepted-event ordering and atomically persists the event
+    index and transcript head with each accepted state mutation; persistence is not implemented here
   tla_model_status: not created or model-checked in this issue
 parameter_flow_contracts:
 - id: E-ABORT
@@ -7975,6 +8923,60 @@ parameter_flow_contracts:
   required_parameter_reads:
   - time_advance_parameter.new_authoritative_time
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
+- id: G-PARTY-TRANSCRIPT-CHAIN
+  kind: predicate
+  required_parameter_reads:
+  - replay_envelope.prior_transcript_digest
+  - replay_envelope.canonical_message_digest
+  description: party_message transcript guard consumes the prior head and validated canonical event digest.
+- id: E-APPEND-PARTY-TRANSCRIPT
+  kind: operation
+  required_parameter_reads:
+  - replay_envelope.prior_transcript_digest
+  - replay_envelope.canonical_message_digest
+  description: party_message transcript append consumes the same prior head and validated canonical event
+    digest atomically.
+- id: G-OPERATION-TRANSCRIPT-CHAIN
+  kind: predicate
+  required_parameter_reads:
+  - operation_envelope.prior_transcript_digest
+  - operation_envelope.canonical_message_digest
+  description: coordinator_command transcript guard consumes the prior head and validated canonical event
+    digest.
+- id: E-APPEND-OPERATION-TRANSCRIPT
+  kind: operation
+  required_parameter_reads:
+  - operation_envelope.prior_transcript_digest
+  - operation_envelope.canonical_message_digest
+  description: coordinator_command transcript append consumes the same prior head and validated canonical
+    event digest atomically.
+- id: G-CALLBACK-TRANSCRIPT-CHAIN
+  kind: predicate
+  required_parameter_reads:
+  - profile_callback_envelope.prior_transcript_digest
+  - profile_callback_envelope.canonical_message_digest
+  description: profile_callback transcript guard consumes the prior head and validated canonical event
+    digest.
+- id: E-APPEND-CALLBACK-TRANSCRIPT
+  kind: operation
+  required_parameter_reads:
+  - profile_callback_envelope.prior_transcript_digest
+  - profile_callback_envelope.canonical_message_digest
+  description: profile_callback transcript append consumes the same prior head and validated canonical
+    event digest atomically.
+- id: G-TIMER-TRANSCRIPT-CHAIN
+  kind: predicate
+  required_parameter_reads:
+  - time_advance_parameter.prior_transcript_digest
+  - time_advance_parameter.canonical_event_digest
+  description: timer transcript guard consumes the prior head and validated canonical event digest.
+- id: E-APPEND-TIMER-TRANSCRIPT
+  kind: operation
+  required_parameter_reads:
+  - time_advance_parameter.prior_transcript_digest
+  - time_advance_parameter.canonical_event_digest
+  description: timer transcript append consumes the same prior head and validated canonical event digest
+    atomically.
 envelope_binding_contracts:
 - id: BIND-OPERATION-ACTOR
   delivery_class: coordinator_command
@@ -8031,3 +9033,27 @@ failure_projection_semantics:
   - private failure detail
   description: Coordinator/private assurance retain detail; Parties receive only the reviewed normalized
     category.
+canonical_transcript_semantics:
+  ordering_authority: coordinator
+  canonicalization: RFC 8785 JCS over strict I-JSON values; json.dumps(sort_keys=True) is not conformant
+  digest_algorithm: SHA-256
+  domain_encoding: two-byte unsigned big-endian ASCII-label length followed by the exact ASCII label
+  payload_domain: private-match-payload/v0.1
+  message_domain: private-match-message/v0.1
+  transcript_domain: private-match-transcript/v0.1
+  timer_event_domain: private-match-timer-event/v0.1
+  genesis_domain: private-match-transcript-genesis/v0.1
+  genesis_digest: sha256:200b23451f65992feacb88e782a16afb595bc32d386a4347bb318892cde2ff3c
+  event_index_encoding: unsigned 64-bit big-endian integer in range 1..2^64-1
+  external_message_digest_sources:
+    party_message: replay_envelope.canonical_message_digest
+    coordinator_command: operation_envelope.canonical_message_digest
+    profile_callback: profile_callback_envelope.canonical_message_digest
+  timer_digest_source: time_advance_parameter.canonical_event_digest
+  append_rule: SHA-256(domain(transcript) || prior_digest_bytes || uint64be(accepted_event_index) || accepted_event_digest_bytes)
+  included_relations: accepted mutating party messages, coordinator commands, profile callbacks, and timer
+    events, once in coordinator authoritative order
+  excluded_relations: rejected messages, conflicting duplicates, exact duplicates, derived notices, local
+    guidance, and nonmutating timer threshold no-op re-evaluation
+  result_confidentiality: digest inputs bind opaque receipt and routing metadata; no bare hash of MATCH,
+    NO_MATCH, or INDETERMINATE and no coordinator-readable plaintext result

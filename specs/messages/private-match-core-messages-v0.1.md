@@ -1,0 +1,225 @@
+# Private Match core message contract v0.1
+
+## Status and claim boundary
+
+- Artifact status: `draft`
+- Protocol profile: `private-match-core/v0.1`
+- Representation: UTF-8 JSON
+- Schema vocabulary: JSON Schema Draft 2020-12
+- Canonicalization: RFC 8785 JSON Canonicalization Scheme (JCS)
+- Digest: SHA-256 with the domains defined in the
+  [canonical transcript contract](canonical-transcript-v0.1.md)
+
+This contract defines implementation-independent data and transcript inputs. It
+selects no signature, MAC, attestation, PET, transport, storage, production API,
+or production key. Passing its schemas and vectors establishes neither
+cryptographic security nor implementation conformance.
+
+## Strict input and version behavior
+
+An accepted message is exactly one RFC 8785 canonical UTF-8 JSON value. A reader
+must reject invalid UTF-8, a byte-order mark, duplicate object names, lone
+Unicode surrogates, integers outside the I-JSON safe integer range, NaN,
+Infinity, negative zero, trailing data, noncanonical whitespace, and
+noncanonical number or property ordering.
+
+The verified RFC 8785 erratum concerning negative zero is applied fail closed:
+source-level and programmatic negative zero are rejected instead of collapsing
+to canonical `0`. Unicode strings are preserved as-is. NFC and NFD are not
+normalized to the same input.
+
+Every object has `additionalProperties: false`. The protocol profile, protocol
+version, message type, and message version must be registered exactly. An
+unknown field, type, version, authentication mode, algorithm identifier, key
+identifier, or verification-material identifier fails closed without accepted
+state or transcript mutation.
+
+Draft `v0.1` has no compatibility commitment. Adding a required field, changing
+canonicalization, changing the authentication input, or changing a field's
+meaning requires another reviewed draft or protocol version before this
+artifact can become candidate or stable.
+
+## Common envelope
+
+[`envelope.v0.1.schema.json`](../../schemas/messages/envelope.v0.1.schema.json)
+defines the common object. All message-specific payloads are selected by an
+exact `message_type` conditional.
+
+| Field | Purpose | Authentication input |
+| --- | --- | --- |
+| `protocol_profile`, `protocol_version` | Exact core profile binding | Included |
+| `message_type`, `message_version` | Exact registry and payload contract | Included |
+| `delivery_class` | State-machine delivery semantics | Included |
+| `session_context` | Session, policy, participants, audience, commitment, attempt, and profile binding | Included |
+| `sender` | Actor, participant, and key binding | Included |
+| `audience` | Intended verifier or recipient set | Included |
+| `issued_at`, `expires_at` | Auxiliary message-validity interval | Included |
+| `identity` | Party replay, coordinator operation, callback, or derived-notice identity | Included |
+| `prior_transcript_digest` | Expected accepted transcript head | Included |
+| `payload` | Message-specific data | Excluded directly; bound through `payload_digest` |
+| `payload_digest` | Domain-separated canonical payload digest | Included |
+| `authentication` metadata | Mode, algorithm, key, and verification material | Included |
+| `authentication.value` | External authenticator bytes/string | The only authentication member excluded |
+| `message_digest` | Domain-separated digest of the canonical authentication input | Excluded to avoid a cycle |
+
+`json.dumps(sort_keys=True)` is not an RFC 8785 implementation and must not be
+used to produce authenticated bytes.
+
+## Authentication contract
+
+External messages require one of `signature`, `mac`, or
+`profile-attestation`. `none` is not allowed in the core message schema. The
+algorithm, key, verification-material, sender, audience, session, policy,
+versions, delivery identity, time, prior transcript, and payload digest all
+enter the authentication input.
+
+This draft fixes only that input. It does not select or implement an algorithm.
+The conformance material identifiers and authenticator values are explicitly
+synthetic placeholders. They exercise fail-closed metadata validation and must
+not be used as keys, authenticators, or production configuration. A future
+reviewed integration or authentication profile must define actual verification,
+revocation authority, issuer/verifier separation, and key lifecycle. A shared
+HMAC key must not be assumed suitable where issuer and verifier separation is
+required.
+
+Missing, unknown, expired, revoked, sender-mismatched, algorithm-mismatched, or
+key-mismatched verification metadata fails closed. Schema/metadata success does
+not prove that the synthetic authentication value is valid.
+
+## Delivery classes
+
+### Party message
+
+A Party message binds the exact session context, sender participant and key,
+per-sender sequence, message ID, nonce, `issued_at`, expiry, payload digest,
+prior transcript head, and authentication metadata. Its replay domain is
+`(session_id, sender_participant_id)`. Same-domain message IDs and nonces are
+independently unique.
+
+An exact duplicate requires the same message ID, nonce, sequence, `issued_at`,
+canonical message digest, and session/sender domain. It returns the prior
+normalized response and does not append the transcript. Reusing either identity
+with different data is `REPLAY_CONFLICT`.
+
+### Coordinator command
+
+A coordinator command carries `actor_id`, `operation_id`, and an independently
+unique `idempotency_key`. The operation-ID and idempotency-key indexes must both
+be new or both resolve to the same canonical message digest and prior response.
+A one-sided or different binding fails as `REPLAY_CONFLICT` without state,
+budget, audit, or transcript mutation.
+
+### Profile callback
+
+A callback binds profile ID, version, instance, callback ID, independent
+idempotency key, session ID, and evaluation attempt ID. Both callback indexes
+are scoped by the complete profile/session/attempt domain. The core selects no
+concrete profile or PET.
+
+### Timer
+
+A timer is not a Party wire message. The strict
+[`timer-event.v0.1.schema.json`](../../schemas/messages/timer-event.v0.1.schema.json)
+binds coordinator-authoritative time, a reviewed reason/source class, the
+session, and prior transcript. A mutating accepted timer event receives its own
+domain-separated canonical event digest. It has no Party nonce, sequence,
+message ID, or Party-supplied authoritative time. Same-threshold no-op
+re-evaluation does not append the transcript.
+
+### Derived transition and local guidance
+
+A derived notice is authenticated for its external recipient but is not a
+second accepted state mutation. The accepted source event already occupies the
+transcript entry. `reject_message` and `request_new_evaluation_session` are not
+externally acceptable messages. Rejected input, pure local guidance, and other
+nonmutating relations do not enter the accepted transcript.
+
+## Message registry
+
+The normative machine-readable mapping is
+[`message-types.v0.1.yaml`](../../registry/message-types.v0.1.yaml).
+
+| Message type | Delivery class | State-machine event | Transcript rule |
+| --- | --- | --- | --- |
+| `session_proposal` | coordinator command | `create_session` | Accepted mutation |
+| `session_acceptance` | Party message | `bind_participant_a/b` | Accepted mutation |
+| `participant_binding` | Party message | `bind_participant_a/b` | Accepted mutation |
+| `policy_acceptance` | Party message | `accept_policy` | Accepted mutation |
+| `commitment_registration` | Party message | `register_commitment_a/b` | Accepted mutation |
+| `query_budget_reservation` | coordinator command | `reserve_query_budget` | Accepted mutation |
+| `evaluation_start` | coordinator command | `start_evaluation` | Accepted mutation |
+| `evaluation_contribution` | Party message | `submit_evaluation_contribution` | Accepted mutation |
+| `opaque_receipt_ack` | Party message | `acknowledge_opaque_receipt_a/b` | Accepted mutation |
+| `result_acceptance_notice` | profile callback | `accept_symmetric_result` | Accepted mutation |
+| `consent_grant` | Party message | `grant_consent_a/b` | Accepted mutation |
+| `consent_withdrawal` | Party message | `withdraw_consent_a/b` | Accepted mutation |
+| `disclosure_extension_authorization` | coordinator command | `authorize_disclosure_extension` | Accepted mutation |
+| `disclosure_completion_notice` | profile callback | `record_disclosure_completion` | Accepted mutation |
+| `abort_notice` | coordinator command | `abort_session` | Accepted mutation |
+| `normalized_error_notice` | derived output | `reject_message` | Excluded |
+| `close_notice` | coordinator command | `close_session` | Accepted mutation |
+| `expiry_notice` | derived output | timer source event | Excluded; source timer may enter |
+
+`session_acceptance` and `participant_binding` both map to the existing bind
+relations. The former records acceptance of the proposed session together with
+the binding; the latter is the dedicated binding representation. This draft
+does not add a second session-acceptance state transition.
+
+## Result confidentiality
+
+Coordinator-readable core JSON never contains `MATCH`, `NO_MATCH`,
+`INDETERMINATE`, a Party-local result or result binding, raw or normalized
+identifiers, matching or non-matching elements, an exact count, private
+attributes, secret input, or an actual disclosure payload.
+
+`opaque_receipt_ack` carries only an opaque receipt reference, normalized
+acknowledgment status, profile evidence reference, and existing context. A
+Party-local result remains in a recipient-specific protected artifact defined
+by a later integration profile. The coordinator cannot parse that artifact as
+core JSON. The profile's protection properties are unestablished in this draft.
+
+`result_acceptance_notice` is a profile callback with the common opaque receipt,
+`BOTH_ACKNOWLEDGED`, and an opaque profile-evidence reference. It does not carry
+or hash a plaintext decision. A public receipt must not contain a secret input.
+
+Party notices expose only the reviewed `party_error_category`; detailed failure
+codes remain coordinator/private-assurance data. The internal `abort_notice`
+may carry a declared abort code only to coordinator and assurance audiences.
+
+## Consent and disclosure boundary
+
+Consent payloads bind the accepted opaque receipt, versioned disclosure
+profile, exact scope, audience, issue/expiry times, nonce, and artifact digest.
+`MATCH` is not blanket consent. Core messages carry no actual identity or
+private-data disclosure payload. Disclosure authorization and completion
+remain extension-only and fail closed without a separately reviewed profile.
+Synthetic extension vectors demonstrate structure only and do not authorize a
+real disclosure.
+
+## Clock, verification, and failures
+
+The coordinator clock remains authoritative. Party `issued_at` is auxiliary and
+must fall inside the state-machine skew and stale-message policy. Expired
+messages and verification material fail closed. Timer inputs use the state
+machine's clock taxonomy, not Party `STALE_MESSAGE` semantics.
+
+All failures occur before accepted transcript mutation. A normalized Party
+response may state a reviewed category and retry/new-session disposition, but
+must not reveal the raw failure detail when that would increase inference.
+
+## Conformance assets and validation
+
+Synthetic positive and negative vectors live under
+[`conformance/messages`](../../conformance/messages). The generator is
+network-free and deterministic:
+
+```text
+python scripts/generate_message_vectors.py --root . --check
+python scripts/validate_messages.py --root .
+```
+
+The validator checks strict parsing, canonical byte equality, schemas, registry
+uniqueness, state-machine mappings, payload and message digests,
+verification-material metadata, replay identities, transcript chains, and
+prohibited data classes. It does not contact a network or verify an actual
+cryptographic authenticator.

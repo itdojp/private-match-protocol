@@ -1742,6 +1742,145 @@ class SessionStateMachineTests(unittest.TestCase):
         variable["visibility"].append("party_b_client")
         self.assertIn("failure-projection", self.semantic_codes())
 
+    def test_transcript_state_has_declared_genesis_and_zero_index(self):
+        variables = {item["id"]: item for item in self.model_copy["state_variables"]}
+        semantics = self.model_copy["canonical_transcript_semantics"]
+        self.assertEqual("0", variables["accepted_event_index"]["initial"])
+        self.assertEqual(
+            semantics["genesis_digest"],
+            variables["canonical_transcript_head"]["initial"],
+        )
+        self.assertEqual("coordinator", semantics["ordering_authority"])
+
+    def test_every_mutating_delivery_appends_transcript_exactly_once(self):
+        events = {item["id"]: item for item in self.model_copy["events"]}
+        expected = {
+            "party_message": (
+                "G-PARTY-TRANSCRIPT-CHAIN",
+                "E-APPEND-PARTY-TRANSCRIPT",
+            ),
+            "coordinator_command": (
+                "G-OPERATION-TRANSCRIPT-CHAIN",
+                "E-APPEND-OPERATION-TRANSCRIPT",
+            ),
+            "profile_callback": (
+                "G-CALLBACK-TRANSCRIPT-CHAIN",
+                "E-APPEND-CALLBACK-TRANSCRIPT",
+            ),
+            "timer": ("G-TIMER-TRANSCRIPT-CHAIN", "E-APPEND-TIMER-TRANSCRIPT"),
+        }
+        for transition in self.model_copy["transitions"]:
+            if not transition["mutating"]:
+                continue
+            guard_id, effect_id = expected[
+                events[transition["event"]]["delivery_class"]
+            ]
+            self.assertIn(guard_id, {item["id"] for item in transition["guards"]})
+            self.assertEqual(
+                1,
+                sum(item["id"] == effect_id for item in transition["effects"]),
+                transition["id"],
+            )
+            self.assertIn("INV-CANONICAL-TRANSCRIPT", transition["related_invariants"])
+
+    def test_nonmutating_relations_never_append_transcript(self):
+        transcript_ids = {
+            "G-PARTY-TRANSCRIPT-CHAIN",
+            "E-APPEND-PARTY-TRANSCRIPT",
+            "G-OPERATION-TRANSCRIPT-CHAIN",
+            "E-APPEND-OPERATION-TRANSCRIPT",
+            "G-CALLBACK-TRANSCRIPT-CHAIN",
+            "E-APPEND-CALLBACK-TRANSCRIPT",
+            "G-TIMER-TRANSCRIPT-CHAIN",
+            "E-APPEND-TIMER-TRANSCRIPT",
+        }
+        for transition in self.model_copy["transitions"]:
+            if transition["mutating"]:
+                continue
+            relation_ids = {
+                item["id"] for key in ("guards", "effects") for item in transition[key]
+            }
+            self.assertFalse(relation_ids & transcript_ids, transition["id"])
+
+    def test_removing_transcript_guard_fails_semantic_validation(self):
+        transition = self.transition("TR-BIND-A-FIRST")
+        transition["guards"] = [
+            item
+            for item in transition["guards"]
+            if item["id"] != "G-PARTY-TRANSCRIPT-CHAIN"
+        ]
+        self.assertIn("canonical-transcript", self.semantic_codes())
+
+    def test_removing_transcript_effect_fails_semantic_validation(self):
+        transition = self.transition("TR-START-EVALUATION")
+        transition["effects"] = [
+            item
+            for item in transition["effects"]
+            if item["id"] != "E-APPEND-OPERATION-TRANSCRIPT"
+        ]
+        self.assertIn("canonical-transcript", self.semantic_codes())
+
+    def test_exact_duplicate_cannot_gain_transcript_effect(self):
+        transition = self.transition("TR-RETRY-EXACT-DUPLICATE-A")
+        transition["effects"].append(
+            copy.deepcopy(self.relation_item("operation", "E-APPEND-PARTY-TRANSCRIPT"))
+        )
+        self.assertIn("canonical-transcript", self.semantic_codes())
+
+    def test_message_envelopes_bind_prior_head_and_canonical_digest(self):
+        catalog = {
+            item["id"]: {field["id"] for field in item["fields"]}
+            for item in self.model_copy["event_parameter_catalog"]
+        }
+        self.assertTrue(
+            {"prior_transcript_digest", "canonical_message_digest"}.issubset(
+                catalog["replay_envelope"]
+            )
+        )
+        self.assertTrue(
+            {"prior_transcript_digest", "canonical_message_digest"}.issubset(
+                catalog["operation_envelope"]
+            )
+        )
+        self.assertTrue(
+            {"prior_transcript_digest", "canonical_message_digest"}.issubset(
+                catalog["profile_callback_envelope"]
+            )
+        )
+        self.assertTrue(
+            {"prior_transcript_digest", "canonical_event_digest"}.issubset(
+                catalog["time_advance_parameter"]
+            )
+        )
+
+    def test_unknown_transcript_digest_source_fails_schema(self):
+        self.model_copy["canonical_transcript_semantics"]["timer_digest_source"] = (
+            "unknown.parameter"
+        )
+        self.assertIn("schema", self.schema_codes())
+
+    def test_transcript_invariant_forbids_duplicate_and_rejected_append(self):
+        invariant = self.invariant("INV-CANONICAL-TRANSCRIPT")
+        text = (
+            invariant["statement"]
+            + " "
+            + " ".join(
+                argument
+                for condition in invariant["conditions"]
+                for argument in condition["arguments"]
+            )
+        ).lower()
+        for token in ("rejected", "exact duplicate", "conflict", "no-op"):
+            self.assertIn(token, text)
+
+    def test_transcript_semantics_do_not_expose_plaintext_outcome(self):
+        semantics = self.model_copy["canonical_transcript_semantics"]
+        self.assertIn("no bare hash", semantics["result_confidentiality"])
+        self.assertIn(
+            "no coordinator-readable plaintext result",
+            semantics["result_confidentiality"],
+        )
+
     def test_schema_version_remains_draft_zero_one(self):
         self.assertEqual(self.model["schema_version"], "0.1")
         self.assertEqual(self.model["artifact"]["status"], "draft")
