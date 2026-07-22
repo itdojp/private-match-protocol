@@ -10,6 +10,7 @@ path = [
   "conformance/messages/**/*.json",
   "conformance/messages/**/*.yaml",
   "conformance/interop/**/*.yaml",
+  "conformance/source/**/*.json",
   "conformance/suites/**/*.json",
   "registry/**/*.yaml",
   "schemas/**/*.json",

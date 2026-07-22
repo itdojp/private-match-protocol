@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Validate and execute the draft private-match-core/v0.1 conformance suite."""
+"""Validate generated suite, reviewed oracle, source pins, and execution parity."""
 
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import sys
 from dataclasses import dataclass
@@ -16,26 +17,39 @@ from jsonschema import Draft202012Validator, FormatChecker
 from canonicalize_message import canonicalize
 from conformance_common import (
     ConformanceError,
+    MESSAGE_INPUT_MANIFEST,
     SUITE_ROOT,
     case_digest,
-    domain_digest,
+    expected_result_digest,
     input_digest,
     resolve_regular_file,
     sha256_bytes,
     strict_json_bytes,
     suite_digest,
+    validate_message_input_manifest,
 )
-from conformance_engine import execute_case
-from generate_conformance_suite import PROTOCOL_PINS, REQUIRED_VECTOR_CLASSES
+from conformance_engine import compare_actual_to_expected, execute_case
+from generate_conformance_suite import (
+    CASE_DEFINITIONS,
+    NORMATIVE_ORACLE,
+    PROTOCOL_PINS,
+    REQUIRED_VECTOR_CLASSES,
+    generated_files,
+)
 from strict_yaml import strict_yaml_load
-
 
 SCHEMAS = {
     "manifest": Path("schema/conformance-suite-manifest.v0.1.schema.json"),
     "case": Path("schema/conformance-case.v0.1.schema.json"),
     "expected": Path("schema/conformance-expected-result.v0.1.schema.json"),
     "run": Path("schema/conformance-run-result.v0.1.schema.json"),
+    "run_set": Path("schema/conformance-run-set-manifest.v0.1.schema.json"),
     "adapter": Path("schema/conformance-adapter-result.v0.1.schema.json"),
+    "case_definitions": Path("schema/conformance-case-definitions.v0.1.schema.json"),
+    "oracle": Path("schema/conformance-normative-expected-results.v0.1.schema.json"),
+    "message_inputs": Path(
+        "schema/conformance-message-input-manifest.v0.1.schema.json"
+    ),
 }
 CONFORMANCE_ERROR_CODES = {
     "CONFORMANCE-ADAPTER-UNSUPPORTED",
@@ -66,39 +80,91 @@ def _load(root: Path, relative: Path, findings: list[Finding]) -> Any | None:
     try:
         path = resolve_regular_file(root, relative.as_posix())
         return strict_json_bytes(
-            path.read_bytes(), path=relative.as_posix(), require_canonical=False
+            path.read_bytes(), path=relative.as_posix(), require_canonical=True
         )
     except (OSError, ConformanceError, ValueError) as error:
-        code = (
-            error.code
-            if isinstance(error, ConformanceError)
-            else "CONFORMANCE-JSON-PARSE"
-        )
         findings.append(
-            Finding(code, relative.as_posix(), "artifact could not be loaded")
+            Finding(
+                error.code
+                if isinstance(error, ConformanceError)
+                else "CONFORMANCE-JSON-PARSE",
+                relative.as_posix(),
+                "artifact could not be loaded",
+            )
         )
         return None
 
 
 def _schema_findings(value: Any, schema: dict[str, Any], path: str) -> list[Finding]:
-    findings = []
+    result = []
     for error in Draft202012Validator(
         schema, format_checker=FormatChecker()
     ).iter_errors(value):
         suffix = ".".join(map(str, error.absolute_path))
-        findings.append(
+        result.append(
             Finding(
                 "CONFORMANCE-SCHEMA",
                 f"{path}{'.' + suffix if suffix else ''}",
                 "closed Schema constraint failed",
             )
         )
-    return findings
+    return result
+
+
+def _closed_adapter_registry(root: Path, findings: list[Finding]) -> None:
+    try:
+        registry = strict_yaml_load(
+            resolve_regular_file(
+                root, "conformance/interop/adapters.v0.1.yaml"
+            ).read_text(encoding="utf-8")
+        )
+        if set(registry) != {
+            "schema_version",
+            "artifact_status",
+            "registry_id",
+            "adapters",
+        }:
+            raise ValueError
+        identifiers = []
+        required = {
+            "id",
+            "version",
+            "language",
+            "runtime",
+            "source_repository_policy",
+            "target_suite",
+            "implementation_status",
+            "owner_role",
+            "license_expectation",
+            "canonicalization_dependency_review",
+            "expected_independence_boundary",
+            "required_vectors",
+            "evidence_requirement",
+            "limitations",
+        }
+        for item in registry["adapters"]:
+            if (
+                set(item) != required
+                or item["implementation_status"] != "planned"
+                or item["source_repository_policy"] != "public-only"
+            ):
+                raise ValueError
+            identifiers.append(item["id"])
+        if not identifiers or len(identifiers) != len(set(identifiers)):
+            raise ValueError
+    except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError, ConformanceError):
+        findings.append(
+            Finding(
+                "CONFORMANCE-ADAPTER-REGISTRY",
+                "conformance/interop/adapters.v0.1.yaml",
+                "closed planned adapter contract failed",
+            )
+        )
 
 
 def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
     findings: list[Finding] = []
-    schemas: dict[str, dict[str, Any]] = {}
+    schemas = {}
     for key, relative in SCHEMAS.items():
         value = _load(root, relative, findings)
         if isinstance(value, dict):
@@ -115,61 +181,42 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
                 )
     if findings:
         return sorted(set(findings))
+    _closed_adapter_registry(root, findings)
 
-    try:
-        adapter_registry = strict_yaml_load(
-            resolve_regular_file(
-                root, "conformance/interop/adapters.v0.1.yaml"
-            ).read_text(encoding="utf-8")
-        )
-        if set(adapter_registry) != {
-            "schema_version",
-            "artifact_status",
-            "registry_id",
-            "adapters",
-        }:
-            raise ValueError("closed adapter registry")
-        adapter_ids: list[str] = []
-        for adapter in adapter_registry.get("adapters", []):
-            required = {
-                "id",
-                "version",
-                "language",
-                "runtime",
-                "source_repository_policy",
-                "target_suite",
-                "implementation_status",
-                "owner_role",
-                "license_expectation",
-                "canonicalization_dependency_review",
-                "expected_independence_boundary",
-                "required_vectors",
-                "evidence_requirement",
-                "limitations",
-            }
-            if set(adapter) != required:
-                raise ValueError("closed adapter entry")
-            adapter_ids.append(adapter["id"])
-            if (
-                adapter["implementation_status"] != "planned"
-                or adapter["source_repository_policy"] != "public-only"
-                or adapter["target_suite"]
-                != {"id": "private-match-core", "version": "0.1"}
-                or adapter["required_vectors"] != "all-suite-manifest-vector-classes"
-            ):
-                raise ValueError("planned adapter boundary")
-        if len(adapter_ids) != len(set(adapter_ids)) or not adapter_ids:
-            raise ValueError("adapter identity")
-    except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError, ConformanceError):
-        findings.append(
-            Finding(
-                "CONFORMANCE-ADAPTER-REGISTRY",
-                "conformance/interop/adapters.v0.1.yaml",
-                "closed planned-adapter contract failed",
+    source_values = {
+        "case_definitions": _load(root, CASE_DEFINITIONS, findings),
+        "oracle": _load(root, NORMATIVE_ORACLE, findings),
+        "message_inputs": _load(root, MESSAGE_INPUT_MANIFEST, findings),
+    }
+    for key, value in source_values.items():
+        if isinstance(value, dict):
+            findings.extend(
+                _schema_findings(
+                    value,
+                    schemas[key],
+                    {
+                        "case_definitions": str(CASE_DEFINITIONS),
+                        "oracle": str(NORMATIVE_ORACLE),
+                        "message_inputs": str(MESSAGE_INPUT_MANIFEST),
+                    }[key],
+                )
             )
+    try:
+        if not isinstance(source_values["message_inputs"], dict):
+            raise ConformanceError("CONFORMANCE-SOURCE-MANIFEST-SHAPE", "source")
+        validate_message_input_manifest(root, source_values["message_inputs"])
+        if (
+            source_values["message_inputs"]["tree_digest"]
+            != PROTOCOL_PINS["message_conformance_tree_digest"]
+        ):
+            raise ConformanceError(
+                "CONFORMANCE-PROTOCOL-PIN", "message-conformance-tree"
+            )
+    except ConformanceError as error:
+        findings.append(
+            Finding(error.code, error.path, "reviewed source-tree verification failed")
         )
 
-    suite_root = root / SUITE_ROOT
     manifest_relative = SUITE_ROOT / "suite-manifest.v0.1.json"
     manifest = _load(root, manifest_relative, findings)
     if not isinstance(manifest, dict):
@@ -193,66 +240,61 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
                 "reviewed pin mismatch",
             )
         )
-    try:
-        planned_path = str(manifest.get("planned_adapters_path", ""))
-        planned_bytes = resolve_regular_file(root, planned_path).read_bytes()
-        if sha256_bytes(planned_bytes) != manifest.get("planned_adapters_digest"):
-            findings.append(
-                Finding(
-                    "CONFORMANCE-ADAPTER-DIGEST",
-                    planned_path,
-                    "planned adapter registry digest mismatch",
+    source_artifacts = manifest.get("source_artifacts", {})
+    for field, relative in (
+        ("message_input_manifest_digest", MESSAGE_INPUT_MANIFEST),
+        ("case_definitions_digest", CASE_DEFINITIONS),
+        ("normative_oracle_digest", NORMATIVE_ORACLE),
+    ):
+        try:
+            if source_artifacts.get(field) != sha256_bytes(
+                resolve_regular_file(root, relative.as_posix()).read_bytes()
+            ):
+                findings.append(
+                    Finding(
+                        "CONFORMANCE-SOURCE-DIGEST", field, "source digest mismatch"
+                    )
                 )
+        except ConformanceError:
+            findings.append(
+                Finding("CONFORMANCE-SOURCE-DIGEST", field, "source unavailable")
             )
-    except (OSError, ConformanceError):
-        findings.append(
-            Finding(
-                "CONFORMANCE-ADAPTER-REGISTRY",
-                "manifest.planned_adapters_path",
-                "planned adapter registry unavailable",
-            )
-        )
 
-    # Recompute current public Protocol pins.  The conformance/messages tree is
-    # the reviewed pre-Issue-6 input pin, not the newly generated suite tree.
     try:
         machine = strict_yaml_load(
             resolve_regular_file(
                 root, "specs/state-machines/private-match-core-session-v0.1.yaml"
             ).read_text(encoding="utf-8")
         )
-        machine_digest = sha256_bytes(canonicalize(machine))
-        protocol_error_codes = {
+        protocol_codes = {
             item.get("code")
             for item in machine.get("failure_taxonomy", [])
             if isinstance(item, dict)
         }
-        registry_raw = resolve_regular_file(
-            root, "registry/message-types.v0.1.yaml"
-        ).read_bytes()
-        if machine_digest != PROTOCOL_PINS["state_machine_digest"]:
-            findings.append(
-                Finding("CONFORMANCE-PROTOCOL-PIN", "state-machine", "digest mismatch")
+        if sha256_bytes(canonicalize(machine)) != PROTOCOL_PINS["state_machine_digest"]:
+            raise ValueError
+        if (
+            sha256_bytes(
+                resolve_regular_file(
+                    root, "registry/message-types.v0.1.yaml"
+                ).read_bytes()
             )
-        if sha256_bytes(registry_raw) != PROTOCOL_PINS["message_registry_digest"]:
-            findings.append(
-                Finding(
-                    "CONFORMANCE-PROTOCOL-PIN", "message-registry", "digest mismatch"
-                )
-            )
-    except (OSError, ValueError, yaml.YAMLError, ConformanceError):
-        protocol_error_codes = set()
+            != PROTOCOL_PINS["message_registry_digest"]
+        ):
+            raise ValueError
+    except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError, ConformanceError):
+        protocol_codes = set()
         findings.append(
             Finding(
-                "CONFORMANCE-PROTOCOL-PIN", "protocol-artifacts", "artifact unavailable"
+                "CONFORMANCE-PROTOCOL-PIN",
+                "protocol-artifacts",
+                "artifact digest mismatch",
             )
         )
 
-    case_entries = manifest.get("cases", [])
-    ids = [entry.get("case_id") for entry in case_entries if isinstance(entry, dict)]
-    classes = [
-        entry.get("vector_class") for entry in case_entries if isinstance(entry, dict)
-    ]
+    entries = manifest.get("cases", [])
+    ids = [item.get("case_id") for item in entries if isinstance(item, dict)]
+    classes = [item.get("vector_class") for item in entries if isinstance(item, dict)]
     if len(ids) != len(set(ids)):
         findings.append(
             Finding(
@@ -261,20 +303,19 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
                 "case IDs must be unique",
             )
         )
-    if set(classes) != set(REQUIRED_VECTOR_CLASSES):
+    if classes != REQUIRED_VECTOR_CLASSES:
         findings.append(
             Finding(
                 "CONFORMANCE-VECTOR-COVERAGE",
                 "manifest.cases",
-                "required classes differ",
+                "required class set/order differs",
             )
         )
-    declared_classes = {
+    if {
         item.get("id")
         for item in manifest.get("vector_classes", [])
         if isinstance(item, dict)
-    }
-    if declared_classes != set(REQUIRED_VECTOR_CLASSES):
+    } != set(REQUIRED_VECTOR_CLASSES):
         findings.append(
             Finding(
                 "CONFORMANCE-VECTOR-COVERAGE",
@@ -285,7 +326,7 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
 
     expected_relative = SUITE_ROOT / str(manifest.get("expected_results_path", ""))
     expected = _load(root, expected_relative, findings)
-    expected_by_id: dict[str, dict[str, Any]] = {}
+    expected_by_id = {}
     if isinstance(expected, dict):
         findings.extend(
             _schema_findings(
@@ -301,66 +342,114 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
                 )
             )
         for record in expected.get("results", []):
-            if isinstance(record, dict):
-                identifier = record.get("case_id")
-                if identifier in expected_by_id:
-                    findings.append(
-                        Finding(
-                            "CONFORMANCE-DUPLICATE-RESULT",
-                            expected_relative.as_posix(),
-                            "duplicate case result",
-                        )
+            identifier = record.get("case_id")
+            if identifier in expected_by_id:
+                findings.append(
+                    Finding(
+                        "CONFORMANCE-DUPLICATE-RESULT",
+                        str(identifier),
+                        "duplicate expected result",
                     )
-                expected_by_id[str(identifier)] = record
-                material = dict(record)
-                observed = material.pop("expected_result_digest", None)
-                recomputed = domain_digest(
-                    b"private-match-conformance-expected-result/v0.1\x00", material
                 )
-                if observed != recomputed:
-                    findings.append(
-                        Finding(
-                            "CONFORMANCE-EXPECTED-DIGEST",
-                            str(identifier),
-                            "result digest mismatch",
-                        )
+            expected_by_id[identifier] = record
+            if record.get("expected_result_digest") != expected_result_digest(record):
+                findings.append(
+                    Finding(
+                        "CONFORMANCE-EXPECTED-DIGEST",
+                        str(identifier),
+                        "expected result digest mismatch",
                     )
+                )
 
-    for entry in case_entries:
+    oracle_by_id = (
+        {
+            item["case_id"]: item
+            for item in source_values.get("oracle", {}).get("results", [])
+            if isinstance(item, dict)
+        }
+        if isinstance(source_values.get("oracle"), dict)
+        else {}
+    )
+    actual_by_class = {}
+    for entry in entries:
         if not isinstance(entry, dict):
             continue
         relative = SUITE_ROOT / str(entry.get("path", ""))
         case = _load(root, relative, findings)
         if not isinstance(case, dict):
             continue
-        findings.extend(_schema_findings(case, schemas["case"], relative.as_posix()))
         identifier = str(case.get("case_id"))
+        findings.extend(_schema_findings(case, schemas["case"], relative.as_posix()))
         if case.get("case_digest") != case_digest(case) or entry.get(
             "case_digest"
         ) != case.get("case_digest"):
             findings.append(
-                Finding(
-                    "CONFORMANCE-CASE-DIGEST",
-                    relative.as_posix(),
-                    "case digest mismatch",
-                )
+                Finding("CONFORMANCE-CASE-DIGEST", identifier, "case digest mismatch")
             )
         if case.get("conformance_input_digest") != input_digest(case):
             findings.append(
-                Finding(
-                    "CONFORMANCE-INPUT-DIGEST",
-                    relative.as_posix(),
-                    "input digest mismatch",
-                )
+                Finding("CONFORMANCE-INPUT-DIGEST", identifier, "input digest mismatch")
             )
-        if case.get("protocol_pins") != manifest.get("protocol_pins"):
+        if case.get("protocol_pins") != PROTOCOL_PINS:
+            findings.append(
+                Finding("CONFORMANCE-PROTOCOL-PIN", identifier, "case pin mismatch")
+            )
+        if case.get("case_definition_source_digest") != source_artifacts.get(
+            "case_definitions_digest"
+        ) or case.get("normative_oracle_source_digest") != source_artifacts.get(
+            "normative_oracle_digest"
+        ):
             findings.append(
                 Finding(
-                    "CONFORMANCE-PROTOCOL-PIN", relative.as_posix(), "case pin mismatch"
+                    "CONFORMANCE-SOURCE-DIGEST",
+                    identifier,
+                    "case source binding mismatch",
                 )
             )
-        error_codes = case.get("expected", {}).get("error_codes", [])
-        if error_codes != sorted(set(error_codes)):
+        oracle = oracle_by_id.get(identifier)
+        expected_record = expected_by_id.get(identifier)
+        if not oracle:
+            findings.append(
+                Finding(
+                    "CONFORMANCE-ORACLE-MISSING", identifier, "normative oracle missing"
+                )
+            )
+        else:
+            oracle_projection = {key: oracle[key] for key in case["expected"]}
+            if (
+                case["expected"] != oracle_projection
+                or case["result_status_expectation"]
+                != oracle["result_status_expectation"]
+            ):
+                findings.append(
+                    Finding(
+                        "CONFORMANCE-ORACLE-BINDING",
+                        identifier,
+                        "generated case differs from reviewed oracle",
+                    )
+                )
+        if not expected_record:
+            findings.append(
+                Finding(
+                    "CONFORMANCE-EXPECTED-MISSING",
+                    identifier,
+                    "expected result missing",
+                )
+            )
+        else:
+            projection = {key: expected_record[key] for key in case["expected"]}
+            if projection != case["expected"] or expected_record.get(
+                "case_digest"
+            ) != case.get("case_digest"):
+                findings.append(
+                    Finding(
+                        "CONFORMANCE-EXPECTED-BINDING",
+                        identifier,
+                        "expected artifact differs from case/oracle",
+                    )
+                )
+        codes = case.get("expected", {}).get("error_codes", [])
+        if codes != sorted(set(codes)):
             findings.append(
                 Finding(
                     "CONFORMANCE-ERROR-ORDER",
@@ -368,37 +457,43 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
                     "errors must be sorted and unique",
                 )
             )
-        if any(
-            code not in protocol_error_codes | CONFORMANCE_ERROR_CODES
-            for code in error_codes
-        ):
+        if any(code not in protocol_codes | CONFORMANCE_ERROR_CODES for code in codes):
             findings.append(
                 Finding("CONFORMANCE-ERROR-UNKNOWN", identifier, "unknown error code")
             )
-        expected_record = expected_by_id.get(identifier)
-        if expected_record is None:
-            findings.append(
-                Finding(
-                    "CONFORMANCE-EXPECTED-MISSING", identifier, "no expected result"
-                )
-            )
-        elif (
-            expected_record.get("case_digest") != case.get("case_digest")
-            or expected_record.get("expected_status")
-            != case.get("expected", {}).get("runner_status")
-            or expected_record.get("protocol_outcome")
-            != case.get("expected", {}).get("protocol_outcome")
-            or expected_record.get("error_codes")
-            != case.get("expected", {}).get("error_codes")
+        if any(
+            item.get("kind") in {"semantic-probe", "runner-directive"}
+            for item in case.get("ordered_inputs", [])
+            if isinstance(item, dict)
         ):
             findings.append(
                 Finding(
-                    "CONFORMANCE-EXPECTED-BINDING", identifier, "case/expected mismatch"
+                    "CONFORMANCE-TAUTOLOGICAL-PROBE",
+                    identifier,
+                    "directive/probe forbidden",
                 )
             )
         if execute:
             try:
-                actual = execute_case(root, suite_root, case)
+                actual = execute_case(root, root / SUITE_ROOT, case)
+                actual_by_class[case["vector_class"]] = actual
+                status, _, matched = compare_actual_to_expected(
+                    actual, case["expected"]
+                )
+                intended_mismatch = (
+                    case["vector_class"] == "CV-RUNNER-EXPECTED-MISMATCH"
+                )
+                if (
+                    matched == intended_mismatch
+                    or status != case["result_status_expectation"]
+                ):
+                    findings.append(
+                        Finding(
+                            "CONFORMANCE-EXPECTED-MISMATCH",
+                            identifier,
+                            "actual/oracle comparison contract failed",
+                        )
+                    )
             except (OSError, ValueError, KeyError, TypeError, ConformanceError):
                 findings.append(
                     Finding(
@@ -407,52 +502,91 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
                         "bounded execution failure",
                     )
                 )
-                continue
-            expected_case = case.get("expected", {})
-            actual_values = {
-                "runner_status": actual.status,
-                "protocol_outcome": actual.protocol_outcome,
-                "terminal_phase": actual.terminal_phase,
-                "error_codes": actual.error_codes,
-                "transcript_head": actual.final_transcript_head,
-                "state_digest": actual.final_state_digest,
-                "mutation_assertions": {
-                    key: "changed" if changed else "unchanged"
-                    for key, changed in actual.mutation_summary.items()
-                },
-            }
-            if expected_case != actual_values:
+
+    # Generated artifacts are canonical projections of sources; execution cannot update them.
+    try:
+        generated = generated_files(root)
+        for relative, content in generated.items():
+            if resolve_regular_file(root, relative.as_posix()).read_bytes() != content:
                 findings.append(
                     Finding(
-                        "CONFORMANCE-EXPECTED-MISMATCH",
-                        identifier,
-                        "actual outcome differs",
+                        "CONFORMANCE-GENERATED-STALE",
+                        relative.as_posix(),
+                        "generated bytes differ",
                     )
                 )
-
-    material_relative = SUITE_ROOT / str(manifest.get("verification_material_path", ""))
+    except (OSError, ValueError, KeyError, TypeError, ConformanceError):
+        findings.append(
+            Finding(
+                "CONFORMANCE-GENERATOR",
+                "generated-files",
+                "deterministic projection failed",
+            )
+        )
     try:
-        material_bytes = resolve_regular_file(
-            root, material_relative.as_posix()
-        ).read_bytes()
-        if sha256_bytes(material_bytes) != manifest.get("fixture_adapter", {}).get(
-            "digest"
+        tree = ast.parse(
+            resolve_regular_file(
+                root, "scripts/generate_conformance_suite.py"
+            ).read_text(encoding="utf-8")
+        )
+        forbidden = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            and (
+                (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "conformance_engine"
+                )
+                or (
+                    isinstance(node, ast.Import)
+                    and any(alias.name == "conformance_engine" for alias in node.names)
+                )
+            )
+        ]
+        if forbidden:
+            findings.append(
+                Finding(
+                    "CONFORMANCE-ORACLE-INDEPENDENCE",
+                    "scripts/generate_conformance_suite.py",
+                    "generator imports implementation under test",
+                )
+            )
+    except (OSError, SyntaxError, ConformanceError):
+        findings.append(
+            Finding(
+                "CONFORMANCE-GENERATOR",
+                "scripts/generate_conformance_suite.py",
+                "source inspection failed",
+            )
+        )
+    if execute and all(
+        key in actual_by_class
+        for key in (
+            "CV-VALID-END-TO-END",
+            "CV-VALID-NO-MATCH",
+            "CV-VALID-INDETERMINATE",
+        )
+    ):
+        results = [
+            actual_by_class[key]
+            for key in (
+                "CV-VALID-END-TO-END",
+                "CV-VALID-NO-MATCH",
+                "CV-VALID-INDETERMINATE",
+            )
+        ]
+        if (
+            len({tuple(item.local_result_state.values()) for item in results}) != 3
+            or len({item.final_state_digest for item in results}) != 3
         ):
             findings.append(
                 Finding(
-                    "CONFORMANCE-ADAPTER-DIGEST",
-                    material_relative.as_posix(),
-                    "fixture digest mismatch",
+                    "CONFORMANCE-RESULT-VARIANTS",
+                    "valid-results",
+                    "three Party-local result executions must differ",
                 )
             )
-    except (OSError, ConformanceError):
-        findings.append(
-            Finding(
-                "CONFORMANCE-ADAPTER-MISSING",
-                material_relative.as_posix(),
-                "fixture unavailable",
-            )
-        )
     return sorted(set(findings))
 
 
@@ -470,8 +604,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     manifest = json.loads((root / SUITE_ROOT / "suite-manifest.v0.1.json").read_text())
     print(
-        f"conformance-suite: valid cases={len(manifest['cases'])} "
-        f"classes={len(manifest['vector_classes'])} sha256={manifest['suite_digest'].removeprefix('sha256:')}"
+        f"conformance-suite: valid cases={len(manifest['cases'])} classes={len(manifest['vector_classes'])} sha256={manifest['suite_digest'].removeprefix('sha256:')}"
     )
     if args.print_digest:
         print(manifest["suite_digest"])

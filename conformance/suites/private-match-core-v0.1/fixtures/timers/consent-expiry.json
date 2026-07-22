@@ -1,0 +1,1 @@
+{"delivery_class":"timer","event_type":"authoritative_timer_event","event_version":"0.1","new_authoritative_time":"2026-07-21T00:10:00Z","prior_transcript_digest":"sha256:d48df063af6be662d40902a087fe8c7dde7faff52bdbb370fb832a9231cdc883","reason_or_source_class":"CONSENT_EXPIRY_THRESHOLD","session_id":"urn:private-match:test:session:0001"}

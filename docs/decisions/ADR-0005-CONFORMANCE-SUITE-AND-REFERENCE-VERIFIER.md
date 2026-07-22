@@ -20,9 +20,18 @@ runner status distinct from Protocol outcome. Use the explicit test-only
 `fixture-preverified/v0.1` precondition rather than fake cryptography. Omit runtime timestamps and
 host metadata. Record a second independent public adapter as planned rather than claiming it exists.
 
-Generated suite artifacts are generator-owned and checked byte-for-byte. JSON Schema closes fields and
-versions; semantic validation closes digests, references, class coverage, Protocol pins, expectations,
-and fixture-adapter binding. All failures are candidate-copy atomic.
+Human-reviewed case definitions and normative expected results are the single oracle authority.
+Generated suite artifacts are deterministic projections and are checked byte-for-byte; the generator
+does not execute the reference verifier or update the oracle. Concrete executable fixtures replace
+case-supplied semantic verdicts. The three result variants use protected, test-only profile-local
+fixtures rather than adding plaintext outcomes to Coordinator-visible core messages.
+
+JSON Schema closes fields and versions; semantic validation closes digests, references, class
+coverage, Protocol pins, expectations, and fixture-adapter binding. The complete 74-file pre-Issue-6
+Message input tree is listed and recomputed with the reviewed Issue #5 length-prefixed calculation.
+Runner statuses are derived from actual evaluator/budget/comparison/fault behavior. All message and
+timer failures are candidate-copy atomic, and all-case output is staged, re-read as an exact run set,
+fsynced, and directory-renamed atomically.
 
 ## Alternatives
 
@@ -34,6 +43,12 @@ and fixture-adapter binding. All failures are candidate-copy atomic.
   rejected.
 - **Add execution timestamps:** useful for Evidence but destroys deterministic Protocol results; defer
   to a separate private Evidence envelope.
+- **Generate expected results from reference execution:** convenient golden-file maintenance, but it
+  makes the implementation under test its own oracle and hides regressions; rejected.
+- **Case-supplied probes or forced statuses:** compact but tautological and unable to demonstrate real
+  state, replay, timer, or policy behavior; rejected.
+- **Write each `--all` result directly:** simple but exposes partial/stale sets after late failure;
+  rejected in favor of one transactional run-set commit.
 - **Require a second implementation in this PR:** would expand ownership and risk falsely claiming
   independence; retain a closed planned-adapter contract.
 

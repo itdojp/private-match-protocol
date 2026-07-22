@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +66,10 @@ PROHIBITED_CORE_KEYS = {
     "secret_input",
 }
 PLAINTEXT_RESULTS = {"MATCH", "NO_MATCH", "INDETERMINATE"}
+LOW_ENTROPY_RESULT_RECEIPTS = {
+    "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+    for value in PLAINTEXT_RESULTS
+}
 PARTY_ACTORS = {"party_a_client": "party_a", "party_b_client": "party_b"}
 EXTERNAL_DELIVERY_CLASSES = {
     "party_message",
@@ -1236,6 +1241,12 @@ class AbstractStateRunner:
     receipt_acks: dict[str, dict[str, Any] | None] = field(
         default_factory=lambda: {"a": None, "b": None}
     )
+    proposed_result_state: dict[str, str | None] = field(
+        default_factory=lambda: {"a": None, "b": None}
+    )
+    accepted_result_state: dict[str, str | None] = field(
+        default_factory=lambda: {"a": None, "b": None}
+    )
     accepted_receipt: dict[str, Any] | None = None
     consents: dict[str, dict[str, Any] | None] = field(
         default_factory=lambda: {"a": None, "b": None}
@@ -1510,6 +1521,10 @@ class AbstractStateRunner:
                 payload.get("acknowledgment_status") == "ACKNOWLEDGED",
                 "Party receipt status must be ACKNOWLEDGED",
             )
+            require(
+                payload.get("opaque_receipt_ref") not in LOW_ENTROPY_RESULT_RECEIPTS,
+                "opaque receipt must not be a bare digest of a low-entropy result value",
+            )
             session_context = message.get("session_context", {})
             require(
                 isinstance(session_context, dict)
@@ -1561,6 +1576,13 @@ class AbstractStateRunner:
                 bool(payload.get("profile_evidence_ref")),
                 "result callback requires an opaque profile evidence reference",
             )
+            if any(self.proposed_result_state.values()):
+                require(
+                    self.proposed_result_state["a"] in PLAINTEXT_RESULTS
+                    and self.proposed_result_state["a"]
+                    == self.proposed_result_state["b"],
+                    "result callback requires symmetric Party-local proposed results",
+                )
             identity = message.get("identity", {})
             require(
                 isinstance(identity, dict)
@@ -1587,6 +1609,10 @@ class AbstractStateRunner:
                         "profile_evidence_ref",
                     )
                 }
+                if any(self.proposed_result_state.values()):
+                    self.accepted_result_state = copy.deepcopy(
+                        self.proposed_result_state
+                    )
                 self.phase = "RESULT_ACCEPTED"
         elif message_type == "consent_grant" and party:
             transition = f"TR-GRANT-CONSENT-{party.upper()}"
@@ -1637,6 +1663,68 @@ class AbstractStateRunner:
                 self.consents[party] = copy.deepcopy(payload)
                 self.disclosure_state = "CONSENT_PENDING"
                 self.phase = "CONSENT_PENDING"
+        elif message_type == "consent_withdrawal" and party:
+            transition = f"TR-WITHDRAW-CONSENT-{party.upper()}"
+            current = self.consents[party]
+            require(
+                self.phase == "CONSENT_PENDING" and isinstance(current, dict),
+                "consent withdrawal requires the current active Party consent",
+            )
+            require(
+                isinstance(current, dict)
+                and payload.get("consent_nonce") == current.get("consent_nonce")
+                and payload.get("consent_artifact_digest")
+                == current.get("consent_artifact_digest"),
+                "consent withdrawal must identify the current immutable consent",
+            )
+            if not findings:
+                current["status"] = "withdrawn"
+                self.disclosure_state = "NONE"
+                self.phase = "ABORTED"
+                self.terminal_failure_code = "CONSENT_WITHDRAWN"
+                self.party_terminal_category = "CONSENT_ERROR"
+                self.audit_lifecycle.append(transition)
+        elif message_type == "disclosure_extension_authorization":
+            transition = "TR-AUTHORIZE-DISCLOSURE-EXTENSION"
+            require(
+                self.phase == "CONSENT_PENDING"
+                and all(isinstance(item, dict) for item in self.consents.values()),
+                "disclosure authorization requires bilateral active consent",
+            )
+            require(
+                set(self.accepted_result_state.values()) == {"MATCH"},
+                "only symmetric MATCH may reach an extension authorization guard",
+            )
+            consent_a = self.consents["a"] or {}
+            consent_b = self.consents["b"] or {}
+            consent_fields = {
+                "profile_id": "disclosure_profile_id",
+                "profile_version": "disclosure_profile_version",
+                "scope": "scope",
+                "audience": "audience",
+            }
+            require(
+                all(
+                    payload.get(payload_field)
+                    == consent_a.get(consent_field)
+                    == consent_b.get(consent_field)
+                    for payload_field, consent_field in consent_fields.items()
+                ),
+                "extension profile, version, scope, and audience must equal both consents",
+            )
+            approved = self.base_context.get("approved_disclosure_profiles", [])
+            require(
+                isinstance(approved, list)
+                and {
+                    "profile_id": payload.get("profile_id"),
+                    "profile_version": payload.get("profile_version"),
+                }
+                in approved,
+                "no reviewed disclosure extension profile is approved in core v0.1",
+            )
+            if not findings:
+                self.disclosure_state = "AUTHORIZED"
+                self.phase = "DISCLOSURE_AUTHORIZED"
         elif message_type == "close_notice":
             transition = "TR-CLOSE"
             require(
@@ -1683,6 +1771,114 @@ class AbstractStateRunner:
             self.__dict__.clear()
             self.__dict__.update(before)
         return sorted(set(findings))
+
+
+def apply_profile_local_result_fixture(
+    runner: AbstractStateRunner, fixture: dict[str, Any]
+) -> list[Finding]:
+    """Apply one test-only protected local-result precondition atomically.
+
+    The fixture is not a wire message or a new Protocol event. It supplies the
+    selected profile's protected Party-local values to the existing
+    ``proposed_result_state`` guard before opaque receipt acknowledgments. The
+    Coordinator receives no plaintext value or local-result binding.
+    """
+
+    before = copy.deepcopy(runner.__dict__)
+    findings: list[Finding] = []
+    required = {
+        "schema_version",
+        "kind",
+        "artifact_status",
+        "cryptographic_validity",
+        "profile_binding",
+        "session_id",
+        "evaluation_attempt_id",
+        "party_local_results",
+        "opaque_receipt_ref",
+    }
+    if set(fixture) != required:
+        findings.append(
+            _finding(
+                "profile-local-result-fixture",
+                "fixture",
+                "closed fixture fields do not match the reviewed contract",
+            )
+        )
+    if (
+        fixture.get("schema_version") != "0.1"
+        or fixture.get("kind") != "profile-local-result-fixture"
+        or fixture.get("artifact_status") != "test-only"
+        or fixture.get("cryptographic_validity") != "not-evaluated"
+    ):
+        findings.append(
+            _finding(
+                "profile-local-result-fixture",
+                "fixture",
+                "fixture identity or test-only boundary is invalid",
+            )
+        )
+    session = runner.base_context.get("session_context", {})
+    if (
+        fixture.get("session_id") != session.get("session_id")
+        or fixture.get("evaluation_attempt_id") != runner.evaluation_attempt_id
+        or fixture.get("profile_binding") != runner.selected_integration_profile
+    ):
+        findings.append(
+            _finding(
+                "profile-local-result-binding",
+                "fixture",
+                "profile, session, or evaluation-attempt binding mismatch",
+            )
+        )
+    results = fixture.get("party_local_results")
+    if (
+        not isinstance(results, dict)
+        or set(results) != {"a", "b"}
+        or any(value not in PLAINTEXT_RESULTS for value in results.values())
+    ):
+        findings.append(
+            _finding(
+                "profile-local-result-fixture",
+                "fixture.party_local_results",
+                "both reviewed Party slots require a three-value local result",
+            )
+        )
+    elif results["a"] != results["b"]:
+        findings.append(
+            _finding(
+                "local-result-symmetry",
+                "fixture.party_local_results",
+                "Party-local proposed results differ",
+            )
+        )
+    if (
+        runner.phase != "EVALUATING"
+        or not all(runner.contributions.values())
+        or any(runner.proposed_result_state.values())
+    ):
+        findings.append(
+            _finding(
+                "profile-local-result-state",
+                "fixture",
+                "local results require completed contributions and empty result slots",
+            )
+        )
+    receipt = fixture.get("opaque_receipt_ref")
+    if not isinstance(receipt, str) or receipt in LOW_ENTROPY_RESULT_RECEIPTS:
+        findings.append(
+            _finding(
+                "low-entropy-receipt",
+                "fixture.opaque_receipt_ref",
+                "receipt construction is missing or low entropy",
+            )
+        )
+    if findings:
+        runner.__dict__.clear()
+        runner.__dict__.update(before)
+        return sorted(set(findings))
+    runner.proposed_result_state = copy.deepcopy(results)
+    return []
 
 
 def trace_message_preflight_findings(

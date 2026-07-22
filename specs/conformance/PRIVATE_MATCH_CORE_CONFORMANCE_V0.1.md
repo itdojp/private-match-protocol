@@ -25,11 +25,23 @@ state, ordered inputs, authentication precondition, expected Protocol outcome, e
 transcript digests, mutation assertions, timeout, limitations, and SPDX-compatible provenance.
 The input digest covers the digest of every referenced trace, raw/message/timer fixture, initial
 context, and verification-material fixture; paths alone are never treated as content bindings.
-The generator is authoritative for the manifest, case files, expected results, fixed fixtures, and
-offline adapter fixture. `scripts/generate_conformance_suite.py --check` rejects stale output.
+`conformance/source/case-definitions.v0.1.json` and
+`conformance/source/normative-expected-results.v0.1.json` are the human-reviewed normative sources.
+The generator canonicalizes and binds those sources; it does not import or call the reference
+executor, recompute an oracle from actual behavior, or provide an update-golden mode. The generator
+owns the manifest, case files, expected-results projection, fixed fixtures, and offline adapter
+fixture. `scripts/generate_conformance_suite.py --check` rejects stale output without rewriting the
+normative oracle.
 
-There are 68 vector classes and 68 cases: the 64 Issue-required classes plus four explicit
-runner-status preservation cases. Required categories cover valid traces; strict JSON/JCS; digest
+`conformance/source/message-conformance-inputs.v0.1.json` closes all 74 pre-Issue-6 Message inputs.
+Every relative path and file SHA-256 is checked, then the reviewed Issue #5 length-prefixed
+path/byte tree digest is recomputed. Adding, removing, renaming, changing, or symlinking an input
+fails closed; the pin is not accepted by constant comparison alone.
+
+There are 68 vector classes and 68 cases: 58 Protocol-executable cases, six concrete policy
+projections, and four explicit runner self-tests. The 64 Issue-required classes are covered only by
+executable Protocol inputs or concrete inputs to the shared policy validators, never by a case-
+supplied verdict. Required categories cover valid traces; strict JSON/JCS; digest
 and transcript tampering; context binding; replay/order/time; result/receipt; verification
 material; consent/disclosure; and Leakage Contract prohibitions. The manifest is the complete
 machine-readable class catalog.
@@ -52,6 +64,11 @@ Runner status and Protocol outcome are independent:
 outcome `rejected`. Status conversion is forbidden: in particular `skip`/`unsupported` do not
 become `pass`, and `timeout`/`tool-error` do not become `fail`.
 
+The case cannot select a status. Unsupported is derived by the authentication-precondition
+evaluator, timeout by a deterministic operation budget, tool error by a closed runner-self-test
+processing fault, skip by a reviewed planned-adapter condition, and fail only by comparison with the
+independent normative oracle.
+
 ## Atomicity and privacy observations
 
 Messages and timers are applied to candidate copies through the reviewed
@@ -59,8 +76,11 @@ Messages and timers are applied to candidate copies through the reviewed
 must not partially change State Machine state, transcript, query budget, or audit lifecycle.
 Exact accepted duplicates are transcript no-ops. Conflicts are rejected without mutation.
 
-Valid outcome variants record only Party-local protected-result expectations. Coordinator-visible
-core messages contain no plaintext `MATCH`, `NO_MATCH`, or `INDETERMINATE`, private input, exact
+The MATCH, NO_MATCH, and INDETERMINATE cases use three distinct test-only profile-local result
+fixtures. Each binds profile/session/attempt/receipt and produces a distinct Party-local accepted
+result state and final state digest while retaining bilateral symmetry. These fixtures are neither
+wire messages nor new Protocol events and set `cryptographic_validity: not-evaluated`.
+Coordinator-visible core messages contain no plaintext `MATCH`, `NO_MATCH`, or `INDETERMINATE`, private input, exact
 count, matching element, identity reveal, or actual disclosure payload. The suite never uses a bare
 hash over the three result values as an opaque receipt.
 

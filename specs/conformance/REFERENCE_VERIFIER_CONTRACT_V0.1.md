@@ -15,9 +15,12 @@ The Python reference verifier composes, rather than reimplements:
 5. atomic message/timer application; and
 6. the session State Machine validator.
 
-Semantic probes are closed checks for already reviewed cross-artifact assertions, such as Leakage
-Contract prohibitions, equality bindings, or receipt construction. They are not a second State
-Machine and cannot select a PET, transport, cryptographic algorithm, or disclosure profile.
+There are no case-directed semantic verdicts or status directives. Replay, ordering, transcript,
+commitment, result, receipt, consent, disclosure, and clock vectors apply concrete messages, traces,
+Party-local profile fixtures, or timer events through the shared evaluators. Leakage projections
+submit concrete invalid message/notice/receipt bytes to strict Message and Leakage validation. These
+paths are not a second State Machine and cannot select a PET, transport, cryptographic algorithm, or
+disclosure profile.
 
 ## Processing order
 
@@ -26,6 +29,10 @@ verification; Protocol pin verification; initial abstract-state construction; or
 authentication-precondition evaluation; message/timer State Machine execution; outcome construction;
 expected comparison; deterministic result construction; and final Schema/digest self-validation.
 Only a fully validated candidate state and transcript are committed.
+
+Expected values come exclusively from the reviewed normative oracle source. Reference execution is
+an implementation under test: changing its outcome mapping, error mapping, or state mutation does
+not alter expected artifacts and instead yields `CONFORMANCE-EXPECTED-MISMATCH` and runner `fail`.
 
 ## Determinism
 
@@ -49,6 +56,12 @@ wire bytes are rejected with bounded value-free errors. The verifier performs no
 search, home scan, network request, GitHub API call, private checkout, adapter subprocess, shell
 command, deployment, release, or publication. Output is an atomic mode-0600 write beneath the
 explicit repository-local output root; failures leave no partial result.
+
+Single-case output remains a file-level atomic write. `--all` requires a nonexistent final output
+directory, writes every result and a run-set manifest into a sibling repository-local staging
+directory, re-reads the exact file set and every result/file/tree digest, fsyncs it, and performs one
+directory rename. A late failure removes staging and leaves neither a partial nor a stale final set;
+implicit replacement of an existing result directory is forbidden.
 
 ## Limitations
 

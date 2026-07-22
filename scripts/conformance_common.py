@@ -29,6 +29,9 @@ INPUT_DOMAIN = b"private-match-conformance-input/v0.1\x00"
 STATE_DOMAIN = b"private-match-conformance-state/v0.1\x00"
 RESULT_DOMAIN = b"private-match-conformance-result/v0.1\x00"
 IMPLEMENTATION_DOMAIN = b"private-match-reference-verifier-implementation/v0.1\x00"
+RUN_SET_DOMAIN = b"private-match-conformance-run-set/v0.1\x00"
+EXPECTED_RESULT_DOMAIN = b"private-match-conformance-expected-result/v0.1\x00"
+MESSAGE_INPUT_MANIFEST = Path("conformance/source/message-conformance-inputs.v0.1.json")
 FILE_SIZE_LIMIT = 2 * 1024 * 1024
 REFERENCE_IMPLEMENTATION_FILES = [
     "scripts/canonicalize_message.py",
@@ -41,8 +44,12 @@ REFERENCE_IMPLEMENTATION_FILES = [
     "scripts/validate_conformance_suite.py",
     "schema/conformance-adapter-result.v0.1.schema.json",
     "schema/conformance-case.v0.1.schema.json",
+    "schema/conformance-case-definitions.v0.1.schema.json",
     "schema/conformance-expected-result.v0.1.schema.json",
+    "schema/conformance-message-input-manifest.v0.1.schema.json",
+    "schema/conformance-normative-expected-results.v0.1.schema.json",
     "schema/conformance-run-result.v0.1.schema.json",
+    "schema/conformance-run-set-manifest.v0.1.schema.json",
     "schema/conformance-suite-manifest.v0.1.schema.json",
     "schemas/messages/envelope.v0.1.schema.json",
     "schemas/messages/timer-event.v0.1.schema.json",
@@ -110,6 +117,18 @@ def result_digest(result: dict[str, Any]) -> str:
     material = copy.deepcopy(result)
     material.pop("result_digest", None)
     return domain_digest(RESULT_DOMAIN, material)
+
+
+def run_set_digest(manifest: dict[str, Any]) -> str:
+    material = copy.deepcopy(manifest)
+    material.pop("run_set_digest", None)
+    return domain_digest(RUN_SET_DOMAIN, material)
+
+
+def expected_result_digest(record: dict[str, Any]) -> str:
+    material = copy.deepcopy(record)
+    material.pop("expected_result_digest", None)
+    return domain_digest(EXPECTED_RESULT_DOMAIN, material)
 
 
 def state_digest(runner: Any, transcript: Any) -> str:
@@ -256,6 +275,83 @@ def canonical_file_tree_digest(root: Path, paths: list[str]) -> str:
 
 def reference_implementation_digest(root: Path) -> str:
     return canonical_file_tree_digest(root, REFERENCE_IMPLEMENTATION_FILES)
+
+
+def legacy_length_prefixed_tree_digest(root: Path, paths: list[str]) -> str:
+    """Recompute the reviewed pre-Issue-6 message-conformance tree.
+
+    Issue #5 used a length-prefixed relative-path/byte stream.  Keeping that
+    exact calculation preserves the reviewed pin while making every input and
+    byte recomputable rather than trusting a constant.
+    """
+
+    hasher = hashlib.sha256()
+    for relative in sorted(paths):
+        data = resolve_regular_file(root, relative).read_bytes()
+        encoded = relative.encode("utf-8", errors="strict")
+        hasher.update(len(encoded).to_bytes(8, "big"))
+        hasher.update(encoded)
+        hasher.update(len(data).to_bytes(8, "big"))
+        hasher.update(data)
+    return "sha256:" + hasher.hexdigest()
+
+
+def message_conformance_paths(root: Path) -> list[str]:
+    base = root / "conformance/messages"
+    paths: list[str] = []
+    for path in base.rglob("*"):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            raise ConformanceError("CONFORMANCE-SOURCE-SYMLINK", relative)
+        if path.is_file():
+            paths.append(relative)
+    return sorted(paths)
+
+
+def validate_message_input_manifest(root: Path, manifest: dict[str, Any]) -> None:
+    """Fail closed unless the closed manifest matches the complete input tree."""
+
+    required = {
+        "$schema",
+        "schema_version",
+        "artifact_status",
+        "tree_digest",
+        "calculation",
+        "entries",
+        "review_source",
+        "limitations",
+        "license",
+    }
+    if set(manifest) != required:
+        raise ConformanceError(
+            "CONFORMANCE-SOURCE-MANIFEST-SHAPE", str(MESSAGE_INPUT_MANIFEST)
+        )
+    entries = manifest.get("entries")
+    if not isinstance(entries, list):
+        raise ConformanceError("CONFORMANCE-SOURCE-MANIFEST-SHAPE", "entries")
+    paths: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {
+            "path",
+            "digest",
+            "role",
+            "artifact_status",
+        }:
+            raise ConformanceError("CONFORMANCE-SOURCE-MANIFEST-SHAPE", "entries")
+        relative = str(entry.get("path", ""))
+        validate_relative_path(relative)
+        paths.append(relative)
+        data = resolve_regular_file(root, relative).read_bytes()
+        if entry.get("digest") != sha256_bytes(data):
+            raise ConformanceError("CONFORMANCE-SOURCE-FILE-DIGEST", relative)
+    if len(paths) != len(set(paths)):
+        raise ConformanceError("CONFORMANCE-SOURCE-DUPLICATE-PATH", "entries")
+    actual_paths = message_conformance_paths(root)
+    if sorted(paths) != actual_paths:
+        raise ConformanceError("CONFORMANCE-SOURCE-PATH-SET", "entries")
+    digest = legacy_length_prefixed_tree_digest(root, paths)
+    if manifest.get("tree_digest") != digest:
+        raise ConformanceError("CONFORMANCE-SOURCE-TREE-DIGEST", "tree_digest")
 
 
 def bounded_error(error: BaseException) -> str:
