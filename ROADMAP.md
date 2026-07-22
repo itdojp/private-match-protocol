@@ -61,9 +61,10 @@ Exit criteria:
 - compatibility rules
 - implementation-independent conformance runner
 
-The current artifacts establish a draft data/canonicalization contract only.
-They do not implement authentication, establish independent implementation
-conformance, or satisfy the P2 exit criteria.
+The current artifacts establish draft data/canonicalization and fixed-vector
+reference-verification contracts. The second independent public adapter remains
+`planned`. These artifacts do not implement authentication, establish independent
+implementation conformance, or satisfy the P2 exit criteria.
 
 Exit criteria:
 
