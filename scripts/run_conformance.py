@@ -18,6 +18,7 @@ from conformance_common import (
     SUITE_ROOT,
     atomic_write,
     domain_digest,
+    reference_implementation_manifest,
     reference_implementation_digest,
     resolve_directory,
     result_digest,
@@ -44,6 +45,7 @@ def build_result(
     status, error_codes, expected_match = compare_actual_to_expected(
         actual, case["expected"]
     )
+    implementation_manifest = reference_implementation_manifest(root)
     result = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "schema_version": "0.1",
@@ -61,7 +63,13 @@ def build_result(
         "verifier": {
             "id": "private-match-reference-verifier",
             "version": "0.1",
-            "implementation_digest": reference_implementation_digest(root),
+            "implementation_digest": implementation_manifest["implementation_digest"],
+            "implementation_manifest_digest": sha256_bytes(
+                (
+                    root
+                    / "conformance/source/reference-verifier-implementation.v0.1.json"
+                ).read_bytes()
+            ),
         },
         "adapter": {
             "id": manifest["fixture_adapter"]["id"],

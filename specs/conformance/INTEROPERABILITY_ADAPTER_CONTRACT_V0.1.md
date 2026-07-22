@@ -6,9 +6,15 @@ Status: **Draft**.
 
 An independent implementation is never launched by the reference verifier. It produces one closed,
 versioned JSON result offline. `compare_adapter_result.py` strictly validates that artifact and
-compares its suite/case digests, unchanged six-state status, Protocol outcome, ordered errors,
-state digest, and transcript digest with the fixed expectation. The contract has no executable
+compares its suite ID/version/digest, case ID/digest/input digest, unchanged six-state status,
+Protocol outcome, ordered errors, canonical initial/final state-projection digests, initial/final
+transcript heads, accepted-event count, state/transcript/budget/audit mutation flags, cached-response
+authorization, limitations boundary, artifact status, and adapter mode with the fixed expectation. The contract has no executable
 path, shell command, network endpoint, credential, customer field, or transport definition.
+
+Adapter-result input uses the same repository-relative, non-symlink, regular-file, size, UTF-8, strict
+JSON, and RFC 8785 boundary as suite input. Comparison requires an explicit `normal` or `test-fixture`
+mode. Normal mode rejects the synthetic adapter identity; test-fixture mode requires it.
 
 The committed adapter result is explicitly `test-only`; it demonstrates deterministic comparison,
 not independence. `conformance/interop/adapters.v0.1.yaml` records one public-only second adapter as

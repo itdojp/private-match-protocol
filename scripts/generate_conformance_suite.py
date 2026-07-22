@@ -19,17 +19,24 @@ from canonicalize_message import (
 )
 from conformance_common import (
     ARTIFACT_STATUS,
+    ConformanceError,
     MESSAGE_INPUT_MANIFEST,
+    REFERENCE_IMPLEMENTATION_MANIFEST,
+    STATE_PROJECTION_PROFILE,
     SUITE_ID,
     SUITE_ROOT,
     SUITE_VERSION,
+    SUITE_TREE_MANIFEST,
     case_digest,
     expected_result_digest,
     input_digest,
+    reference_implementation_manifest,
     result_digest,
     sha256_bytes,
     strict_json_bytes,
     suite_digest,
+    suite_tree_digest,
+    validate_generated_suite_tree,
     validate_message_input_manifest,
 )
 from strict_yaml import strict_yaml_load
@@ -307,8 +314,11 @@ def _base_case(
                 "protocol_outcome",
                 "terminal_phase",
                 "error_codes",
+                "initial_state_digest",
+                "initial_transcript_head",
                 "transcript_head",
                 "state_digest",
+                "accepted_event_count",
                 "mutation_assertions",
                 "cached_response_authorized",
             )
@@ -348,6 +358,8 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         raise ValueError("reviewed message conformance tree pin mismatch")
     definitions_source = _load_json(root, CASE_DEFINITIONS)
     oracle_source = _load_json(root, NORMATIVE_ORACLE)
+    _load_json(root, STATE_PROJECTION_PROFILE)
+    implementation_manifest = reference_implementation_manifest(root)
     definitions = definitions_source["definitions"]
     if [item["vector_class"] for item in definitions] != REQUIRED_VECTOR_CLASSES:
         raise ValueError("closed case-definition vector set/order mismatch")
@@ -935,6 +947,10 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             "case_definitions_digest": definition_source_digest,
             "normative_oracle_path": NORMATIVE_ORACLE.as_posix(),
             "normative_oracle_digest": oracle_digest,
+            "state_projection_profile_path": STATE_PROJECTION_PROFILE.as_posix(),
+            "state_projection_profile_digest": sha256_bytes(
+                (root / STATE_PROJECTION_PROFILE).read_bytes()
+            ),
         },
         "vector_classes": [
             {
@@ -956,7 +972,15 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             for c in cases
         ],
         "expected_results_path": "expected-results.v0.1.json",
+        "suite_tree_manifest_path": "suite-tree-manifest.v0.1.json",
         "verification_material_path": "verification-material.v0.1.json",
+        "reference_verifier": {
+            "implementation_manifest_path": REFERENCE_IMPLEMENTATION_MANIFEST.as_posix(),
+            "implementation_manifest_digest": sha256_bytes(
+                (root / REFERENCE_IMPLEMENTATION_MANIFEST).read_bytes()
+            ),
+            "implementation_digest": implementation_manifest["implementation_digest"],
+        },
         "planned_adapters_path": "conformance/interop/adapters.v0.1.yaml",
         "planned_adapters_digest": sha256_bytes(
             (root / "conformance/interop/adapters.v0.1.yaml").read_bytes()
@@ -1051,14 +1075,25 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             "version": SUITE_VERSION,
             "digest": manifest["suite_digest"],
         },
-        "case": {"id": adapter_case["case_id"], "digest": adapter_case["case_digest"]},
+        "case": {
+            "id": adapter_case["case_id"],
+            "digest": adapter_case["case_digest"],
+            "input_digest": adapter_case["conformance_input_digest"],
+        },
+        "adapter_mode": "test-fixture",
         "status": adapter_expected["runner_status"],
         "protocol_outcome": adapter_expected["protocol_outcome"],
         "error_codes": adapter_expected["error_codes"],
-        "initial_state_digest": "sha256:4134411552cc82c90fe4d970b7f41a355c3483427a5a0583e03038440a005154",
+        "initial_state_digest": adapter_expected["initial_state_digest"],
         "final_state_digest": adapter_expected["state_digest"],
-        "initial_transcript_head": transcript_genesis_digest(),
+        "initial_transcript_head": adapter_expected["initial_transcript_head"],
         "final_transcript_head": adapter_expected["transcript_head"],
+        "accepted_event_count": adapter_expected["accepted_event_count"],
+        "mutation_summary": {
+            key: value == "changed"
+            for key, value in adapter_expected["mutation_assertions"].items()
+        },
+        "cached_response_authorized": adapter_expected["cached_response_authorized"],
         "limitations": [
             "Synthetic offline comparison fixture; not an independent implementation or interoperability certification."
         ],
@@ -1069,6 +1104,53 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     files[SUITE_ROOT / "fixtures/adapter-results/valid-end-to-end.v0.1.json"] = (
         _canonical(adapter_result)
     )
+    suite_entries = []
+    for path, raw in sorted(files.items(), key=lambda item: item[0].as_posix()):
+        if path == SUITE_TREE_MANIFEST:
+            continue
+        relative = path.relative_to(SUITE_ROOT).as_posix()
+        role = (
+            "case"
+            if relative.startswith("cases/")
+            else "expected-results"
+            if relative == "expected-results.v0.1.json"
+            else "suite-manifest"
+            if relative == "suite-manifest.v0.1.json"
+            else "verification-material"
+            if relative == "verification-material.v0.1.json"
+            else "fixture"
+        )
+        suite_entries.append(
+            {"path": relative, "digest": sha256_bytes(raw), "role": role}
+        )
+    tree_manifest = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "schema_version": "0.1",
+        "artifact_status": "draft",
+        "suite": {"id": SUITE_ID, "version": SUITE_VERSION},
+        "entries": suite_entries,
+        "file_count": len(suite_entries),
+        "tree_digest": suite_tree_digest(suite_entries),
+        "source_bindings": {
+            "generator_digest": sha256_bytes(
+                (root / "scripts/generate_conformance_suite.py").read_bytes()
+            ),
+            "case_definitions_digest": definition_source_digest,
+            "normative_oracle_digest": oracle_digest,
+            "state_projection_profile_digest": sha256_bytes(
+                (root / STATE_PROJECTION_PROFILE).read_bytes()
+            ),
+            "implementation_manifest_digest": sha256_bytes(
+                (root / REFERENCE_IMPLEMENTATION_MANIFEST).read_bytes()
+            ),
+        },
+        "calculation": "RFC8785 path-sorted entries excluding this manifest",
+        "limitations": [
+            "The suite-tree digest binds generated bytes but does not establish Protocol or implementation correctness."
+        ],
+        "license": "Apache-2.0",
+    }
+    files[SUITE_TREE_MANIFEST] = _canonical(tree_manifest)
     return files
 
 
@@ -1083,26 +1165,21 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, KeyError, TypeError):
         print("conformance-generator: error [bounded]", file=sys.stderr)
         return 1
-    stale = []
-    for relative, content in files.items():
-        path = root / relative
+    try:
         if args.check:
-            if not path.is_file() or path.is_symlink() or path.read_bytes() != content:
-                stale.append(relative.as_posix())
+            validate_generated_suite_tree(root, files)
         else:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-    if not args.check:
-        expected = {str(path) for path in files}
-        generated_root = root / SUITE_ROOT
-        for child in generated_root.rglob("*"):
-            if (
-                child.is_file()
-                and child.relative_to(root).as_posix() not in expected
-                and ("cases" in child.parts or "fixtures" in child.parts)
-            ):
-                child.unlink()
-    if stale:
+            # Refuse to conceal stale or unexpected artifacts.  A reviewed
+            # cleanup must precede regeneration if the exact path set changed.
+            current = root / SUITE_ROOT
+            if current.exists():
+                validate_generated_suite_tree(root, files, compare_bytes=False)
+            for relative, content in files.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            validate_generated_suite_tree(root, files)
+    except (OSError, ValueError, ConformanceError):
         print(
             "conformance-generator: error [stale-generated-artifact]", file=sys.stderr
         )

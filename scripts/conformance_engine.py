@@ -13,6 +13,7 @@ import yaml
 
 from conformance_common import (
     ConformanceError,
+    conformance_state_projection,
     resolve_regular_file,
     sha256_bytes,
     state_digest,
@@ -86,6 +87,8 @@ class ExecutionActual:
     cached_response_authorized: bool | None
     local_result_state: dict[str, str | None]
     work_units: int
+    initial_state_projection: dict[str, Any]
+    final_state_projection: dict[str, Any]
 
 
 def _load_json(root: Path, relative: Path) -> dict[str, Any]:
@@ -151,8 +154,11 @@ def expected_projection(actual: ExecutionActual) -> dict[str, Any]:
         "protocol_outcome": actual.protocol_outcome,
         "terminal_phase": actual.terminal_phase,
         "error_codes": actual.error_codes,
+        "initial_state_digest": actual.initial_state_digest,
+        "initial_transcript_head": actual.initial_transcript_head,
         "transcript_head": actual.final_transcript_head,
         "state_digest": actual.final_state_digest,
+        "accepted_event_count": actual.accepted_event_count,
         "mutation_assertions": {
             key: "changed" if changed else "unchanged"
             for key, changed in actual.mutation_summary.items()
@@ -184,6 +190,7 @@ def _actual(
     protocol_outcome: str,
     error_codes: set[str],
     initial_state: str,
+    initial_projection: dict[str, Any],
     initial_head: str,
     initial_budget: str,
     initial_audit: list[str],
@@ -191,6 +198,7 @@ def _actual(
     cached_response_authorized: bool | None,
     work_units: int,
 ) -> ExecutionActual:
+    final_projection = conformance_state_projection(runner, transcript.dedup)
     final_state = state_digest(runner, transcript)
     return ExecutionActual(
         status=status,
@@ -214,6 +222,8 @@ def _actual(
         cached_response_authorized=cached_response_authorized,
         local_result_state=copy.deepcopy(runner.accepted_result_state),
         work_units=work_units,
+        initial_state_projection=copy.deepcopy(initial_projection),
+        final_state_projection=final_projection,
     )
 
 
@@ -283,6 +293,7 @@ def execute_case(root: Path, suite_root: Path, case: dict[str, Any]) -> Executio
     context = _load_json(suite_root, Path(context_path))
     runner = AbstractStateRunner(copy.deepcopy(context))
     transcript = TranscriptState()
+    initial_projection = conformance_state_projection(runner, transcript.dedup)
     initial_state = state_digest(runner, transcript)
     initial_head = transcript.head
     initial_budget = runner.query_budget_state
@@ -299,6 +310,7 @@ def execute_case(root: Path, suite_root: Path, case: dict[str, Any]) -> Executio
             protocol_outcome="not-evaluated",
             error_codes={"CONFORMANCE-REVIEWED-SKIP"},
             initial_state=initial_state,
+            initial_projection=initial_projection,
             initial_head=initial_head,
             initial_budget=initial_budget,
             initial_audit=initial_audit,
@@ -316,6 +328,7 @@ def execute_case(root: Path, suite_root: Path, case: dict[str, Any]) -> Executio
             protocol_outcome="not-evaluated",
             error_codes={"CONFORMANCE-ADAPTER-UNSUPPORTED"},
             initial_state=initial_state,
+            initial_projection=initial_projection,
             initial_head=initial_head,
             initial_budget=initial_budget,
             initial_audit=initial_audit,
@@ -345,6 +358,7 @@ def execute_case(root: Path, suite_root: Path, case: dict[str, Any]) -> Executio
             protocol_outcome="not-evaluated",
             error_codes={"CONFORMANCE-TIMEOUT"},
             initial_state=initial_state,
+            initial_projection=initial_projection,
             initial_head=initial_head,
             initial_budget=initial_budget,
             initial_audit=initial_audit,
@@ -539,6 +553,7 @@ def execute_case(root: Path, suite_root: Path, case: dict[str, Any]) -> Executio
         protocol_outcome=protocol_outcome,
         error_codes=error_codes,
         initial_state=initial_state,
+        initial_projection=initial_projection,
         initial_head=initial_head,
         initial_budget=initial_budget,
         initial_audit=initial_audit,

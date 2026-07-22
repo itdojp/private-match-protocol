@@ -30,15 +30,17 @@ context, and verification-material fixture; paths alone are never treated as con
 The generator canonicalizes and binds those sources; it does not import or call the reference
 executor, recompute an oracle from actual behavior, or provide an update-golden mode. The generator
 owns the manifest, case files, expected-results projection, fixed fixtures, and offline adapter
-fixture. `scripts/generate_conformance_suite.py --check` rejects stale output without rewriting the
-normative oracle.
+fixture. It also generates `suite-tree-manifest.v0.1.json`, which binds the exact path-sorted generated
+file set excluding itself. `--check` rejects extra, missing, renamed, symlinked, nonregular, or stale
+files/directories without rewriting the normative oracle; repository validation uses the same helper.
 
 `conformance/source/message-conformance-inputs.v0.1.json` closes all 74 pre-Issue-6 Message inputs.
 Every relative path and file SHA-256 is checked, then the reviewed Issue #5 length-prefixed
 path/byte tree digest is recomputed. Adding, removing, renaming, changing, or symlinking an input
 fails closed; the pin is not accepted by constant comparison alone.
 
-There are 68 vector classes and 68 cases: 58 Protocol-executable cases, six concrete policy
+The generated suite has 160 files: the suite-tree manifest plus 159 path/digest-bound entries. There
+are 68 vector classes and 68 cases: 58 Protocol-executable cases, six concrete policy
 projections, and four explicit runner self-tests. The 64 Issue-required classes are covered only by
 executable Protocol inputs or concrete inputs to the shared policy validators, never by a case-
 supplied verdict. Required categories cover valid traces; strict JSON/JCS; digest
@@ -64,7 +66,8 @@ Runner status and Protocol outcome are independent:
 outcome `rejected`. Status conversion is forbidden: in particular `skip`/`unsupported` do not
 become `pass`, and `timeout`/`tool-error` do not become `fail`.
 
-The case cannot select a status. Unsupported is derived by the authentication-precondition
+Initial and final state use the closed canonical conformance-state projection rather than Python
+object layout; transcript head/index remain separate bindings. The case cannot select a status. Unsupported is derived by the authentication-precondition
 evaluator, timeout by a deterministic operation budget, tool error by a closed runner-self-test
 processing fault, skip by a reviewed planned-adapter condition, and fail only by comparison with the
 independent normative oracle.

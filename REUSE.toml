@@ -30,6 +30,7 @@ path = [
   "scripts/conformance_engine.py",
   "scripts/generate_conformance_suite.py",
   "scripts/generate_message_vectors.py",
+  "scripts/generate_verifier_manifest.py",
   "scripts/strict_yaml.py",
   "scripts/validate_messages.py",
   "scripts/validate_session_state_machine.py",

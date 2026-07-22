@@ -29,7 +29,13 @@ fixtures rather than adding plaintext outcomes to Coordinator-visible core messa
 JSON Schema closes fields and versions; semantic validation closes digests, references, class
 coverage, Protocol pins, expectations, and fixture-adapter binding. The complete 74-file pre-Issue-6
 Message input tree is listed and recomputed with the reviewed Issue #5 length-prefixed calculation.
-Runner statuses are derived from actual evaluator/budget/comparison/fault behavior. All message and
+Logical state comparison uses a closed versioned RFC 8785 projection, not `runner.__dict__`, and keeps
+transcript bindings separate. A closed implementation manifest binds the transitive Python import
+closure, explicitly loaded Schemas/policies/profiles, and dependency locks. A suite-tree manifest
+binds the exact generated path set, and both generator check and repository validation reject stale
+extras. Offline adapter input uses the shared safe-path boundary and every declared evidence surface
+is compared under an explicit normal/test-fixture mode. Runner statuses are derived from actual
+evaluator/budget/comparison/fault behavior. All message and
 timer failures are candidate-copy atomic, and all-case output is staged, re-read as an exact run set,
 fsynced, and directory-renamed atomically.
 
@@ -49,6 +55,12 @@ fsynced, and directory-renamed atomically.
   state, replay, timer, or policy behavior; rejected.
 - **Write each `--all` result directly:** simple but exposes partial/stale sets after late failure;
   rejected in favor of one transactional run-set commit.
+- **Digest `runner.__dict__`:** convenient but Python-specific and polluted by caches/transcript; rejected
+  in favor of a closed logical projection.
+- **Bind only direct verifier scripts:** smaller but omits transitive validators, Schemas, and locks;
+  rejected in favor of a closed implementation manifest.
+- **Allow unlisted generated files:** preserves local scratch output but lets stale cases appear
+  authoritative; rejected in favor of an exact suite tree.
 - **Require a second implementation in this PR:** would expand ownership and risk falsely claiming
   independence; retain a closed planned-adapter contract.
 

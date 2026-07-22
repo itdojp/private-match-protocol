@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from jsonschema import Draft202012Validator
@@ -20,9 +21,11 @@ if str(SCRIPTS) not in sys.path:
 from conformance_common import (  # noqa: E402
     ConformanceError,
     SUITE_ROOT,
+    conformance_state_projection,
     result_digest,
     run_set_digest,
     sha256_bytes,
+    state_digest,
 )
 from conformance_engine import compare_actual_to_expected, execute_case  # noqa: E402
 from run_conformance import (  # noqa: E402
@@ -32,6 +35,7 @@ from run_conformance import (  # noqa: E402
     main as run_main,
     validate_staged_run_set,
 )
+from validate_messages import AbstractStateRunner, TranscriptState  # noqa: E402
 
 
 class ReferenceVerifierTests(unittest.TestCase):
@@ -51,6 +55,117 @@ class ReferenceVerifierTests(unittest.TestCase):
             if item["vector_class"] == vector_class
         )
         return json.loads((ROOT / SUITE_ROOT / entry["path"]).read_text())
+
+    def _initial(self):
+        context = json.loads(
+            (ROOT / SUITE_ROOT / "fixtures/context.v0.1.json").read_text()
+        )
+        return AbstractStateRunner(context), TranscriptState()
+
+    def test_state_projection_is_closed_interoperable_and_order_independent(
+        self,
+    ) -> None:
+        runner, transcript = self._initial()
+        schema = json.loads(
+            (ROOT / "schema/conformance-state-projection.v0.1.schema.json").read_text()
+        )
+        projection = conformance_state_projection(runner, transcript.dedup)
+        self.assertFalse(list(Draft202012Validator(schema).iter_errors(projection)))
+
+        def alternate(value):
+            if isinstance(value, dict):
+                return SimpleNamespace(
+                    **{
+                        key: alternate(item)
+                        for key, item in reversed(list(value.items()))
+                    }
+                )
+            if isinstance(value, list):
+                return [alternate(item) for item in value]
+            return value
+
+        alternate_runner = alternate(runner.__dict__)
+        alternate_runner.base_context.session_context.intended_audience = list(
+            reversed(runner.base_context["session_context"]["intended_audience"])
+        )
+        self.assertEqual(
+            projection,
+            conformance_state_projection(alternate_runner, {}),
+        )
+        runner.implementation_only_cache = {"opaque": object()}
+        self.assertEqual(
+            projection, conformance_state_projection(runner, transcript.dedup)
+        )
+
+        changed = copy.deepcopy(projection)
+        changed["unexpected"] = "closed"
+        self.assertTrue(list(Draft202012Validator(schema).iter_errors(changed)))
+
+    def test_state_projection_digest_separates_transcript_and_logical_state(
+        self,
+    ) -> None:
+        runner, transcript = self._initial()
+        baseline = state_digest(runner, transcript)
+        initial_head = transcript.head
+        transcript.head = "sha256:" + "f" * 64
+        transcript.accepted_event_index = 99
+        self.assertEqual(baseline, state_digest(runner, transcript))
+        self.assertEqual(
+            {"state": False, "transcript": True},
+            {
+                "state": baseline != state_digest(runner, transcript),
+                "transcript": initial_head != transcript.head,
+            },
+        )
+        runner.phase = "CREATED"
+        self.assertNotEqual(baseline, state_digest(runner, transcript))
+
+        match = execute_case(ROOT, ROOT / SUITE_ROOT, self._case("CV-VALID-END-TO-END"))
+        no_match = execute_case(
+            ROOT, ROOT / SUITE_ROOT, self._case("CV-VALID-NO-MATCH")
+        )
+        self.assertNotEqual(match.final_state_digest, no_match.final_state_digest)
+        self.assertEqual(
+            match.initial_state_digest,
+            self._case("CV-VALID-END-TO-END")["expected"]["initial_state_digest"],
+        )
+
+    def test_all_oracle_state_projections_and_adapter_use_v01_digest(self) -> None:
+        schema = json.loads(
+            (ROOT / "schema/conformance-state-projection.v0.1.schema.json").read_text()
+        )
+        for entry in self.manifest["cases"]:
+            case = json.loads((ROOT / SUITE_ROOT / entry["path"]).read_text())
+            actual = execute_case(ROOT, ROOT / SUITE_ROOT, case)
+            with self.subTest(case=case["case_id"]):
+                self.assertFalse(
+                    list(
+                        Draft202012Validator(schema).iter_errors(
+                            actual.final_state_projection
+                        )
+                    )
+                )
+                self.assertEqual(
+                    case["expected"]["initial_state_digest"],
+                    actual.initial_state_digest,
+                )
+                self.assertEqual(
+                    case["expected"]["state_digest"], actual.final_state_digest
+                )
+        adapter = json.loads(
+            (
+                ROOT
+                / SUITE_ROOT
+                / "fixtures/adapter-results/valid-end-to-end.v0.1.json"
+            ).read_text()
+        )
+        case = self._case("CV-VALID-END-TO-END")
+        self.assertEqual(
+            case["expected"]["initial_state_digest"], adapter["initial_state_digest"]
+        )
+        self.assertEqual(
+            case["expected"]["state_digest"], adapter["final_state_digest"]
+        )
 
     def test_every_fixed_case_has_reviewed_expected_comparison(self) -> None:
         for entry in self.manifest["cases"]:
@@ -268,6 +383,24 @@ class ReferenceVerifierTests(unittest.TestCase):
         self.assertEqual(first["result_digest"], result_digest(first))
         self.assertNotIn("timestamp", first)
         self.assertNotIn("hostname", first)
+        implementation = json.loads(
+            (
+                ROOT / "conformance/source/reference-verifier-implementation.v0.1.json"
+            ).read_text()
+        )
+        self.assertEqual(
+            implementation["implementation_digest"],
+            first["verifier"]["implementation_digest"],
+        )
+        self.assertEqual(
+            sha256_bytes(
+                (
+                    ROOT
+                    / "conformance/source/reference-verifier-implementation.v0.1.json"
+                ).read_bytes()
+            ),
+            first["verifier"]["implementation_manifest_digest"],
+        )
 
     def test_all_output_is_exact_and_transactional(self) -> None:
         scratch = ROOT / "artifacts"

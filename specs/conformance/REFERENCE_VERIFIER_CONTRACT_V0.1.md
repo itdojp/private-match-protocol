@@ -36,8 +36,9 @@ not alter expected artifacts and instead yields `CONFORMANCE-EXPECTED-MISMATCH` 
 
 ## Determinism
 
-The run result is RFC 8785 JSON and binds suite, case, Protocol artifacts, reference implementation,
-fixture adapter, input, initial/final state, initial/final transcript, accepted-event count, mutation
+The run result is RFC 8785 JSON and binds suite, case, Protocol artifacts, the closed reference-
+implementation manifest and its semantic digest, fixture adapter, input, canonical v0.1 initial/final
+state projections, initial/final transcript, accepted-event count, mutation
 summary, status, Protocol outcome, ordered errors, and limitations. It includes no wall-clock time,
 random value, hostname, absolute path, environment variable, or network-derived metadata. A future
 private Evidence producer may wrap it in a separate execution envelope without changing these six
@@ -62,6 +63,12 @@ directory, writes every result and a run-set manifest into a sibling repository-
 directory, re-reads the exact file set and every result/file/tree digest, fsyncs it, and performs one
 directory rename. A late failure removes staging and leaves neither a partial nor a stale final set;
 implicit replacement of an existing result directory is forbidden.
+
+`conformance/source/reference-verifier-implementation.v0.1.json` closes the complete reviewed Python
+import closure plus explicitly loaded Schemas, runtime policy/profile, and dependency locks. Each
+path and file digest is rechecked, local imports must remain within the path set, and run/suite results
+bind both manifest-file and implementation digests. Protocol State Machine, Message registry, and
+Message input-tree pins remain separate normative artifact bindings.
 
 ## Limitations
 

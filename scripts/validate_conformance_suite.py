@@ -18,15 +18,22 @@ from canonicalize_message import canonicalize
 from conformance_common import (
     ConformanceError,
     MESSAGE_INPUT_MANIFEST,
+    REFERENCE_IMPLEMENTATION_MANIFEST,
+    STATE_PROJECTION_PROFILE,
     SUITE_ROOT,
+    SUITE_TREE_MANIFEST,
     case_digest,
     expected_result_digest,
     input_digest,
     resolve_regular_file,
     sha256_bytes,
+    state_projection_profile_digest,
     strict_json_bytes,
     suite_digest,
+    suite_tree_digest,
+    validate_generated_suite_tree,
     validate_message_input_manifest,
+    validate_reference_implementation_manifest,
 )
 from conformance_engine import compare_actual_to_expected, execute_case
 from generate_conformance_suite import (
@@ -50,6 +57,14 @@ SCHEMAS = {
     "message_inputs": Path(
         "schema/conformance-message-input-manifest.v0.1.schema.json"
     ),
+    "state_projection": Path("schema/conformance-state-projection.v0.1.schema.json"),
+    "state_projection_profile": Path(
+        "schema/conformance-state-projection-profile.v0.1.schema.json"
+    ),
+    "implementation": Path(
+        "schema/conformance-verifier-implementation.v0.1.schema.json"
+    ),
+    "suite_tree": Path("schema/conformance-suite-tree-manifest.v0.1.schema.json"),
 }
 CONFORMANCE_ERROR_CODES = {
     "CONFORMANCE-ADAPTER-UNSUPPORTED",
@@ -187,6 +202,8 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
         "case_definitions": _load(root, CASE_DEFINITIONS, findings),
         "oracle": _load(root, NORMATIVE_ORACLE, findings),
         "message_inputs": _load(root, MESSAGE_INPUT_MANIFEST, findings),
+        "state_projection_profile": _load(root, STATE_PROJECTION_PROFILE, findings),
+        "implementation": _load(root, REFERENCE_IMPLEMENTATION_MANIFEST, findings),
     }
     for key, value in source_values.items():
         if isinstance(value, dict):
@@ -198,8 +215,31 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
                         "case_definitions": str(CASE_DEFINITIONS),
                         "oracle": str(NORMATIVE_ORACLE),
                         "message_inputs": str(MESSAGE_INPUT_MANIFEST),
+                        "state_projection_profile": str(STATE_PROJECTION_PROFILE),
+                        "implementation": str(REFERENCE_IMPLEMENTATION_MANIFEST),
                     }[key],
                 )
+            )
+    profile = source_values.get("state_projection_profile")
+    if isinstance(profile, dict) and profile.get(
+        "profile_digest"
+    ) != state_projection_profile_digest(profile):
+        findings.append(
+            Finding(
+                "CONFORMANCE-STATE-PROJECTION-PROFILE-DIGEST",
+                STATE_PROJECTION_PROFILE.as_posix(),
+                "profile digest mismatch",
+            )
+        )
+    implementation = source_values.get("implementation")
+    if isinstance(implementation, dict):
+        try:
+            validate_reference_implementation_manifest(
+                root, implementation, protocol_pins=PROTOCOL_PINS
+            )
+        except ConformanceError as error:
+            findings.append(
+                Finding(error.code, error.path, "implementation closure failed")
             )
     try:
         if not isinstance(source_values["message_inputs"], dict):
@@ -245,6 +285,7 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
         ("message_input_manifest_digest", MESSAGE_INPUT_MANIFEST),
         ("case_definitions_digest", CASE_DEFINITIONS),
         ("normative_oracle_digest", NORMATIVE_ORACLE),
+        ("state_projection_profile_digest", STATE_PROJECTION_PROFILE),
     ):
         try:
             if source_artifacts.get(field) != sha256_bytes(
@@ -361,6 +402,27 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
                     )
                 )
 
+    expected_reference = {
+        "implementation_manifest_path": REFERENCE_IMPLEMENTATION_MANIFEST.as_posix(),
+        "implementation_manifest_digest": sha256_bytes(
+            resolve_regular_file(
+                root, REFERENCE_IMPLEMENTATION_MANIFEST.as_posix()
+            ).read_bytes()
+        ),
+        "implementation_digest": (
+            implementation.get("implementation_digest")
+            if isinstance(implementation, dict)
+            else None
+        ),
+    }
+    if manifest.get("reference_verifier") != expected_reference:
+        findings.append(
+            Finding(
+                "CONFORMANCE-IMPLEMENTATION-BINDING",
+                manifest_relative.as_posix(),
+                "suite manifest implementation binding mismatch",
+            )
+        )
     oracle_by_id = (
         {
             item["case_id"]: item
@@ -477,6 +539,20 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
             try:
                 actual = execute_case(root, root / SUITE_ROOT, case)
                 actual_by_class[case["vector_class"]] = actual
+                findings.extend(
+                    _schema_findings(
+                        actual.initial_state_projection,
+                        schemas["state_projection"],
+                        f"{identifier}.initial_state_projection",
+                    )
+                )
+                findings.extend(
+                    _schema_findings(
+                        actual.final_state_projection,
+                        schemas["state_projection"],
+                        f"{identifier}.final_state_projection",
+                    )
+                )
                 status, _, matched = compare_actual_to_expected(
                     actual, case["expected"]
                 )
@@ -506,13 +582,27 @@ def validate_repository(root: Path, *, execute: bool = True) -> list[Finding]:
     # Generated artifacts are canonical projections of sources; execution cannot update them.
     try:
         generated = generated_files(root)
-        for relative, content in generated.items():
-            if resolve_regular_file(root, relative.as_posix()).read_bytes() != content:
+        validate_generated_suite_tree(root, generated)
+        tree_manifest = _load(root, SUITE_TREE_MANIFEST, findings)
+        if isinstance(tree_manifest, dict):
+            findings.extend(
+                _schema_findings(
+                    tree_manifest,
+                    schemas["suite_tree"],
+                    SUITE_TREE_MANIFEST.as_posix(),
+                )
+            )
+            entries_value = tree_manifest.get("entries", [])
+            if (
+                tree_manifest.get("file_count") != len(entries_value)
+                or tree_manifest.get("tree_digest") != suite_tree_digest(entries_value)
+                or manifest.get("suite_tree_manifest_path") != SUITE_TREE_MANIFEST.name
+            ):
                 findings.append(
                     Finding(
-                        "CONFORMANCE-GENERATED-STALE",
-                        relative.as_posix(),
-                        "generated bytes differ",
+                        "CONFORMANCE-SUITE-TREE-DIGEST",
+                        SUITE_TREE_MANIFEST.as_posix(),
+                        "tree manifest binding mismatch",
                     )
                 )
     except (OSError, ValueError, KeyError, TypeError, ConformanceError):

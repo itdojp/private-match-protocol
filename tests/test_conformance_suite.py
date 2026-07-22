@@ -21,20 +21,31 @@ if str(SCRIPTS) not in sys.path:
 from conformance_common import (  # noqa: E402
     ConformanceError,
     MESSAGE_INPUT_MANIFEST,
+    REFERENCE_IMPLEMENTATION_FILES,
+    REFERENCE_IMPLEMENTATION_MANIFEST,
     SUITE_ROOT,
+    SUITE_TREE_MANIFEST,
     case_digest,
+    implementation_manifest_digest,
     legacy_length_prefixed_tree_digest,
     message_conformance_paths,
     resolve_directory,
     resolve_regular_file,
     suite_digest,
+    suite_tree_digest,
+    validate_generated_suite_tree,
     validate_message_input_manifest,
+    validate_reference_implementation_manifest,
 )
 from generate_conformance_suite import (  # noqa: E402
     NORMATIVE_ORACLE,
     REQUIRED_VECTOR_CLASSES,
     generated_files,
     main as generate_main,
+)
+from generate_verifier_manifest import (  # noqa: E402
+    build_manifest as build_implementation_manifest,
+    main as generate_implementation_manifest_main,
 )
 from validate_conformance_suite import SCHEMAS, validate_repository  # noqa: E402
 
@@ -75,6 +86,190 @@ class ConformanceSuiteTests(unittest.TestCase):
         before = (oracle.read_bytes(), oracle.stat().st_mtime_ns)
         self.assertEqual(0, generate_main(["--root", str(ROOT), "--check"]))
         self.assertEqual(before, (oracle.read_bytes(), oracle.stat().st_mtime_ns))
+
+    def test_reference_implementation_manifest_is_closed_and_deterministic(
+        self,
+    ) -> None:
+        manifest = json.loads((ROOT / REFERENCE_IMPLEMENTATION_MANIFEST).read_text())
+        self.assertEqual(manifest, build_implementation_manifest(ROOT))
+        self.assertEqual(
+            manifest["implementation_digest"], implementation_manifest_digest(manifest)
+        )
+        self.assertEqual(
+            set(REFERENCE_IMPLEMENTATION_FILES),
+            {item["path"] for item in manifest["files"]},
+        )
+        validate_reference_implementation_manifest(
+            ROOT, manifest, protocol_pins=self.manifest["protocol_pins"]
+        )
+        self.assertEqual(
+            0,
+            generate_implementation_manifest_main(["--root", str(ROOT), "--check"]),
+        )
+
+    def _repository_copy(self):
+        scratch = ROOT / "artifacts"
+        scratch.mkdir(exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=scratch)
+        base = Path(temporary.name) / "repository"
+        shutil.copytree(
+            ROOT,
+            base,
+            ignore=shutil.ignore_patterns(
+                ".git", ".codex-local", "artifacts", "__pycache__", "*.pyc"
+            ),
+        )
+        return temporary, base
+
+    def test_every_behavior_dependency_changes_implementation_digest(self) -> None:
+        baseline = json.loads((ROOT / REFERENCE_IMPLEMENTATION_MANIFEST).read_text())
+        for relative in (
+            "scripts/validate_session_state_machine.py",
+            "scripts/conformance_engine.py",
+            "scripts/validate_messages.py",
+            "schema/conformance-state-projection.v0.1.schema.json",
+            "requirements-dev.txt",
+        ):
+            with self.subTest(relative=relative):
+                temporary, base = self._repository_copy()
+                try:
+                    path = base / relative
+                    path.write_bytes(path.read_bytes() + b"\n")
+                    changed = build_implementation_manifest(base)
+                    self.assertNotEqual(
+                        baseline["implementation_digest"],
+                        changed["implementation_digest"],
+                    )
+                    with self.assertRaises(ConformanceError):
+                        validate_reference_implementation_manifest(
+                            base,
+                            copy.deepcopy(baseline),
+                            protocol_pins=self.manifest["protocol_pins"],
+                        )
+                finally:
+                    temporary.cleanup()
+
+    def test_implementation_manifest_path_and_digest_attacks_fail_closed(self) -> None:
+        baseline = json.loads((ROOT / REFERENCE_IMPLEMENTATION_MANIFEST).read_text())
+        mutations = ("duplicate", "escape", "backslash", "stale")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                value = copy.deepcopy(baseline)
+                if mutation == "duplicate":
+                    value["files"].append(copy.deepcopy(value["files"][0]))
+                elif mutation == "escape":
+                    value["files"][0]["path"] = "../outside.py"
+                elif mutation == "backslash":
+                    value["files"][0]["path"] = "scripts\\outside.py"
+                else:
+                    value["files"][0]["digest"] = "sha256:" + "f" * 64
+                value["implementation_digest"] = implementation_manifest_digest(value)
+                with self.assertRaises(ConformanceError):
+                    validate_reference_implementation_manifest(ROOT, value)
+        temporary, base = self._repository_copy()
+        try:
+            missing = next(iter(REFERENCE_IMPLEMENTATION_FILES))
+            (base / missing).unlink()
+            with self.assertRaises(ConformanceError):
+                validate_reference_implementation_manifest(base, baseline)
+            target = base / "scripts/canonicalize_message.py"
+            target.write_text("# moved\n")
+            (base / "scripts/conformance_common.py").unlink()
+            (base / "scripts/conformance_common.py").symlink_to(target)
+            with self.assertRaises(ConformanceError):
+                validate_reference_implementation_manifest(base, baseline)
+        finally:
+            temporary.cleanup()
+
+    def test_exact_generated_suite_tree_manifest_and_path_set(self) -> None:
+        generated = generated_files(ROOT)
+        self.assertEqual(160, len(generated))
+        validate_generated_suite_tree(ROOT, generated)
+        tree = json.loads((ROOT / SUITE_TREE_MANIFEST).read_text())
+        self.assertEqual(159, tree["file_count"])
+        self.assertEqual(tree["file_count"], len(tree["entries"]))
+        self.assertEqual(tree["tree_digest"], suite_tree_digest(tree["entries"]))
+        self.assertEqual(
+            {item["path"] for item in tree["entries"]},
+            {
+                path.relative_to(SUITE_ROOT).as_posix()
+                for path in generated
+                if path != SUITE_TREE_MANIFEST
+            },
+        )
+
+    def test_generator_and_repository_reject_extra_missing_renamed_stale_and_symlink(
+        self,
+    ) -> None:
+        mutations = (
+            "extra-case",
+            "extra-fixture",
+            "extra-root",
+            "extra-directory",
+            "missing-case",
+            "missing-fixture",
+            "renamed",
+            "stale",
+            "symlink-file",
+            "symlink-directory",
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                temporary, base = self._repository_copy()
+                try:
+                    suite = base / SUITE_ROOT
+                    first_case = next((suite / "cases").iterdir())
+                    first_fixture = next(
+                        path
+                        for path in (suite / "fixtures").rglob("*")
+                        if path.is_file()
+                    )
+                    if mutation == "extra-case":
+                        (suite / "cases/old.json").write_text("{}")
+                    elif mutation == "extra-fixture":
+                        (suite / "fixtures/unknown.json").write_text("{}")
+                    elif mutation == "extra-root":
+                        (suite / "extra.json").write_text("{}")
+                    elif mutation == "extra-directory":
+                        (suite / "unlisted-directory").mkdir()
+                    elif mutation == "missing-case":
+                        first_case.unlink()
+                    elif mutation == "missing-fixture":
+                        first_fixture.unlink()
+                    elif mutation == "renamed":
+                        first_case.rename(first_case.with_name("renamed.json"))
+                    elif mutation == "stale":
+                        first_case.write_bytes(first_case.read_bytes() + b"\n")
+                    elif mutation == "symlink-file":
+                        (suite / "cases/link.json").symlink_to(first_case)
+                    else:
+                        (suite / "linked-directory").symlink_to(
+                            suite / "cases", target_is_directory=True
+                        )
+                    expected = generated_files(base)
+                    with self.assertRaises(ConformanceError):
+                        validate_generated_suite_tree(base, expected)
+                    self.assertEqual(
+                        1,
+                        generate_main(["--root", str(base), "--check"]),
+                    )
+                    self.assertNotEqual([], validate_repository(base, execute=False))
+                finally:
+                    temporary.cleanup()
+
+    def test_generator_write_refuses_symlink_before_touching_target(self) -> None:
+        temporary, base = self._repository_copy()
+        try:
+            suite = base / SUITE_ROOT
+            victim = next((suite / "cases").iterdir())
+            outside = base / "outside-generated-target.json"
+            outside.write_text("do-not-change", encoding="utf-8")
+            victim.unlink()
+            victim.symlink_to(outside)
+            self.assertEqual(1, generate_main(["--root", str(base)]))
+            self.assertEqual("do-not-change", outside.read_text(encoding="utf-8"))
+        finally:
+            temporary.cleanup()
 
     def test_generator_does_not_import_or_execute_reference_engine(self) -> None:
         tree = ast.parse((ROOT / "scripts/generate_conformance_suite.py").read_text())
