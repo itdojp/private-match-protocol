@@ -9,6 +9,9 @@ path = [
   "privacy/leakage-contract.v0.1.yaml",
   "conformance/messages/**/*.json",
   "conformance/messages/**/*.yaml",
+  "conformance/interop/**/*.yaml",
+  "conformance/source/**/*.json",
+  "conformance/suites/**/*.json",
   "registry/**/*.yaml",
   "schemas/**/*.json",
   "specs/state-machines/private-match-core-session-v0.1.yaml",
@@ -19,16 +22,27 @@ path = [
   "requirements-dev.txt",
   "schema/leakage-contract.schema.json",
   "schema/session-state-machine.schema.json",
+  "schema/conformance-*.schema.json",
   "scripts/validate_leakage_contract.py",
   "scripts/canonicalize_message.py",
+  "scripts/compare_adapter_result.py",
+  "scripts/conformance_common.py",
+  "scripts/conformance_engine.py",
+  "scripts/generate_conformance_suite.py",
   "scripts/generate_message_vectors.py",
+  "scripts/generate_verifier_manifest.py",
   "scripts/strict_yaml.py",
   "scripts/validate_messages.py",
   "scripts/validate_session_state_machine.py",
+  "scripts/run_conformance.py",
+  "scripts/validate_conformance_suite.py",
+  "tests/test_adapter_result.py",
   "tests/test_canonical_transcript.py",
   "tests/test_leakage_contract.py",
   "tests/test_message_contracts.py",
   "tests/test_session_state_machine.py",
+  "tests/test_conformance_suite.py",
+  "tests/test_reference_verifier.py",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 ITDO Inc. / 株式会社アイティードゥ"
@@ -45,7 +59,9 @@ path = [
   "docs/decisions/*.md",
   "specs/*.md",
   "specs/messages/*.md",
+  "specs/conformance/*.md",
   "specs/state-machines/*.md",
+  "conformance/results/*.md",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 ITDO Inc. / 株式会社アイティードゥ"

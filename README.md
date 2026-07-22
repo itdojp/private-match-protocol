@@ -49,6 +49,10 @@ The following belong in private repositories:
 - [Core versioned message contract](specs/messages/private-match-core-messages-v0.1.md),
   [message registry](registry/message-types.v0.1.yaml), and
   [canonical transcript contract](specs/messages/canonical-transcript-v0.1.md)
+- [Draft core conformance suite](specs/conformance/PRIVATE_MATCH_CORE_CONFORMANCE_V0.1.md),
+  [reference verifier contract](specs/conformance/REFERENCE_VERIFIER_CONTRACT_V0.1.md),
+  [canonical conformance-state projection](specs/conformance/CONFORMANCE_STATE_PROJECTION_V0.1.md), and
+  [offline adapter-result contract](specs/conformance/INTEROPERABILITY_ADAPTER_CONTRACT_V0.1.md)
 
 ## Maturity
 

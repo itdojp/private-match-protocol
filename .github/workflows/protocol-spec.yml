@@ -42,5 +42,15 @@ jobs:
         run: python scripts/validate_messages.py --root .
       - name: Verify deterministic conformance vectors
         run: python scripts/generate_message_vectors.py --root . --check
+      - name: Validate draft reference conformance suite
+        run: |
+          python scripts/generate_verifier_manifest.py --root . --check
+          python scripts/generate_conformance_suite.py --root . --check
+          python scripts/validate_conformance_suite.py --root .
+          python scripts/run_conformance.py --root . --all --output-dir artifacts/conformance-ci
+          python scripts/compare_adapter_result.py --root . \
+            --adapter-result conformance/suites/private-match-core-v0.1/fixtures/adapter-results/valid-end-to-end.v0.1.json \
+            --case-id PMC-VALID-END-TO-END-V0-1 \
+            --mode test-fixture
       - name: Validate REUSE licensing metadata
         run: reuse lint

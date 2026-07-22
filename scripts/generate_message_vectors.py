@@ -977,6 +977,27 @@ def main(argv: list[str] | None = None) -> int:
     if mismatches:
         print("message-vectors: stale: " + ", ".join(sorted(mismatches)))
         return 1
+    # Issue #6 closes the complete pre-suite input set while preserving the
+    # reviewed Issue #5 length-prefixed tree calculation.  The message
+    # generator and conformance validator deliberately share this helper.
+    try:
+        from conformance_common import (
+            MESSAGE_INPUT_MANIFEST,
+            strict_json_bytes,
+            validate_message_input_manifest,
+        )
+
+        manifest = strict_json_bytes(
+            (root / MESSAGE_INPUT_MANIFEST).read_bytes(),
+            path=MESSAGE_INPUT_MANIFEST.as_posix(),
+            require_canonical=True,
+        )
+        if not isinstance(manifest, dict):
+            raise ValueError("message input manifest is not an object")
+        validate_message_input_manifest(root, manifest)
+    except (OSError, ValueError, TypeError) as error:
+        print(f"message-vectors: error: {error}", file=sys.stderr)
+        return 1
     print(
         f"message-vectors: {'current' if args.check else 'generated'} ({len(files)} files)"
     )

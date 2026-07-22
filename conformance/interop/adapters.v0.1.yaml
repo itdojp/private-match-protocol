@@ -1,0 +1,22 @@
+schema_version: "0.1"
+artifact_status: draft
+registry_id: private-match-interop-adapters/v0.1
+adapters:
+  - id: independent-public-adapter-01
+    version: "0.1"
+    language: undecided
+    runtime: undecided
+    source_repository_policy: public-only
+    target_suite:
+      id: private-match-core
+      version: "0.1"
+    implementation_status: planned
+    owner_role: independent-implementation-maintainer
+    license_expectation: OSI-approved-and-REUSE-compatible
+    canonicalization_dependency_review: required-before-implementation
+    expected_independence_boundary: Must not import or copy the Python reference verifier implementation.
+    required_vectors: all-suite-manifest-vector-classes
+    evidence_requirement: independent-adapter-result-bound-to-suite-and-case-digests
+    limitations:
+      - No second implementation has been selected or implemented.
+      - This plan does not establish interoperability certification.
