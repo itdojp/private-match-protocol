@@ -39,6 +39,16 @@ evaluator/budget/comparison/fault behavior. All message and
 timer failures are candidate-copy atomic, and all-case output is staged, re-read as an exact run set,
 fsynced, and directory-renamed atomically.
 
+For Issue #11, conformance generation shares the closed Protocol time helper
+that derives `min(coordinator authoritative time + evaluation timeout, session
+expiry)`. The human-reviewed normative source remains authoritative: the
+generator never copies reference execution output into the oracle. The
+consent-expiry traces now carry the derived `00:10:30Z` deadline, while their
+consent timer remains `00:10:00Z`. Oracle changes are limited to fields whose
+state/transcript chain is causally changed by that corrected input and are
+recorded in the Issue #11 oracle-review artifact with old value, new value,
+source fixture, and derivation rationale.
+
 ## Alternatives
 
 - **Monolithic end-to-end vector files:** simpler initially, but weak stable identity and provenance.
@@ -67,6 +77,9 @@ fsynced, and directory-renamed atomically.
 ## Consequences
 
 The suite is reproducible, reviewable, and suitable as input metadata for private Evidence. It adds no
-runtime dependency and changes no `private-match-core/v0.1` message or State Machine semantics. It is
-Draft and intentionally cannot establish cryptographic security, interoperability certification,
-Product conformance, pilot readiness, deployment safety, or publication approval.
+runtime dependency. Issue #11 hardens the Draft v0.1 State Machine by making an
+existing deadline policy derivation and message equality requirement explicit;
+it does not select a production timeout. The suite remains Draft and
+intentionally cannot establish cryptographic security, interoperability
+certification, Product conformance, pilot readiness, deployment safety, or
+publication approval.

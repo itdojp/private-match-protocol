@@ -17,6 +17,7 @@ from canonicalize_message import (
     populate_digests,
     transcript_genesis_digest,
 )
+from protocol_time import derive_evaluation_deadline
 from strict_yaml import strict_yaml_load
 from validate_messages import (
     MESSAGE_SCHEMA,
@@ -82,9 +83,11 @@ def _entry_index(registry: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
-def _payload(message_type: str, party: str | None = None) -> dict[str, Any]:
+def _payload(
+    message_type: str, context: dict[str, Any], party: str | None = None
+) -> dict[str, Any]:
     slot = party or "a"
-    return {
+    payloads = {
         "session_proposal": {
             "proposal_digest": _digest("2"),
             "selected_integration_profile": {
@@ -121,7 +124,7 @@ def _payload(message_type: str, party: str | None = None) -> dict[str, Any]:
         },
         "evaluation_start": {
             "evaluation_attempt_id": "urn:private-match:test:evaluation:0001",
-            "evaluation_deadline": "2026-07-21T00:10:00Z",
+            "evaluation_deadline": None,
         },
         "evaluation_contribution": {
             "contribution_ref": f"urn:private-match:test:opaque-contribution:{slot}"
@@ -178,7 +181,14 @@ def _payload(message_type: str, party: str | None = None) -> dict[str, Any]:
             "party_error_category": "SESSION_UNAVAILABLE",
             "observed_at": "2026-07-21T01:00:00Z",
         },
-    }[message_type]
+    }
+    if message_type == "evaluation_start":
+        payloads[message_type]["evaluation_deadline"] = derive_evaluation_deadline(
+            authoritative_time=context.get("authoritative_time"),
+            evaluation_timeout_seconds=context.get("evaluation_timeout_seconds"),
+            session_expires_at=context.get("session_expires_at"),
+        )
+    return payloads[message_type]
 
 
 def _sender_and_auth(actor: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -281,7 +291,7 @@ def build_message(
         "expires_at": EXPIRES_AT,
         "identity": identity,
         "prior_transcript_digest": prior or context["prior_transcript_digest"],
-        "payload": _payload(message_type, party),
+        "payload": _payload(message_type, context, party),
         "payload_digest": _digest("0"),
         "authentication": authentication,
         "message_digest": _digest("0"),
@@ -360,6 +370,9 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     full_context["session_context"]["commitment_pair_id"] = (
         stage_runner.commitment_pair_id
     )
+    full_context["authoritative_time"] = stage_runner.authoritative_time
+    full_context["session_expires_at"] = stage_runner.session_expires_at
+    full_context["evaluation_timeout_seconds"] = stage_runner.evaluation_timeout_seconds
     cases: list[tuple[str, str, str | None]] = [
         ("session-proposal", "session_proposal", None),
         ("session-acceptance-a", "session_acceptance", "a"),

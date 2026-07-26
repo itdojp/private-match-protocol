@@ -59,6 +59,7 @@ FINDING_TO_ERROR = {
     "failure-projection": "DISCLOSURE_PROFILE_REQUIRED",
     "canonicalization": "CONFORMANCE-CANONICALIZATION",
     "state-trace": "UNKNOWN_STATE",
+    "evaluation-deadline": "EVALUATION_DEADLINE_MISMATCH",
     "timer-state": "CLOCK_DOMAIN_INVALID",
     "timer-schema": "CONFORMANCE-CASE-SCHEMA",
     "local-result-symmetry": "RESULT_CONFLICT",

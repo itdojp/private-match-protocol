@@ -21,6 +21,10 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import canonicalize_message as canonical  # noqa: E402
+from protocol_time import (  # noqa: E402
+    ProtocolTimeError,
+    derive_evaluation_deadline,
+)
 import validate_messages as validator  # noqa: E402
 from strict_yaml import strict_yaml_load  # noqa: E402
 
@@ -1725,6 +1729,136 @@ class MessageContractTests(unittest.TestCase):
         self.assertEqual("ABORTED", consent_runner.phase)
         self.assertEqual("CONSENT_EXPIRED", consent_runner.terminal_failure_code)
         self.assertEqual("NONE", consent_runner.disclosure_state)
+
+    def test_evaluation_deadline_is_derived_from_authoritative_policy_state(
+        self,
+    ) -> None:
+        self.assertEqual(
+            "2026-07-21T00:10:30Z",
+            derive_evaluation_deadline(
+                authoritative_time="2026-07-21T00:00:30Z",
+                evaluation_timeout_seconds=600,
+                session_expires_at="2026-07-21T01:00:00Z",
+            ),
+        )
+        self.assertEqual(
+            "2026-07-21T00:05:00Z",
+            derive_evaluation_deadline(
+                authoritative_time="2026-07-21T00:00:30Z",
+                evaluation_timeout_seconds=600,
+                session_expires_at="2026-07-21T00:05:00Z",
+            ),
+        )
+        for value in (
+            "2026-07-21T00:10:30+00:00",
+            "2026-07-21T00:10:30.000Z",
+            "2026-07-21 00:10:30Z",
+        ):
+            with self.subTest(value=value), self.assertRaises(ProtocolTimeError):
+                derive_evaluation_deadline(
+                    authoritative_time=value,
+                    evaluation_timeout_seconds=600,
+                    session_expires_at="2026-07-21T01:00:00Z",
+                )
+
+    def test_start_evaluation_requires_exact_derived_deadline_atomically(
+        self,
+    ) -> None:
+        for supplied in (
+            "2026-07-21T00:10:29Z",
+            "2026-07-21T00:10:31Z",
+            "2026-07-21T00:30:00Z",
+            "2026-07-21T00:10:30+00:00",
+        ):
+            with self.subTest(supplied=supplied):
+                runner, _, message = self.runner_before("evaluation_start")
+                changed = copy.deepcopy(message)
+                changed["payload"]["evaluation_deadline"] = supplied
+                changed = canonical.populate_digests(changed)
+                self.assert_runner_rejects_without_mutation(runner, changed)
+
+        runner, transcript, message = self.runner_before("evaluation_start")
+        self.assertEqual("RESERVED", runner.query_budget_state)
+        outcome, findings = validator.apply_trace_message_atomically(
+            runner,
+            transcript,
+            message,
+            self.message_schema,
+            self.registry,
+            self.materials,
+        )
+        self.assertEqual(("ACCEPTED", []), (outcome, findings))
+        self.assertEqual("2026-07-21T00:10:30Z", runner.evaluation_deadline)
+        self.assertEqual("CONSUMED", runner.query_budget_state)
+        accepted = copy.deepcopy((runner.__dict__, transcript.__dict__))
+
+        duplicate, duplicate_findings = validator.apply_trace_message_atomically(
+            runner,
+            transcript,
+            message,
+            self.message_schema,
+            self.registry,
+            self.materials,
+        )
+        self.assertEqual("EXACT_DUPLICATE_NO_RESPONSE", duplicate)
+        self.assertEqual([], duplicate_findings)
+        self.assertEqual(accepted, (runner.__dict__, transcript.__dict__))
+
+    def test_evaluation_deadline_is_immutable_and_cannot_leave_a_live_post_deadline_state(
+        self,
+    ) -> None:
+        runner, transcript, message = self.runner_before("evaluation_start")
+        outcome, findings = validator.apply_trace_message_atomically(
+            runner,
+            transcript,
+            message,
+            self.message_schema,
+            self.registry,
+            self.materials,
+        )
+        self.assertEqual(("ACCEPTED", []), (outcome, findings))
+
+        changed = copy.deepcopy(message)
+        changed["identity"]["operation_id"] += ":second"
+        changed["identity"]["idempotency_key"] += ":second"
+        changed["payload"]["evaluation_attempt_id"] += ":second"
+        changed["payload"]["evaluation_deadline"] = "2026-07-21T00:10:31Z"
+        changed["prior_transcript_digest"] = transcript.head
+        changed["session_context"] = runner.context(transcript.head)["session_context"]
+        changed = canonical.populate_digests(changed)
+        before = copy.deepcopy((runner.__dict__, transcript.__dict__))
+        second, second_findings = validator.apply_trace_message_atomically(
+            runner,
+            transcript,
+            changed,
+            self.message_schema,
+            self.registry,
+            self.materials,
+        )
+        self.assertEqual("REJECTED", second)
+        self.assertTrue(second_findings)
+        self.assertEqual(before, (runner.__dict__, transcript.__dict__))
+
+        timer = {
+            "event_type": "authoritative_timer_event",
+            "event_version": "0.1",
+            "delivery_class": "timer",
+            "session_id": runner.base_context["session_context"]["session_id"],
+            "new_authoritative_time": runner.evaluation_deadline,
+            "reason_or_source_class": "EVALUATION_DEADLINE",
+            "prior_transcript_digest": transcript.head,
+        }
+        timer_outcome, transition, timer_findings = (
+            validator.apply_trace_timer_atomically(
+                runner, transcript, timer, self.timer_schema
+            )
+        )
+        self.assertEqual(
+            ("ACCEPTED", "TR-EVALUATION-TIMEOUT", []),
+            (timer_outcome, transition, timer_findings),
+        )
+        self.assertEqual("ABORTED", runner.phase)
+        self.assertEqual("EVALUATION_TIMEOUT", runner.terminal_failure_code)
 
     def test_rfc8785_dependency_is_exact_and_hash_locked(self) -> None:
         direct = (ROOT / "requirements-dev.in").read_text(encoding="utf-8")

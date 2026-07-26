@@ -104,6 +104,7 @@ REQUIRED_STATE_VARIABLES = {
     "session_created_at",
     "session_expires_at",
     "authoritative_time",
+    "evaluation_timeout",
     "next_sequence",
     "accepted_message_ids",
     "accepted_nonces",
@@ -128,6 +129,7 @@ REQUIRED_INVARIANTS = {
     "INV-NO-REPLAY",
     "INV-IDEMPOTENCY",
     "INV-ONE-EVALUATION",
+    "INV-EVALUATION-DEADLINE-BINDING",
     "INV-EXPIRY",
     "INV-MINIMUM-DISCLOSURE",
     "INV-OPAQUE-RECEIPT",
@@ -151,6 +153,7 @@ REQUIRED_FAILURE_CODES = {
     "QUERY_BUDGET_EXHAUSTED",
     "VERIFICATION_MATERIAL_MISSING",
     "VERIFICATION_MATERIAL_EXPIRED",
+    "EVALUATION_DEADLINE_MISMATCH",
     "EVALUATION_TIMEOUT",
     "PARTIAL_PARTY_FAILURE",
     "RESULT_CONFLICT",
@@ -2258,6 +2261,7 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
         "QUERY_BUDGET_EXHAUSTED",
         "VERIFICATION_MATERIAL_MISSING",
         "VERIFICATION_MATERIAL_EXPIRED",
+        "EVALUATION_DEADLINE_MISMATCH",
     }
     missing_start_failures = required_start_failures - set(
         start.get("failure_code", [])
@@ -2473,6 +2477,49 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                 "start_evaluation must set evaluation_deadline",
             )
         )
+    deadline_guard = next(
+        (
+            item
+            for item in start.get("guards", [])
+            if item.get("id") == "G-EVALUATION-DEADLINE-BINDING"
+        ),
+        {},
+    )
+    deadline_effect = next(
+        (
+            item
+            for item in start.get("effects", [])
+            if item.get("id") == "E-SET-EVALUATION-DEADLINE"
+        ),
+        {},
+    )
+    if (
+        deadline_guard.get("predicate") != "equals_derived_evaluation_deadline"
+        or set(deadline_guard.get("reads", []))
+        != {"authoritative_time", "evaluation_timeout", "session_expires_at"}
+        or deadline_guard.get("parameter_reads")
+        != ["evaluation_attempt_parameter.supplied_evaluation_deadline"]
+        or deadline_effect.get("operation") != "set_derived_policy_deadline"
+        or deadline_effect.get("parameter_reads")
+        != ["evaluation_attempt_parameter.supplied_evaluation_deadline"]
+        or deadline_effect.get("writes") != ["evaluation_deadline"]
+    ):
+        findings.append(
+            _finding(
+                "evaluation-deadline",
+                "TR-START-EVALUATION",
+                "start must validate and atomically store the exact Coordinator-derived deadline",
+            )
+        )
+    create = transition_index.get("TR-CREATE", {})
+    if "evaluation_timeout" not in _transition_writes(create):
+        findings.append(
+            _finding(
+                "evaluation-deadline",
+                "TR-CREATE",
+                "session creation must bind the reviewed evaluation timeout policy",
+            )
+        )
     clock = model.get("clock_and_expiry", {})
     if (
         clock.get("time_advance_event") != "advance_authoritative_time"
@@ -2485,6 +2532,37 @@ def semantic_findings(model: dict[str, Any]) -> list[Finding]:
                 "authoritative-time",
                 "clock_and_expiry",
                 "clock policy must define event, message-time relation, and atomic deadline crossing",
+            )
+        )
+    expected_deadline_derivation = {
+        "authority": "coordinator-authoritative-current-state",
+        "accepted_transition": "TR-START-EVALUATION",
+        "supplied_parameter_path": (
+            "evaluation_attempt_parameter.supplied_evaluation_deadline"
+        ),
+        "state_inputs": [
+            "authoritative_time",
+            "evaluation_timeout",
+            "session_expires_at",
+        ],
+        "formula": ("min(authoritative_time + evaluation_timeout, session_expires_at)"),
+        "equality_required": True,
+        "earlier_claim_permitted": False,
+        "later_claim_permitted": False,
+        "timestamp_format": "canonical UTC RFC 3339 whole seconds",
+        "failure_code": "EVALUATION_DEADLINE_MISMATCH",
+        "failure_atomicity": (
+            "phase, budget, attempt, replay, transcript, and accepted audit remain unchanged"
+        ),
+        "equal_threshold_precedence": "SESSION_EXPIRY_THRESHOLD",
+        "policy_selection": "parameter-only; no production duration selected",
+    }
+    if clock.get("evaluation_deadline_derivation") != expected_deadline_derivation:
+        findings.append(
+            _finding(
+                "evaluation-deadline",
+                "clock_and_expiry.evaluation_deadline_derivation",
+                "deadline authority, formula, exact-claim rule, failure atomicity, and equal-threshold precedence must be closed",
             )
         )
 

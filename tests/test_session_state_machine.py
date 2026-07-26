@@ -2054,6 +2054,89 @@ class SessionStateMachineTests(unittest.TestCase):
         mutated["clock_and_expiry"]["timer_threshold_precedence"].reverse()
         self.assertIn("schema", self.schema_codes(mutated))
 
+    def test_evaluation_deadline_derivation_is_closed_and_machine_readable(self):
+        deadline = self.model_copy["clock_and_expiry"]["evaluation_deadline_derivation"]
+        self.assertEqual(
+            {
+                "authority": "coordinator-authoritative-current-state",
+                "accepted_transition": "TR-START-EVALUATION",
+                "supplied_parameter_path": (
+                    "evaluation_attempt_parameter.supplied_evaluation_deadline"
+                ),
+                "state_inputs": [
+                    "authoritative_time",
+                    "evaluation_timeout",
+                    "session_expires_at",
+                ],
+                "formula": (
+                    "min(authoritative_time + evaluation_timeout, session_expires_at)"
+                ),
+                "equality_required": True,
+                "earlier_claim_permitted": False,
+                "later_claim_permitted": False,
+                "timestamp_format": "canonical UTC RFC 3339 whole seconds",
+                "failure_code": "EVALUATION_DEADLINE_MISMATCH",
+                "failure_atomicity": (
+                    "phase, budget, attempt, replay, transcript, and accepted audit remain unchanged"
+                ),
+                "equal_threshold_precedence": "SESSION_EXPIRY_THRESHOLD",
+                "policy_selection": "parameter-only; no production duration selected",
+            },
+            deadline,
+        )
+        start = next(
+            item
+            for item in self.model_copy["transitions"]
+            if item["id"] == "TR-START-EVALUATION"
+        )
+        guard = next(
+            item
+            for item in start["guards"]
+            if item["id"] == "G-EVALUATION-DEADLINE-BINDING"
+        )
+        effect = next(
+            item
+            for item in start["effects"]
+            if item["id"] == "E-SET-EVALUATION-DEADLINE"
+        )
+        self.assertEqual("equals_derived_evaluation_deadline", guard["predicate"])
+        self.assertEqual("set_derived_policy_deadline", effect["operation"])
+        self.assertIn("EVALUATION_DEADLINE_MISMATCH", start["failure_code"])
+
+        mutations = (
+            lambda model: model["clock_and_expiry"][
+                "evaluation_deadline_derivation"
+            ].__setitem__("later_claim_permitted", True),
+            lambda model: model["clock_and_expiry"][
+                "evaluation_deadline_derivation"
+            ].__setitem__("formula", "min(authoritative_time, session_expires_at)"),
+            lambda model: next(
+                item
+                for item in next(
+                    transition
+                    for transition in model["transitions"]
+                    if transition["id"] == "TR-START-EVALUATION"
+                )["guards"]
+                if item["id"] == "G-EVALUATION-DEADLINE-BINDING"
+            ).__setitem__("predicate", "trust_supplied_deadline"),
+            lambda model: next(
+                item
+                for item in next(
+                    transition
+                    for transition in model["transitions"]
+                    if transition["id"] == "TR-START-EVALUATION"
+                )["effects"]
+                if item["id"] == "E-SET-EVALUATION-DEADLINE"
+            ).__setitem__("operation", "set_caller_deadline"),
+        )
+        for mutate in mutations:
+            changed = copy.deepcopy(self.model)
+            mutate(changed)
+            self.assertTrue(
+                {"schema", "evaluation-deadline"}
+                & (self.schema_codes(changed) | self.semantic_codes(changed))
+            )
+
     def test_schema_version_remains_draft_zero_one(self):
         self.assertEqual(self.model["schema_version"], "0.1")
         self.assertEqual(self.model["artifact"]["status"], "draft")

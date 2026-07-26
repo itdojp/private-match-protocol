@@ -50,6 +50,7 @@ REFERENCE_IMPLEMENTATION_FILES = {
     "scripts/generate_conformance_suite.py": "python-source",
     "scripts/generate_message_vectors.py": "python-source",
     "scripts/generate_verifier_manifest.py": "python-source",
+    "scripts/protocol_time.py": "python-source",
     "scripts/run_conformance.py": "python-source",
     "scripts/strict_yaml.py": "python-source",
     "scripts/validate_conformance_suite.py": "python-source",
@@ -85,9 +86,9 @@ REFERENCE_PROTOCOL_ARTIFACTS = {
     "message-conformance-input-tree": MESSAGE_INPUT_MANIFEST.as_posix(),
 }
 REFERENCE_PROTOCOL_DIGESTS = {
-    "state-machine": "sha256:42e63b8a1f413e932e46370aae5fa0d972f3ab71d93efe08557472b4c7066fe8",
-    "message-registry": "sha256:2ff1685ca4325a0ff3bd49c7a411cd7f0857add6215c2f285097bdf40dcbc2b6",
-    "message-conformance-input-tree": "sha256:19d2218c11c6ac7ba1d2f0884ba9e3c79cbd1264bd3ef682e543bcb9a63ccf0f",
+    "state-machine": "sha256:32e514a61a83aeb1593623eb1144f323d1115dc8c812b5fd72af93a3ae06ba16",
+    "message-registry": "sha256:df3eea26ad07b477912b124c96c9325676e9d1a89744e672f26c00538377a7ea",
+    "message-conformance-input-tree": "sha256:4902a58e94110d4c1d3b5780daf5e9e059a7b39972911e0df23ee9cd993b5afa",
 }
 
 RUNNER_STATUSES = {

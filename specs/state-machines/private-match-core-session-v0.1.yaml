@@ -349,13 +349,17 @@ event_parameter_catalog:
     required: true
     description: Commitment without raw or normalized input.
 - id: evaluation_attempt_parameter
-  type: opaque_identifier
-  description: Single attempt identifier for the commitment pair.
+  type: record<evaluation_attempt_id,supplied_evaluation_deadline>
+  description: Single attempt identifier and claimed deadline for the commitment pair; the deadline must equal the Coordinator-derived value.
   fields:
   - id: evaluation_attempt_id
     type: opaque_identifier
     required: true
     description: Single attempt identifier for the commitment pair.
+  - id: supplied_evaluation_deadline
+    type: canonical_utc_timestamp
+    required: true
+    description: Claimed whole-second UTC deadline; accepted only when it exactly equals min(current authoritative time + evaluation timeout, session expiry).
 - id: evaluation_contribution_parameter
   type: opaque_profile_contribution
   description: Profile-defined contribution or reference.
@@ -1093,6 +1097,16 @@ state_variables:
   - party_b_client
   coordinator_access: read-write
   description: Maximum accepted age relative to authoritative time.
+- id: evaluation_timeout
+  type: positive_policy_duration
+  initial: POLICY_PARAMETER
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - selected_integration_profile
+  coordinator_access: read-write
+  description: Reviewed session policy parameter used with the authoritative time at accepted start_evaluation; no production duration is selected here.
 - id: maximum_time_jump
   type: nonnegative_policy_duration
   initial: POLICY_PARAMETER
@@ -2504,6 +2518,7 @@ transitions:
     - session_created_at
     - session_expires_at
     - authoritative_time
+    - evaluation_timeout
     - maximum_time_jump
     - next_sequence
     - accepted_message_ids
@@ -4488,6 +4503,18 @@ transitions:
     - session_expires_at
     arguments: []
     parameter_reads: []
+  - id: G-EVALUATION-DEADLINE-BINDING
+    predicate: equals_derived_evaluation_deadline
+    reads:
+    - authoritative_time
+    - evaluation_timeout
+    - session_expires_at
+    arguments:
+    - supplied deadline equals min(authoritative_time + evaluation_timeout, session_expires_at)
+    - authoritative_time is the current Coordinator state at accepted start_evaluation
+    - earlier and later supplied deadlines both fail closed
+    parameter_reads:
+    - evaluation_attempt_parameter.supplied_evaluation_deadline
   - id: G-OPERATION-TRANSCRIPT-CHAIN
     predicate: prior_transcript_matches
     reads:
@@ -4527,14 +4554,15 @@ transitions:
     arguments:
     - atomically store both ID and idempotency-key indexes with the prior normalized response
   - id: E-SET-EVALUATION-DEADLINE
-    operation: set_policy_deadline
+    operation: set_derived_policy_deadline
     writes:
     - evaluation_deadline
     parameter_reads:
-    - evaluation_attempt_parameter.evaluation_attempt_id
+    - evaluation_attempt_parameter.supplied_evaluation_deadline
     arguments:
-    - authoritative_time + policy evaluation timeout
-    - must be within TimeDomain
+    - atomically set min(authoritative_time + evaluation_timeout, session_expires_at)
+    - supplied claim has already passed exact equality and canonical UTC timestamp validation
+    - value is immutable after accepted start_evaluation and must be within TimeDomain
   - id: E-APPEND-OPERATION-TRANSCRIPT
     operation: append_canonical_transcript
     writes:
@@ -4576,6 +4604,7 @@ transitions:
   - QUERY_BUDGET_EXHAUSTED
   - VERIFICATION_MATERIAL_MISSING
   - VERIFICATION_MATERIAL_EXPIRED
+  - EVALUATION_DEADLINE_MISMATCH
   - SESSION_EXPIRED
   - REPLAY_CONFLICT
   terminal_effect: none
@@ -4585,6 +4614,7 @@ transitions:
   - No prohibited private, result, element, count, or payload data enters coordinator state or audit.
   related_invariants:
   - INV-SESSION-BINDING
+  - INV-EVALUATION-DEADLINE-BINDING
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-MINIMUM-DISCLOSURE
@@ -8203,6 +8233,28 @@ invariants:
     - '1'
     parameter_reads: []
   violation_effect: current session remains terminal or result-accepted; a new authorized session is required
+- id: INV-EVALUATION-DEADLINE-BINDING
+  statement: The first accepted start_evaluation binds one immutable Coordinator-derived deadline equal to min(current authoritative time plus the reviewed evaluation timeout, session expiry); a message claim cannot shorten or extend it.
+  state_variables:
+  - evaluation_started
+  - authoritative_time
+  - evaluation_timeout
+  - session_expires_at
+  - evaluation_deadline
+  conditions:
+  - id: I-EVALUATION-DEADLINE-DERIVATION
+    predicate: derived_at_start_and_immutable
+    reads:
+    - evaluation_started
+    - authoritative_time
+    - evaluation_timeout
+    - session_expires_at
+    - evaluation_deadline
+    arguments:
+    - accepted start_evaluation validates exact equality before atomic budget, attempt, replay, transcript, and audit mutation
+    - session expiry caps the derived deadline and wins equal-threshold timer precedence
+    parameter_reads: []
+  violation_effect: reject EVALUATION_DEADLINE_MISMATCH without state, budget, attempt, replay, transcript, or accepted-audit mutation
 - id: INV-EXPIRY
   statement: Time never rolls back; crossed session, evaluation, or consent deadlines are terminalized
     atomically, and terminal sessions admit only non-mutating exact delivery responses, bounded rejection,
@@ -8470,7 +8522,24 @@ clock_and_expiry:
     constraint: bounded by policy and finite TimeDomain; no client override
   evaluation_deadline:
     type: authoritative timestamp
-    effect: set at start_evaluation; timeout when authoritative_time >= evaluation_deadline
+    effect: set atomically at accepted start_evaluation to min(authoritative_time + evaluation_timeout, session_expires_at); timeout when authoritative_time >= evaluation_deadline
+  evaluation_deadline_derivation:
+    authority: coordinator-authoritative-current-state
+    accepted_transition: TR-START-EVALUATION
+    supplied_parameter_path: evaluation_attempt_parameter.supplied_evaluation_deadline
+    state_inputs:
+    - authoritative_time
+    - evaluation_timeout
+    - session_expires_at
+    formula: min(authoritative_time + evaluation_timeout, session_expires_at)
+    equality_required: true
+    earlier_claim_permitted: false
+    later_claim_permitted: false
+    timestamp_format: canonical UTC RFC 3339 whole seconds
+    failure_code: EVALUATION_DEADLINE_MISMATCH
+    failure_atomicity: phase, budget, attempt, replay, transcript, and accepted audit remain unchanged
+    equal_threshold_precedence: SESSION_EXPIRY_THRESHOLD
+    policy_selection: parameter-only; no production duration selected
   stale_message_relation: authoritative_time - message_stale_threshold <= issued_at <= authoritative_time
     + allowed_clock_skew
   atomic_deadline_crossing: session expiry, evaluation timeout, or active consent expiry is terminalized
@@ -8762,6 +8831,15 @@ failure_taxonomy:
   detail_visibility: coordinator-and-approved-audit-only; parties receive normalized category
   description: Fail-closed handling for VERIFICATION_MATERIAL_EXPIRED; details must not create a counterparty
     inference oracle.
+- code: EVALUATION_DEADLINE_MISMATCH
+  disposition: message-only-rejection
+  retryable: true
+  requires_new_message: true
+  requires_new_session: false
+  query_budget_effect: unchanged-from-current-state
+  party_error_category: EVALUATION_ERROR
+  detail_visibility: coordinator-and-approved-audit-only; parties receive normalized category
+  description: The supplied start-evaluation deadline was malformed, non-canonical, earlier, or later than the Coordinator-derived min(authoritative time plus policy timeout, session expiry); reject without accepted mutation.
 - code: EVALUATION_TIMEOUT
   disposition: session-abort
   retryable: false
@@ -8982,6 +9060,7 @@ formalization:
   - authoritative_time
   - allowed_clock_skew
   - message_stale_threshold
+  - evaluation_timeout
   - maximum_time_jump
   - verification_material_validity
   - next_sequence
@@ -9156,7 +9235,7 @@ formalization:
   next_state_relation: disjunction of delivery-class-specific enabled transition relations; each accepted
     mutating relation atomically applies its protocol effects and the canonical transcript append; exact
     duplicates, rejects, conflicts, derived notices, local guidance, and timer no-op stutter without transcript
-    mutation; authoritative clock relations prevent rollback or a live post-deadline window
+    mutation; authoritative clock relations prevent rollback or a live post-deadline window; accepted start_evaluation derives and exactly binds the immutable deadline from Coordinator state and reviewed policy
   invariant_ids:
   - INV-REVEAL-SAFETY
   - INV-RESULT-SYMMETRY
@@ -9166,6 +9245,7 @@ formalization:
   - INV-NO-REPLAY
   - INV-IDEMPOTENCY
   - INV-ONE-EVALUATION
+  - INV-EVALUATION-DEADLINE-BINDING
   - INV-EXPIRY
   - INV-MINIMUM-DISCLOSURE
   - INV-OPAQUE-RECEIPT
@@ -9476,7 +9556,7 @@ parameter_flow_contracts:
 - id: E-SET-EVALUATION-DEADLINE
   kind: operation
   required_parameter_reads:
-  - evaluation_attempt_parameter.evaluation_attempt_id
+  - evaluation_attempt_parameter.supplied_evaluation_deadline
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
 - id: E-START-EVALUATION
   kind: operation
@@ -9612,6 +9692,11 @@ parameter_flow_contracts:
   - session_context.selected_integration_profile_binding
   - session_context.session_id
   description: Every occurrence consumes this complete field set; omission or substitution fails closed.
+- id: G-EVALUATION-DEADLINE-BINDING
+  kind: predicate
+  required_parameter_reads:
+  - evaluation_attempt_parameter.supplied_evaluation_deadline
+  description: Every occurrence consumes the canonical supplied claim and requires exact equality with the Coordinator-derived deadline; omission or substitution fails closed.
 - id: G-EVALUATION-DEADLINE-CROSSED
   kind: predicate
   required_parameter_reads:

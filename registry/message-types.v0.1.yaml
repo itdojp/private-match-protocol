@@ -1896,12 +1896,16 @@ messages:
       consumed_by:
       - transition: TR-START-EVALUATION
         operation: E-START-EVALUATION
-      - transition: TR-START-EVALUATION
-        operation: E-SET-EVALUATION-DEADLINE
   - source: payload.evaluation_deadline
     destination:
-      kind: special
-      special: policy-derived-assertion
+      kind: event-parameter
+      parameter: evaluation_attempt_parameter
+      field: supplied_evaluation_deadline
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: G-EVALUATION-DEADLINE-BINDING
+      - transition: TR-START-EVALUATION
+        operation: E-SET-EVALUATION-DEADLINE
   - source: message.message_digest
     destination:
       kind: event-parameter
