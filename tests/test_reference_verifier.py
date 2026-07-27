@@ -177,6 +177,64 @@ class ReferenceVerifierTests(unittest.TestCase):
                 self.assertEqual(not intentional, matched)
                 self.assertEqual(case["result_status_expectation"], status)
 
+    def test_consent_expiry_and_evaluation_timeout_use_the_derived_deadline(
+        self,
+    ) -> None:
+        consent_prefix = json.loads(
+            (
+                ROOT
+                / SUITE_ROOT
+                / "fixtures/traces/consent-expiry-contribution-prefix.json"
+            ).read_text()
+        )
+        start = next(
+            entry["message"]
+            for entry in consent_prefix["entries"]
+            if entry["message"]["message_type"] == "evaluation_start"
+        )
+        consent_timer = json.loads(
+            (ROOT / SUITE_ROOT / "fixtures/timers/consent-expiry.json").read_text()
+        )
+        evaluation_timer = json.loads(
+            (ROOT / SUITE_ROOT / "fixtures/timers/evaluation-timeout.json").read_text()
+        )
+        self.assertEqual(
+            "2026-07-21T00:10:30Z", start["payload"]["evaluation_deadline"]
+        )
+        self.assertEqual(
+            "2026-07-21T00:10:00Z", consent_timer["new_authoritative_time"]
+        )
+        self.assertEqual(
+            "2026-07-21T00:10:30Z",
+            evaluation_timer["new_authoritative_time"],
+        )
+        self.assertLess(
+            consent_timer["new_authoritative_time"],
+            start["payload"]["evaluation_deadline"],
+        )
+        self.assertNotIn(
+            b"2026-07-21T00:30:00Z",
+            (
+                ROOT
+                / SUITE_ROOT
+                / "fixtures/traces/consent-expiry-contribution-prefix.json"
+            ).read_bytes(),
+        )
+
+        for vector in (
+            "CV-CONSENT-EXPIRY",
+            "CV-DISCLOSURE-AFTER-EXPIRY",
+            "CV-EVALUATION-TIMEOUT",
+            "CV-SESSION-EXPIRY",
+            "CV-VALID-EXPIRY",
+        ):
+            case = self._case(vector)
+            actual = execute_case(ROOT, ROOT / SUITE_ROOT, case)
+            status, _, matched = compare_actual_to_expected(actual, case["expected"])
+            with self.subTest(vector=vector):
+                self.assertTrue(matched)
+                self.assertEqual(case["result_status_expectation"], status)
+
     def test_three_result_variants_execute_distinct_party_local_state(self) -> None:
         values = {}
         digests = {}

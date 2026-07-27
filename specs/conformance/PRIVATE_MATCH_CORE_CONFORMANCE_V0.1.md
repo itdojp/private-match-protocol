@@ -12,9 +12,9 @@ vendor certification, interoperability certification, or Product behavior. All i
 synthetic fixtures. No private Product repository or private Evidence is a runtime dependency.
 
 The suite is pinned to Protocol source revision
-`2c314027f61ca0f0edbe2dcc55a8305710efd91d`, State Machine digest
-`sha256:42e63b8a1f413e932e46370aae5fa0d972f3ab71d93efe08557472b4c7066fe8`, and message
-registry digest `sha256:2ff1685ca4325a0ff3bd49c7a411cd7f0857add6215c2f285097bdf40dcbc2b6`.
+`af09252fd1d36f75292119752a6ef5dfe08acecb`, State Machine digest
+`sha256:32e514a61a83aeb1593623eb1144f323d1115dc8c812b5fd72af93a3ae06ba16`, and message
+registry digest `sha256:df3eea26ad07b477912b124c96c9325676e9d1a89744e672f26c00538377a7ea`.
 These bindings identify reviewed inputs; they do not prove correctness or privacy.
 
 ## Artifact structure and authority
@@ -78,6 +78,24 @@ Messages and timers are applied to candidate copies through the reviewed
 `apply_trace_message_atomically()` and `apply_trace_timer_atomically()` helpers. A rejected input
 must not partially change State Machine state, transcript, query budget, or audit lifecycle.
 Exact accepted duplicates are transcript no-ops. Conflicts are rejected without mutation.
+
+The Draft v0.1 `evaluation_start` fixture uses the same deterministic rule as
+the State Machine contract:
+
+```text
+evaluation_deadline = min(
+  coordinator_authoritative_time + evaluation_timeout_seconds,
+  session_expires_at
+)
+```
+
+For the synthetic consent-expiry trace, `00:00:30Z + 600 seconds` yields
+`00:10:30Z`, below the `01:00:00Z` session expiry. The consent-expiry timer at
+`00:10:00Z` therefore remains earlier than the evaluation deadline. The
+generator derives this value from the input fixtures and does not contain a
+case-specific timestamp override. The message value must equal the derivation;
+it is not an implementation-selected timeout. Session expiry has precedence
+when the two thresholds are equal.
 
 The MATCH, NO_MATCH, and INDETERMINATE cases use three distinct test-only profile-local result
 fixtures. Each binds profile/session/attempt/receipt and produces a distinct Party-local accepted

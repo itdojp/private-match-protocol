@@ -344,7 +344,11 @@ sufficient.
    commitment evaluation.
 2. The first accepted `start_evaluation` atomically changes the reservation from
    `RESERVED` to `CONSUMED`, sets `evaluation_started`, binds one attempt ID, and
-   sets `evaluation_deadline` from the reviewed policy parameter.
+   sets the immutable `evaluation_deadline` to
+   `min(current authoritative_time + evaluation_timeout, session_expires_at)`.
+   The deadline carried by the message is a claim and must equal this
+   Coordinator-derived value exactly; neither an earlier nor a later claim is
+   accepted.
 3. Timeout, partial failure, conflict, or `INDETERMINATE` does not automatically
    return budget.
 4. An exact duplicate of the same accepted event does not consume budget again.
@@ -442,7 +446,14 @@ authoritative_time - message_stale_threshold
   <= authoritative_time + allowed_clock_skew
 ```
 
-`start_evaluation` sets `evaluation_deadline`. A time proposal crossing that
+`start_evaluation` derives `evaluation_deadline` from the Coordinator's current
+authoritative state, the accepted evaluation-timeout policy parameter, and the
+session expiry. It does not use client time, arrival time, process time, or a
+caller-selected constant. The existing message field is an equality assertion
+and cannot extend or shorten the policy-derived deadline. A mismatch, including
+a malformed or non-canonical timestamp, is rejected as
+`EVALUATION_DEADLINE_MISMATCH` without state, budget, attempt, replay,
+transcript, or accepted-audit mutation. A time proposal crossing the accepted
 deadline enters `ABORTED` with `EVALUATION_TIMEOUT`. A proposal crossing session
 expiry atomically updates time, enters `EXPIRED`, invalidates disclosure
 authorization, records `SESSION_EXPIRED`, and applies the budget disposition.
@@ -451,6 +462,7 @@ effect in this order: session expiry, evaluation timeout, active-consent expiry,
 then normal live advance. The reviewed reason/source class must match the
 derived effect and cannot select a transition. State effects and the canonical
 transcript append are committed together or not at all.
+When session expiry and the evaluation deadline are equal, session expiry wins.
 The live-time relation is disabled at a crossed session, evaluation, or consent
 deadline, so no active post-deadline window exists. A same-time proposal is a
 no-op. Rollback, out-of-domain time, and policy-excessive jumps reject as

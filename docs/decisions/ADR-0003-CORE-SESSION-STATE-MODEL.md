@@ -219,6 +219,17 @@ evaluation timeout, consent expiry, then live advance. Its reviewed reason must
 match the derived effect. Runner state and transcript head/index are computed on
 copies and committed together only after every guard and digest check succeeds.
 
+The accepted session proposal also binds the evaluation-timeout policy
+parameter. At the first accepted `start_evaluation`, the Coordinator derives
+the deadline as `min(authoritative_time + evaluation_timeout,
+session_expires_at)`. The message retains a deadline field for the Draft v0.1
+wire contract, but that field is only an exact equality claim. Earlier and
+later values both fail closed as `EVALUATION_DEADLINE_MISMATCH`. This prevents a
+client, arrival clock, process clock, or case-specific constant from selecting
+the authoritative deadline. The value is immutable after start, and session
+expiry wins if the thresholds are equal. Timeout durations remain policy
+parameters; this decision selects no production value.
+
 Timer input failures use the declared clock-specific taxonomy. Parties receive
 only `CLOCK_ERROR`; raw clock detail remains coordinator/private-assurance-only.
 A terminal timer recheck maps to the corresponding session-unavailable code.

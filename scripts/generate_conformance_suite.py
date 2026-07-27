@@ -39,14 +39,15 @@ from conformance_common import (
     validate_generated_suite_tree,
     validate_message_input_manifest,
 )
+from protocol_time import derive_evaluation_deadline
 from strict_yaml import strict_yaml_load
 
-SOURCE_REVISION = "2c314027f61ca0f0edbe2dcc55a8305710efd91d"
+SOURCE_REVISION = "af09252fd1d36f75292119752a6ef5dfe08acecb"
 PROTOCOL_PINS = {
-    "protocol_source_revision_digest": "sha256:dba1e8d6efc6083c62c2e4b44f6e12eaa4f5c6cb5ff0cd047a9ad3df0306a208",
-    "state_machine_digest": "sha256:42e63b8a1f413e932e46370aae5fa0d972f3ab71d93efe08557472b4c7066fe8",
-    "message_registry_digest": "sha256:2ff1685ca4325a0ff3bd49c7a411cd7f0857add6215c2f285097bdf40dcbc2b6",
-    "message_conformance_tree_digest": "sha256:19d2218c11c6ac7ba1d2f0884ba9e3c79cbd1264bd3ef682e543bcb9a63ccf0f",
+    "protocol_source_revision_digest": "sha256:ed111a4bb8d6e662051940543bdf0c72503ff4b907018c1d76c7345b05ebf6a3",
+    "state_machine_digest": "sha256:32e514a61a83aeb1593623eb1144f323d1115dc8c812b5fd72af93a3ae06ba16",
+    "message_registry_digest": "sha256:df3eea26ad07b477912b124c96c9325676e9d1a89744e672f26c00538377a7ea",
+    "message_conformance_tree_digest": "sha256:4902a58e94110d4c1d3b5780daf5e9e059a7b39972911e0df23ee9cd993b5afa",
 }
 CASE_DEFINITIONS = Path("conformance/source/case-definitions.v0.1.json")
 NORMATIVE_ORACLE = Path("conformance/source/normative-expected-results.v0.1.json")
@@ -383,6 +384,14 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     context = strict_yaml_load(
         (root / "conformance/messages/context.v0.1.yaml").read_text()
     )
+    proposal_payload = base_messages[0]["payload"]
+    derived_evaluation_deadline = derive_evaluation_deadline(
+        authoritative_time=context["authoritative_time"],
+        evaluation_timeout_seconds=proposal_payload["clock_policy"][
+            "evaluation_timeout_seconds"
+        ],
+        session_expires_at=proposal_payload["session_expires_at"],
+    )
     materials = strict_yaml_load(
         (root / "conformance/messages/verification-materials.v0.1.yaml").read_text()
     )
@@ -638,7 +647,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     evaluation_timeout = copy.deepcopy(rollback)
     evaluation_timeout.update(
         {
-            "new_authoritative_time": "2026-07-21T00:10:00Z",
+            "new_authoritative_time": derived_evaluation_deadline,
             "reason_or_source_class": "EVALUATION_DEADLINE",
             "prior_transcript_digest": heads[10],
         }
@@ -651,7 +660,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     ):
         add(f"fixtures/timers/{name}.json", value)
     later = copy.deepcopy(base_messages)
-    later[10]["payload"]["evaluation_deadline"] = "2026-07-21T00:30:00Z"
+    later[10]["payload"]["evaluation_deadline"] = derived_evaluation_deadline
     later = _rechain(later)
     add("fixtures/traces/consent-expiry-prefix.json", _trace(later))
     add(

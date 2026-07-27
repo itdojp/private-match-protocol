@@ -36,6 +36,11 @@ from canonicalize_message import (
     wire_message_digest,
 )
 from strict_yaml import strict_yaml_load
+from protocol_time import (
+    ProtocolTimeError,
+    derive_evaluation_deadline,
+    parse_canonical_utc_timestamp,
+)
 from validate_session_state_machine import authoritative_time_transition
 
 
@@ -1254,6 +1259,7 @@ class AbstractStateRunner:
     next_sequence: dict[str, int] = field(default_factory=lambda: {"a": 0, "b": 0})
     authoritative_time: str | None = None
     session_expires_at: str | None = None
+    evaluation_timeout_seconds: int | None = None
     evaluation_deadline: str | None = None
     maximum_time_jump_seconds: int | None = None
     evaluation_started: bool = False
@@ -1275,6 +1281,8 @@ class AbstractStateRunner:
     def context(self, prior_head: str) -> dict[str, Any]:
         context = copy.deepcopy(self.base_context)
         context["authoritative_time"] = self.authoritative_time
+        context["session_expires_at"] = self.session_expires_at
+        context["evaluation_timeout_seconds"] = self.evaluation_timeout_seconds
         context["prior_transcript_digest"] = prior_head
         session = context["session_context"]
         session["participants"] = copy.deepcopy(self.participants)
@@ -1334,6 +1342,9 @@ class AbstractStateRunner:
                 )
                 self.session_expires_at = payload.get("session_expires_at")
                 clock_policy = payload.get("clock_policy", {})
+                self.evaluation_timeout_seconds = clock_policy.get(
+                    "evaluation_timeout_seconds"
+                )
                 self.maximum_time_jump_seconds = clock_policy.get(
                     "maximum_time_jump_seconds"
                 )
@@ -1489,9 +1500,36 @@ class AbstractStateRunner:
             require(
                 self.evaluation_attempt_id is None, "evaluation attempt already fixed"
             )
+            derived_deadline: str | None = None
+            try:
+                parse_canonical_utc_timestamp(payload.get("evaluation_deadline"))
+                derived_deadline = derive_evaluation_deadline(
+                    authoritative_time=self.authoritative_time,
+                    evaluation_timeout_seconds=self.evaluation_timeout_seconds,
+                    session_expires_at=self.session_expires_at,
+                )
+            except ProtocolTimeError:
+                findings.append(
+                    _finding(
+                        "evaluation-deadline",
+                        "evaluation_start.evaluation_deadline",
+                        "canonical policy-derived evaluation deadline is required",
+                    )
+                )
+            if (
+                derived_deadline is not None
+                and payload.get("evaluation_deadline") != derived_deadline
+            ):
+                findings.append(
+                    _finding(
+                        "evaluation-deadline",
+                        "evaluation_start.evaluation_deadline",
+                        "supplied deadline must equal the coordinator-derived deadline",
+                    )
+                )
             if not findings:
                 self.evaluation_attempt_id = payload.get("evaluation_attempt_id")
-                self.evaluation_deadline = payload.get("evaluation_deadline")
+                self.evaluation_deadline = derived_deadline
                 self.evaluation_started = True
                 self.query_budget_state = "CONSUMED"
                 self.phase = "EVALUATING"

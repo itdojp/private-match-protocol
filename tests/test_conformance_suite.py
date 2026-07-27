@@ -87,6 +87,49 @@ class ConformanceSuiteTests(unittest.TestCase):
         self.assertEqual(0, generate_main(["--root", str(ROOT), "--check"]))
         self.assertEqual(before, (oracle.read_bytes(), oracle.stat().st_mtime_ns))
 
+    def test_issue_11_oracle_review_is_closed_and_binds_only_causal_fields(
+        self,
+    ) -> None:
+        review = json.loads(
+            (
+                ROOT / "conformance/source/evaluation-deadline-oracle-review.v0.1.json"
+            ).read_text()
+        )
+        oracle = {
+            item["case_id"]: item
+            for item in json.loads((ROOT / NORMATIVE_ORACLE).read_text())["results"]
+        }
+        boundary = review["review_boundary"]
+        self.assertEqual(22, boundary["changed_case_count"])
+        self.assertEqual(44, boundary["changed_field_count"])
+        self.assertEqual(
+            ["state_digest", "transcript_head"], boundary["permitted_fields"]
+        )
+        self.assertTrue(boundary["reference_output_not_oracle_authority"])
+        self.assertEqual(
+            "2026-07-21T00:10:30Z",
+            review["semantic_decision"]["derived_evaluation_deadline"],
+        )
+        identities = [(item["case_id"], item["field"]) for item in review["changes"]]
+        self.assertEqual(len(identities), len(set(identities)))
+        self.assertEqual(44, len(identities))
+        self.assertEqual(22, len({case_id for case_id, _ in identities}))
+        for item in review["changes"]:
+            with self.subTest(case=item["case_id"], field=item["field"]):
+                self.assertIn(item["field"], boundary["permitted_fields"])
+                self.assertNotEqual(item["old_value"], item["new_value"])
+                self.assertEqual(
+                    item["new_value"], oracle[item["case_id"]][item["field"]]
+                )
+                self.assertIn(
+                    "conformance/messages/valid/evaluation-start.json",
+                    item["source_fixtures"],
+                )
+                self.assertEqual(
+                    "min(2026-07-21T00:00:30Z + 600 seconds, 2026-07-21T01:00:00Z) = 2026-07-21T00:10:30Z",
+                    item["causal_derivation"]["deadline_formula"],
+                )
+
     def test_reference_implementation_manifest_is_closed_and_deterministic(
         self,
     ) -> None:
