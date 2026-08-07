@@ -24,6 +24,13 @@ Machine and Message Registry semantic digests and maps profile operations to
 existing events, messages, transitions, guards, effects, transcript behavior,
 and replay/idempotency domains.
 
+`result_acceptance_notice` is the only externally presented profile-callback
+operation. `accept_symmetric_result` remains its existing State Machine effect;
+it is not a second Product-port operation. The binding validator compares the
+complete message version, delivery class, direction, sender, verifier, audience,
+event, transition set, transcript behavior, and replay domain with the live
+Message Registry and State Machine.
+
 ## Minimum result and private boundary
 
 Every complete profile exposes only `MATCH`, `NO_MATCH`, or `INDETERMINATE` as
@@ -33,12 +40,30 @@ private inputs, and Coordinator-visible plaintext results are prohibited.
 Repeated-query controls and query-budget authority remain Protocol/Product
 responsibilities rather than upstream PET responsibilities.
 
+The exact Protocol policy ID and version are bound before evaluation and carried
+through contributions, callbacks, receipts, transcript context, and the Product
+handoff. A profile cannot choose a default predicate or change policy after
+evaluation starts. This Draft selects no commercial predicate or match
+threshold.
+
+## Registration and execution boundary
+
+Profile registration is not execution permission. Current profiles allow only
+deterministic `contract-fixture` validation with synthetic inputs, prohibited
+network execution, no candidate execution, and no paid-resource use. A future
+SecretFlow candidate requires a reviewed local-experiment grant; a future Nitro
+candidate requires a reviewed paid-AWS experiment grant. Missing authority is
+`unsupported`, and production execution remains unsupported.
+
 ## Artifacts
 
 - Research snapshot: `config/research-technology-authority.v0.1.json`
 - Profile registry: `registry/pet-integration-profiles.v0.1.yaml`
 - Product handoff: `handoff/product-decision-engine-port.v0.1.yaml`
 - Conformance cases: `conformance/pet-profiles/case-catalog.v0.1.json`
+- Closed operation input: `schema/pet-profile-operation-input.v0.1.schema.json`
+- Executed case results:
+  `generated/pet-integration/executable-case-results.v0.1.json`
 - Generated comparison/index/handoff projection/digest manifest:
   `generated/pet-integration/`
 
@@ -46,3 +71,8 @@ Run `python scripts/validate_pet_profiles.py --root .` to validate the complete
 closed authority, or `python scripts/generate_pet_profiles.py --root . --check`
 to check deterministic projections. Neither command executes a candidate or
 uses a network service.
+
+Every catalogued valid case is converted into a complete authoritative context
+and presented operation, executed through the same semantic validator used by
+negative cases, and bound by input/result digests. This proves contract handling
+only; it does not prove PET security, policy correctness, or candidate behavior.

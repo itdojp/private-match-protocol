@@ -9,12 +9,174 @@ selection_rule:
   production_selection: not-selected
   unknown_profile_behavior: fail-closed
 port_fields:
+- field: cancellation
+  public_semantic_meaning: Current-attempt cancellation semantics.
+  requirement: required
+  source_profile_field: privacy_and_operations.cancellation
+  expected_product_port_behavior: stop profile work and enter reviewed terminal behavior
+  fail_closed_rule: reject cancellation contract without cleanup
+  prohibited_content:
+  - private input
+  - raw identifier
+  - matching element
+  - exact count
+  - plaintext Coordinator result
+  - secret material
+- field: cleanup
+  public_semantic_meaning: Process/profile transient-data destruction and bounded
+    Evidence.
+  requirement: required
+  source_profile_field: privacy_and_operations.cleanup
+  expected_product_port_behavior: clean process-owned resources and record normalized
+    outcome
+  fail_closed_rule: fail release gate when required cleanup fails
+  prohibited_content:
+  - private input
+  - raw identifier
+  - matching element
+  - exact count
+  - plaintext Coordinator result
+  - secret material
+- field: client-side-preparation
+  public_semantic_meaning: Party-local normalization, commitment, and input isolation.
+  requirement: required
+  source_profile_field: protocol_contract.client_side_preparation/input_normalization/input_commitment_binding
+  expected_product_port_behavior: prepare locally and bind contribution to committed
+    input
+  fail_closed_rule: reject missing normalization or commitment authority
+  prohibited_content:
+  - private input
+  - raw identifier
+  - matching element
+  - exact count
+  - plaintext Coordinator result
+  - secret material
+- field: decision-policy-binding
+  public_semantic_meaning: Exact Protocol policy ID/version bound before evaluation;
+    no use-case predicate or threshold is selected by a PET profile.
+  requirement: required
+  source_profile_field: decision_derivation and authoritative operation policy binding
+  expected_product_port_behavior: bind the reviewed policy ID/version into contribution,
+    callback, receipt, transcript, and adapter invocation
+  fail_closed_rule: reject missing, unknown, changed, defaulted, or substituted policy
+    authority
+  prohibited_content:
+  - private input
+  - raw identifier
+  - matching element
+  - exact count
+  - plaintext Coordinator result
+  - secret material
+- field: deterministic-error-categories
+  public_semantic_meaning: Closed Protocol failure mapping without secret detail.
+  requirement: required
+  source_profile_field: protocol_contract.failure_mappings
+  expected_product_port_behavior: map adapter failures to reviewed categories
+  fail_closed_rule: reject unknown mapping and redact raw failure detail
+  prohibited_content:
+  - private input
+  - raw identifier
+  - matching element
+  - exact count
+  - plaintext Coordinator result
+  - secret material
 - field: engine-profile-identifier
-  public_semantic_meaning: Exact complete profile ID, version, digest, and instance identity.
+  public_semantic_meaning: Exact complete profile ID, version, digest, and instance
+    identity.
   requirement: required
   source_profile_field: profile_id/profile_version/profile_digest plus runtime profile_instance_id
-  expected_product_port_behavior: select only a registry complete-decision-profile and preserve exact identity
+  expected_product_port_behavior: select only a registry complete-decision-profile
+    and preserve exact identity
   fail_closed_rule: reject unknown, stale, component-only, or substituted identity
+  prohibited_content:
+  - private input
+  - raw identifier
+  - matching element
+  - exact count
+  - plaintext Coordinator result
+  - secret material
+- field: evidence-hooks
+  public_semantic_meaning: Six-status Evidence projection without secret material.
+  requirement: required
+  source_profile_field: protocol_contract.evidence_hooks
+  expected_product_port_behavior: emit only reviewed fields and detached digests
+  fail_closed_rule: reject private input, identifier, element, count, result, secret,
+    or local path
+  prohibited_content:
+  - private input
+  - raw identifier
+  - matching element
+  - exact count
+  - plaintext Coordinator result
+  - secret material
+- field: execution-authorization
+  public_semantic_meaning: Profile registration and synthetic contract-fixture handling
+    do not authorize candidate or production execution.
+  requirement: required
+  source_profile_field: execution_contract and authoritative operation execution authorization
+  expected_product_port_behavior: allow contract-fixture mode only; bind any future
+    external grant to profile ID/version/digest, instance, source revision, environment,
+    and expiry
+  fail_closed_rule: return unsupported when reviewed candidate authority is missing;
+    production execution is unsupported
+  prohibited_content:
+  - private input
+  - raw identifier
+  - matching element
+  - exact count
+  - plaintext Coordinator result
+  - secret material
+  - credential
+  - raw execution grant
+- field: metadata-leakage-descriptor
+  public_semantic_meaning: Explicit Party/Coordinator/operator/network metadata visibility.
+  requirement: required
+  source_profile_field: privacy_and_operations.metadata_leakage
+  expected_product_port_behavior: enforce public leakage boundary and retain unknowns
+  fail_closed_rule: reject omitted descriptor or unexpected private content
+  prohibited_content:
+  - private input
+  - raw identifier
+  - matching element
+  - exact count
+  - plaintext Coordinator result
+  - secret material
+- field: protocol-exchange-steps
+  public_semantic_meaning: Ordered events/messages/guards/effects mapped to the current
+    Protocol.
+  requirement: required
+  source_profile_field: protocol_contract.exchange_steps and protocol binding
+  expected_product_port_behavior: invoke through existing Protocol messages and transitions
+    only
+  fail_closed_rule: reject reordered, skipped, unknown, or out-of-state step
+  prohibited_content:
+  - private input
+  - raw identifier
+  - matching element
+  - exact count
+  - plaintext Coordinator result
+  - secret material
+- field: resource-limits
+  public_semantic_meaning: Reviewed size/CPU/memory/message bounds and normalized
+    failure.
+  requirement: required
+  source_profile_field: privacy_and_operations.resource_limits
+  expected_product_port_behavior: apply Product policy before and during evaluation
+  fail_closed_rule: reject unbounded or exceeded resource request
+  prohibited_content:
+  - private input
+  - raw identifier
+  - matching element
+  - exact count
+  - plaintext Coordinator result
+  - secret material
+- field: result-and-verification-receipt
+  public_semantic_meaning: Symmetric Party-local result and high-entropy opaque receipt.
+  requirement: required
+  source_profile_field: protocol_contract.result_symmetry/callback/opaque_receipt
+  expected_product_port_behavior: verify exact bindings before accepting each local
+    result
+  fail_closed_rule: reject asymmetric, low-entropy, or mismatched receipt
   prohibited_content:
   - private input
   - raw identifier
@@ -39,86 +201,9 @@ port_fields:
   public_semantic_meaning: Minimum Protocol decisions only.
   requirement: required
   source_profile_field: protocol_contract.supported_decision_outputs
-  expected_product_port_behavior: accept only MATCH, NO_MATCH, or INDETERMINATE at Party-local ports
+  expected_product_port_behavior: accept only MATCH, NO_MATCH, or INDETERMINATE at
+    Party-local ports
   fail_closed_rule: reject counts, rows, identifiers, or other decisions
-  prohibited_content:
-  - private input
-  - raw identifier
-  - matching element
-  - exact count
-  - plaintext Coordinator result
-  - secret material
-- field: client-side-preparation
-  public_semantic_meaning: Party-local normalization, commitment, and input isolation.
-  requirement: required
-  source_profile_field: protocol_contract.client_side_preparation/input_normalization/input_commitment_binding
-  expected_product_port_behavior: prepare locally and bind contribution to committed input
-  fail_closed_rule: reject missing normalization or commitment authority
-  prohibited_content:
-  - private input
-  - raw identifier
-  - matching element
-  - exact count
-  - plaintext Coordinator result
-  - secret material
-- field: protocol-exchange-steps
-  public_semantic_meaning: Ordered events/messages/guards/effects mapped to the current Protocol.
-  requirement: required
-  source_profile_field: protocol_contract.exchange_steps and protocol binding
-  expected_product_port_behavior: invoke through existing Protocol messages and transitions only
-  fail_closed_rule: reject reordered, skipped, unknown, or out-of-state step
-  prohibited_content:
-  - private input
-  - raw identifier
-  - matching element
-  - exact count
-  - plaintext Coordinator result
-  - secret material
-- field: result-and-verification-receipt
-  public_semantic_meaning: Symmetric Party-local result and high-entropy opaque receipt.
-  requirement: required
-  source_profile_field: protocol_contract.result_symmetry/callback/opaque_receipt
-  expected_product_port_behavior: verify exact bindings before accepting each local result
-  fail_closed_rule: reject asymmetric, low-entropy, or mismatched receipt
-  prohibited_content:
-  - private input
-  - raw identifier
-  - matching element
-  - exact count
-  - plaintext Coordinator result
-  - secret material
-- field: verification-material-key-attestation
-  public_semantic_meaning: Profile-specific key or attestation references and responsibilities.
-  requirement: required
-  source_profile_field: protocol_contract.verification_material/key_or_attestation_responsibilities
-  expected_product_port_behavior: resolve only reviewed references and verify before result acceptance
-  fail_closed_rule: reject missing, stale, debug, or mismatched material
-  prohibited_content:
-  - private input
-  - raw identifier
-  - matching element
-  - exact count
-  - plaintext Coordinator result
-  - secret material
-- field: metadata-leakage-descriptor
-  public_semantic_meaning: Explicit Party/Coordinator/operator/network metadata visibility.
-  requirement: required
-  source_profile_field: privacy_and_operations.metadata_leakage
-  expected_product_port_behavior: enforce public leakage boundary and retain unknowns
-  fail_closed_rule: reject omitted descriptor or unexpected private content
-  prohibited_content:
-  - private input
-  - raw identifier
-  - matching element
-  - exact count
-  - plaintext Coordinator result
-  - secret material
-- field: resource-limits
-  public_semantic_meaning: Reviewed size/CPU/memory/message bounds and normalized failure.
-  requirement: required
-  source_profile_field: privacy_and_operations.resource_limits
-  expected_product_port_behavior: apply Product policy before and during evaluation
-  fail_closed_rule: reject unbounded or exceeded resource request
   prohibited_content:
   - private input
   - raw identifier
@@ -130,7 +215,8 @@ port_fields:
   public_semantic_meaning: Authoritative Protocol evaluation deadline.
   requirement: required
   source_profile_field: privacy_and_operations.timeout
-  expected_product_port_behavior: honor Protocol timer and retain consumed budget after start
+  expected_product_port_behavior: honor Protocol timer and retain consumed budget
+    after start
   fail_closed_rule: abort on deadline or clock mismatch
   prohibited_content:
   - private input
@@ -139,51 +225,13 @@ port_fields:
   - exact count
   - plaintext Coordinator result
   - secret material
-- field: deterministic-error-categories
-  public_semantic_meaning: Closed Protocol failure mapping without secret detail.
+- field: verification-material-key-attestation
+  public_semantic_meaning: Profile-specific key or attestation references and responsibilities.
   requirement: required
-  source_profile_field: protocol_contract.failure_mappings
-  expected_product_port_behavior: map adapter failures to reviewed categories
-  fail_closed_rule: reject unknown mapping and redact raw failure detail
-  prohibited_content:
-  - private input
-  - raw identifier
-  - matching element
-  - exact count
-  - plaintext Coordinator result
-  - secret material
-- field: cancellation
-  public_semantic_meaning: Current-attempt cancellation semantics.
-  requirement: required
-  source_profile_field: privacy_and_operations.cancellation
-  expected_product_port_behavior: stop profile work and enter reviewed terminal behavior
-  fail_closed_rule: reject cancellation contract without cleanup
-  prohibited_content:
-  - private input
-  - raw identifier
-  - matching element
-  - exact count
-  - plaintext Coordinator result
-  - secret material
-- field: cleanup
-  public_semantic_meaning: Process/profile transient-data destruction and bounded Evidence.
-  requirement: required
-  source_profile_field: privacy_and_operations.cleanup
-  expected_product_port_behavior: clean process-owned resources and record normalized outcome
-  fail_closed_rule: fail release gate when required cleanup fails
-  prohibited_content:
-  - private input
-  - raw identifier
-  - matching element
-  - exact count
-  - plaintext Coordinator result
-  - secret material
-- field: evidence-hooks
-  public_semantic_meaning: Six-status Evidence projection without secret material.
-  requirement: required
-  source_profile_field: protocol_contract.evidence_hooks
-  expected_product_port_behavior: emit only reviewed fields and detached digests
-  fail_closed_rule: reject private input, identifier, element, count, result, secret, or local path
+  source_profile_field: protocol_contract.verification_material/key_or_attestation_responsibilities
+  expected_product_port_behavior: resolve only reviewed references and verify before
+    result acceptance
+  fail_closed_rule: reject missing, stale, debug, or mismatched material
   prohibited_content:
   - private input
   - raw identifier
@@ -226,5 +274,7 @@ evidence_boundary:
   - tool-error
 limitations:
 - The handoff defines public semantics, not private Product implementation structure.
-- No production adapter, authentication, cloud, or KMS selection is made.
-handoff_digest: sha256:953cf5312a21b221914caf0675945ea6436ab04c7aab05ea415c8d67772ecfb2
+- Registration and contract-fixture validation are not candidate execution permission.
+- No match predicate, production adapter, authentication, cloud, or KMS selection
+  is made.
+handoff_digest: sha256:e638fee6d5395e3c846601453c1177ca42ad2b2673700afd4d35b2c32851e33e

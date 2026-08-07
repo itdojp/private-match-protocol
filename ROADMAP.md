@@ -102,6 +102,11 @@ Research candidate status remains `not-run`, VOPRF cannot be selected as a
 complete engine, no AWS execution is authorized, and no production PET is
 selected.
 
+The Draft executable conformance layer binds one authoritative operation context,
+the exact Protocol policy, execution authorization, and full Message Registry
+parity. It executes synthetic contract cases only. Candidate execution requires
+a separate reviewed external grant and remains outside P4.
+
 Exit criteria:
 
 - selected integration is experimental, not production ready

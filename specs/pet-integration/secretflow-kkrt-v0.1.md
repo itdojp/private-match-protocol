@@ -37,3 +37,17 @@ failure mapping fails closed.
 
 No SecretFlow binary, container, or network operation is invoked by this
 profile or its tests.
+
+## Decision and execution authority
+
+The profile derives no implicit match predicate. An exact externally reviewed
+Protocol policy ID/version must be fixed before evaluation and remain identical
+across contributions, the opaque receipt, the canonical profile callback, and
+the transcript context. Unknown, changed, or profile-defaulted policy fails
+closed.
+
+Registration and `contract-fixture` validation are allowed, but candidate
+execution is not. A future candidate requires a separately reviewed
+`reviewed-local-experiment-execution-grant` bound to the profile ID, version,
+digest, instance, source revision, environment, and expiry. Production
+execution remains unsupported.

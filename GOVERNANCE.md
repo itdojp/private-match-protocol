@@ -93,3 +93,8 @@ private adapters. They do not approve an implementation, vendor, cloud account,
 key authority, authentication method, or production architecture. A
 component-only profile cannot be promoted into a complete decision engine by a
 private implementation without a new public review.
+
+Registration, offline contract fixtures, and conformance
+success do not grant candidate or production execution. Candidate grants must
+be separately reviewed and bound to exact profile, source, environment, and
+expiry authorities; credentials and raw grants are not public Evidence.

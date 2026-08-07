@@ -26,6 +26,11 @@ existing State Machine, Message Registry, query budget, canonical transcript,
 profile callback, Party receipt acknowledgment, and symmetric-result
 transitions. Do not create a second core result.
 
+Expose `result_acceptance_notice` as the single canonical profile-callback
+operation. `accept_symmetric_result` is the existing State Machine event/effect,
+not a second externally invokable operation. Validate complete Message Registry
+parity rather than checking only that referenced names exist.
+
 The minimum complete-profile output is symmetric Party-local `MATCH`,
 `NO_MATCH`, or `INDETERMINATE` bound to one opaque receipt. Upstream native
 rows, exact counts, matching elements, raw identifiers, private inputs, and
@@ -34,6 +39,18 @@ boundary. Verification uses profile-specific source/key material for KKRT and
 hardware attestation/nonce/PCR/artifact authorities for Nitro. Repeated-query,
 query-budget, replay, timeout, cancellation, cleanup, and Evidence policy remain
 Protocol/Product authorities.
+
+Bind one externally selected Protocol policy ID/version through the complete
+operation context, contribution, callback, receipt, transcript, and Product
+handoff. Profiles may neither invent a default predicate nor change policy after
+evaluation starts. This decision selects no concrete use-case predicate or
+threshold.
+
+Separate profile registration, synthetic contract-fixture execution, candidate
+execution, and production execution. Current profiles permit registration and
+offline contract fixtures only. SecretFlow and Nitro candidate execution both
+remain unauthorized without separate reviewed grants; production execution is
+unsupported.
 
 Publish an implementation-independent Product handoff whose fields define
 meaning, requirement, source, expected port behavior, fail-closed rule, and
@@ -44,6 +61,11 @@ GitHub, vendors, AWS, or private repositories at runtime.
 No profile is production eligible. No SecretFlow, CIRCL, or Nitro candidate was
 executed. AWS execution is not authorized. Future Evidence may supersede these
 profiles after a new reviewed decision.
+
+Every valid PET catalog case is executed through the shared authoritative
+operation validator and produces a digest-bound result manifest. One callback
+case also passes a canonical `result_acceptance_notice` through the existing
+message validator before PET-specific authority validation.
 
 ## Alternatives considered
 
@@ -78,6 +100,10 @@ security-model, leakage, and execution-authority substitutions. Deterministic
 projections improve reviewability but do not establish cryptographic security,
 performance, candidate behavior, input truthfulness, production suitability, or
 operational approval.
+
+Conformance success establishes only deterministic contract handling. It does
+not establish candidate execution, cryptographic security, policy correctness,
+input completeness, performance, or production eligibility.
 
 ## Compatibility and rollback
 

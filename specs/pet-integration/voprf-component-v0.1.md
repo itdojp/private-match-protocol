@@ -18,3 +18,8 @@ handoff contract, validator, and negative fixtures reject any attempt to select
 this component as `selected_integration_profile` or promote its output into a
 complete decision. RFC 9497 component properties do not establish application
 security, input completeness, or a production architecture.
+
+Component registration permits only local contract validation. It does not
+authorize CIRCL execution. Any future component experiment requires a separate
+reviewed grant, and this component can never satisfy the complete-profile
+selection field by itself.

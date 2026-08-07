@@ -65,6 +65,9 @@ security claim has been established, and no compatibility commitment exists yet.
 SecretFlow KKRT and Nitro Enclaves are contract-only experimental complete
 profiles; RFC 9497/CIRCL VOPRF is component-only. No candidate was executed and
 no production PET or adapter has been selected.
+All valid PET fixtures execute only the shared offline contract validator.
+Profile registration and contract-fixture acceptance do not authorize a PET
+candidate, AWS operation, paid resource, or production execution.
 
 ## Initial design principles
 

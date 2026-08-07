@@ -28,3 +28,9 @@ region, instance, vsock/network/artifact metadata, cost, retention, and teardown
 must remain visible and require separate human approval. Execution authorization
 is `human-required-not-provided`; only synthetic input would be eligible for a
 future experiment.
+
+Registration and deterministic `contract-fixture` validation are not AWS
+execution permission. Candidate execution is false and requires a separately
+reviewed `reviewed-paid-aws-experiment-execution-grant`; missing authority is
+`unsupported`. Production execution is unsupported. The profile also requires
+an exact Protocol policy binding and cannot select or change a match predicate.

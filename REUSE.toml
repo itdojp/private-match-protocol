@@ -17,7 +17,7 @@ path = [
   "config/**/*.json",
   "handoff/**/*.yaml",
   "profiles/**/*.json",
-  "generated/pet-integration/*.json",
+  "generated/pet-integration/**/*.json",
   "schemas/**/*.json",
   "specs/state-machines/private-match-core-session-v0.1.yaml",
   "REUSE.toml",
