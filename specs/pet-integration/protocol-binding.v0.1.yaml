@@ -1,0 +1,142 @@
+schema_version: '0.1'
+binding_id: private-match-pet-protocol-binding
+artifact_status: experimental
+protocol_profile: private-match-core
+protocol_version: '0.1'
+state_machine_path: specs/state-machines/private-match-core-session-v0.1.yaml
+state_machine_digest: sha256:32e514a61a83aeb1593623eb1144f323d1115dc8c812b5fd72af93a3ae06ba16
+message_registry_path: registry/message-types.v0.1.yaml
+message_registry_digest: sha256:df3eea26ad07b477912b124c96c9325676e9d1a89744e672f26c00538377a7ea
+operations:
+- operation: select-profile
+  allowed_profile_classes:
+  - complete-decision-profile
+  event: create_session
+  message_type: session_proposal
+  transition_ids:
+  - TR-CREATE
+  guard: profile ID/version/class and registry digest are known
+  effect: bind selected_integration_profile into session proposal
+  failure_category: UNKNOWN_STATE
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: actor operation identity
+- operation: reserve-query-budget
+  allowed_profile_classes:
+  - complete-decision-profile
+  event: reserve_query_budget
+  message_type: query_budget_reservation
+  transition_ids:
+  - TR-RESERVE-BUDGET
+  guard: authorized budget and selected profile match
+  effect: reserve once before evaluation
+  failure_category: QUERY_BUDGET_EXHAUSTED
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: actor operation identity
+- operation: start-evaluation
+  allowed_profile_classes:
+  - complete-decision-profile
+  event: start_evaluation
+  message_type: evaluation_start
+  transition_ids:
+  - TR-START-EVALUATION
+  guard: commitment pair, selected profile instance, verification material, resource policy, and budget match
+  effect: consume budget exactly once and start attempt
+  failure_category: VERIFICATION_MATERIAL_MISSING
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: actor operation identity
+- operation: submit-contribution
+  allowed_profile_classes:
+  - complete-decision-profile
+  event: submit_evaluation_contribution
+  message_type: evaluation_contribution
+  transition_ids:
+  - TR-SUBMIT-CONTRIBUTION-A
+  - TR-SUBMIT-CONTRIBUTION-B
+  guard: session/profile/instance/attempt/commitment/transcript bindings match
+  effect: accept opaque Party contribution
+  failure_category: PARTIAL_PARTY_FAILURE
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: session/sender message identity and nonce
+- operation: accept-profile-callback
+  allowed_profile_classes:
+  - complete-decision-profile
+  event: accept_symmetric_result
+  message_type: result_acceptance_notice
+  transition_ids:
+  - TR-ACCEPT-SYMMETRIC-RESULT
+  - TR-RESULT-CONFLICT
+  guard: all exact callback bindings and verification material match
+  effect: accept only receipt-bound symmetric Party results
+  failure_category: RESULT_CONFLICT
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: profile/session/attempt callback identity and idempotency key
+- operation: acknowledge-receipt
+  allowed_profile_classes:
+  - complete-decision-profile
+  event: acknowledge_opaque_receipt_a
+  message_type: opaque_receipt_ack
+  transition_ids:
+  - TR-ACK-RECEIPT-A
+  - TR-ACK-RECEIPT-B
+  guard: Party-local result binding, receipt, and transcript match
+  effect: record Party-local acknowledgment without Coordinator plaintext result
+  failure_category: RESULT_CONFLICT
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: session/sender message identity and nonce
+- operation: accept-symmetric-result
+  allowed_profile_classes:
+  - complete-decision-profile
+  event: accept_symmetric_result
+  message_type: result_acceptance_notice
+  transition_ids:
+  - TR-ACCEPT-SYMMETRIC-RESULT
+  - TR-RESULT-CONFLICT
+  guard: both Party-local minimum results share one receipt and equal decision
+  effect: enter RESULT_ACCEPTED or fail closed
+  failure_category: RESULT_CONFLICT
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: profile/session/attempt callback identity and idempotency key
+- operation: evaluation-timeout
+  allowed_profile_classes:
+  - complete-decision-profile
+  event: advance_authoritative_time
+  message_type: null
+  transition_ids:
+  - TR-EVALUATION-TIMEOUT
+  guard: authoritative time reaches bound deadline
+  effect: abort with consumed budget retained
+  failure_category: EVALUATION_TIMEOUT
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: authoritative timer threshold
+- operation: abort-and-cleanup
+  allowed_profile_classes:
+  - complete-decision-profile
+  event: abort_session
+  message_type: abort_notice
+  transition_ids:
+  - TR-ABORT
+  guard: normalized reviewed failure category exists
+  effect: abort and require profile cleanup Evidence
+  failure_category: PARTIAL_PARTY_FAILURE
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: actor operation identity
+callback_required_bindings:
+- profile_id
+- profile_version
+- profile_instance_id
+- session_id
+- evaluation_attempt_id
+- opaque_receipt
+- transcript_head
+substitution_policy:
+  cross_profile: fail-closed
+  cross_version: fail-closed
+  cross_instance: fail-closed
+  cross_session: fail-closed
+  cross_attempt: fail-closed
+  receipt_mismatch: fail-closed
+  transcript_mismatch: fail-closed
+limitations:
+- This mapping references, rather than duplicates, the complete Protocol state machine.
+- Authentication algorithm selection remains outside this experimental profile contract.
+binding_digest: sha256:6a59aac0b3c67ab629cc3af88b9dafa092dc255ef0eaad2c3878982597db5c8f

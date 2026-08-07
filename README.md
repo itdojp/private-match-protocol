@@ -53,12 +53,18 @@ The following belong in private repositories:
   [reference verifier contract](specs/conformance/REFERENCE_VERIFIER_CONTRACT_V0.1.md),
   [canonical conformance-state projection](specs/conformance/CONFORMANCE_STATE_PROJECTION_V0.1.md), and
   [offline adapter-result contract](specs/conformance/INTEROPERABILITY_ADAPTER_CONTRACT_V0.1.md)
+- [Experimental PET integration profiles](specs/pet-integration/README.md),
+  [machine-readable profile registry](registry/pet-integration-profiles.v0.1.yaml), and
+  [public Product decision-engine handoff](handoff/product-decision-engine-port.v0.1.yaml)
 
 ## Maturity
 
 The repository contains draft protocol artifacts. No artifact is `candidate` or
 `stable`, no production protocol or PET has been selected, no cryptographic
 security claim has been established, and no compatibility commitment exists yet.
+SecretFlow KKRT and Nitro Enclaves are contract-only experimental complete
+profiles; RFC 9497/CIRCL VOPRF is component-only. No candidate was executed and
+no production PET or adapter has been selected.
 
 ## Initial design principles
 

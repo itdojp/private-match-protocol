@@ -52,5 +52,9 @@ jobs:
             --adapter-result conformance/suites/private-match-core-v0.1/fixtures/adapter-results/valid-end-to-end.v0.1.json \
             --case-id PMC-VALID-END-TO-END-V0-1 \
             --mode test-fixture
+      - name: Validate experimental PET profiles and Product handoff
+        run: |
+          python scripts/generate_pet_profiles.py --root . --check
+          python scripts/validate_pet_profiles.py --root .
       - name: Validate REUSE licensing metadata
         run: reuse lint
