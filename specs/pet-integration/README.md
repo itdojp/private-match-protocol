@@ -31,6 +31,22 @@ complete message version, delivery class, direction, sender, verifier, audience,
 event, transition set, transcript behavior, and replay domain with the live
 Message Registry and State Machine.
 
+## Lifecycle-stage authority
+
+`operation-stage-contract.v0.1.yaml` is a closed deterministic projection of
+the current State Machine and Message Registry. Each operation has its own
+pre-phase, transition set, post-phase/effect, field-availability rules,
+transcript behavior, query-budget effect, and result classification. Early
+operations use the core Protocol's explicit `NONE`/JSON `null` representation
+and may not fabricate a future commitment pair, evaluation attempt, receipt,
+verification material, or result state.
+
+The executable operation Schema is stage-specific. Timeout and abort are
+terminal outcomes, component registration is a non-State-Machine no-op, and
+normal accepted mutations remain distinct. The validator projects these
+outcomes from the existing State Machine; it does not implement a second State
+Machine.
+
 ## Minimum result and private boundary
 
 Every complete profile exposes only `MATCH`, `NO_MATCH`, or `INDETERMINATE` as
@@ -39,6 +55,12 @@ counts, matching or non-matching rows, raw identifiers, participant identities,
 private inputs, and Coordinator-visible plaintext results are prohibited.
 Repeated-query controls and query-budget authority remain Protocol/Product
 responsibilities rather than upstream PET responsibilities.
+
+The public `presented_operation` surface never carries both Parties' plaintext
+decisions. Synthetic callback conformance uses a separate, domain-separated
+`synthetic-global-observer` record solely to check the closed decision
+vocabulary, symmetry, and common receipt binding. That observer is not a
+Protocol message, Coordinator input, Product port, or Evidence hook.
 
 The exact Protocol policy ID and version are bound before evaluation and carried
 through contributions, callbacks, receipts, transcript context, and the Product
@@ -60,6 +82,8 @@ candidate requires a reviewed paid-AWS experiment grant. Missing authority is
 - Research snapshot: `config/research-technology-authority.v0.1.json`
 - Profile registry: `registry/pet-integration-profiles.v0.1.yaml`
 - Product handoff: `handoff/product-decision-engine-port.v0.1.yaml`
+- Operation-stage authority:
+  `specs/pet-integration/operation-stage-contract.v0.1.yaml`
 - Conformance cases: `conformance/pet-profiles/case-catalog.v0.1.json`
 - Closed operation input: `schema/pet-profile-operation-input.v0.1.schema.json`
 - Executed case results:
@@ -74,5 +98,5 @@ uses a network service.
 
 Every catalogued valid case is converted into a complete authoritative context
 and presented operation, executed through the same semantic validator used by
-negative cases, and bound by input/result digests. This proves contract handling
+negative cases, and bound by input/observer/result digests. This proves contract handling
 only; it does not prove PET security, policy correctness, or candidate behavior.

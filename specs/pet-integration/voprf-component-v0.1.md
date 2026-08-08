@@ -23,3 +23,7 @@ Component registration permits only local contract validation. It does not
 authorize CIRCL execution. Any future component experiment requires a separate
 reviewed grant, and this component can never satisfy the complete-profile
 selection field by itself.
+
+Registration is the only executable stage represented by this profile. Its
+stage-specific operation contains no session, policy, commitment, attempt,
+receipt, verification material, Party result, callback, or query-budget state.

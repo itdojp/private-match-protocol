@@ -20,6 +20,10 @@ commitments, and resource policy. The enclave exposes only symmetric Party-local
 `MATCH`, `NO_MATCH`, or `INDETERMINATE`; it cannot expose an exact count or
 matching rows, and the Coordinator cannot receive the plaintext result.
 
+The public callback likewise contains no Party plaintext decision. Offline
+contract conformance compares synthetic Party-local observations in a separate
+global-observer record that is prohibited from Product ports and Evidence.
+
 ## Limitations and approval
 
 AWS hardware and attestation are trusted components. Input completeness,
@@ -34,3 +38,7 @@ execution permission. Candidate execution is false and requires a separately
 reviewed `reviewed-paid-aws-experiment-execution-grant`; missing authority is
 `unsupported`. Production execution is unsupported. The profile also requires
 an exact Protocol policy binding and cannot select or change a match predicate.
+
+The lifecycle-stage contract prevents attestation, attempt, receipt, or result
+fields from appearing before the State Machine transition that introduces or
+requires them. This remains a contract fixture and does not contact AWS.

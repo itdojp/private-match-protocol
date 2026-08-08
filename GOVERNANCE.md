@@ -98,3 +98,8 @@ Registration, offline contract fixtures, and conformance
 success do not grant candidate or production execution. Candidate grants must
 be separately reviewed and bound to exact profile, source, environment, and
 expiry authorities; credentials and raw grants are not public Evidence.
+
+Executable PET conformance must follow the reviewed operation-stage authority.
+Future state must not be fabricated, and synthetic global-observer data used to
+compare Party-local results must not enter public Protocol messages, Product
+ports, or Evidence.

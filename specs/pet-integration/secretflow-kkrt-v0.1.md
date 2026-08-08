@@ -15,6 +15,12 @@ side channels are not established. A future experimental wrapper must keep
 upstream rows or intersection representations inside its boundary and expose
 only symmetric Party-local minimum results.
 
+Those Party-local decisions do not cross the public callback or Coordinator
+boundary. The canonical callback carries the common opaque receipt, normalized
+acknowledgment, Evidence reference, and reviewed authority bindings. Bilateral
+plaintext decisions exist only in the synthetic global-observer surface used
+by offline contract conformance.
+
 The wrapper, Party-local preparation/result verification, and the Protocol
 State Machine are trusted to enforce minimum disclosure. Broad host privilege,
 host-network configuration, process/container metadata, peer endpoints, and
@@ -51,3 +57,8 @@ execution is not. A future candidate requires a separately reviewed
 `reviewed-local-experiment-execution-grant` bound to the profile ID, version,
 digest, instance, source revision, environment, and expiry. Production
 execution remains unsupported.
+
+Every exchange step is checked against the operation-stage authority. Profile
+selection, budget reservation, evaluation start, contribution, acknowledgment,
+and callback therefore carry only the state available at that exact Protocol
+stage; no early step fabricates a later attempt, receipt, or result.

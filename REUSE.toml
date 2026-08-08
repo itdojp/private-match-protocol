@@ -31,7 +31,7 @@ path = [
   "schema/pet-*.schema.json",
   "schema/product-decision-engine-handoff.v0.1.schema.json",
   "schema/research-technology-authority.v0.1.schema.json",
-  "specs/pet-integration/protocol-binding.v0.1.yaml",
+  "specs/pet-integration/*.yaml",
   "scripts/validate_leakage_contract.py",
   "scripts/canonicalize_message.py",
   "scripts/compare_adapter_result.py",

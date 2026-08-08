@@ -40,12 +40,15 @@ from pet_profiles import (  # noqa: E402
     RESEARCH_FILES,
     SCHEMAS,
     STATE_MACHINE_DIGEST,
+    STAGE_CONTRACT_PATH,
     PetProfileError,
     conformance_input_for_mutation,
     detached_digest,
     generated_files,
     load_repository,
     operation_input_for_case,
+    operation_stage_contract_bytes,
+    expected_operation_stage_contract,
     expected_protocol_operations,
     validate_case_catalog,
     validate_conformance_input,
@@ -53,6 +56,7 @@ from pet_profiles import (  # noqa: E402
     validate_repository,
     validate_semantics,
     _execution_authorization_digest,
+    _execute_invalid_case,
 )
 from strict_yaml import strict_yaml_load  # noqa: E402
 from canonicalize_message import canonicalize, populate_digests, strict_loads  # noqa: E402
@@ -230,9 +234,14 @@ class PetProfileTests(unittest.TestCase):
 
     def test_product_handoff_covers_every_issue_six_concern(self) -> None:
         handoff = self.values["handoff"]
-        self.assertEqual(16, len(handoff["port_fields"]))
+        self.assertEqual(20, len(handoff["port_fields"]))
         self.assertTrue(handoff["selection_rule"]["complete_profile_required"])
         self.assertTrue(handoff["selection_rule"]["component_only_rejected"])
+        self.assertEqual(9, len(handoff["operation_stage_projection"]))
+        self.assertEqual(
+            {item["operation_id"] for item in self.values["stage"]["operations"]},
+            {item["operation"] for item in handoff["operation_stage_projection"]},
+        )
         serialized = json.dumps(handoff)
         self.assertNotIn("private-match-product/", serialized)
         self.assertNotIn("src/", serialized)
@@ -245,21 +254,204 @@ class PetProfileTests(unittest.TestCase):
         self.assertFalse(cases["paid_resource_use"])
         self.assertEqual(12, len(cases["valid_cases"]))
         self.assertEqual(
-            {"accepted"}, {item["expected"] for item in cases["valid_cases"]}
+            {"accepted", "no-op", "terminal"},
+            {item["expected_protocol_outcome"] for item in cases["valid_cases"]},
         )
 
     def test_every_valid_case_executes_through_shared_operation_validator(self) -> None:
         results = validate_case_catalog(self.values)
         self.assertEqual(12, len(results))
-        self.assertEqual({"accepted"}, {item["status"] for item in results})
+        self.assertEqual({"pass"}, {item["runner_status"] for item in results})
+        self.assertEqual(
+            {"accepted", "no-op", "terminal"},
+            {item["protocol_outcome"] for item in results},
+        )
         manifest = json.loads(
             (ROOT / GENERATED_PATHS["case_results"]).read_text(encoding="utf-8")
         )
-        self.assertEqual(12, manifest["status_counts"]["accepted"])
-        self.assertEqual(0, manifest["status_counts"]["rejected"])
+        self.assertEqual(12, manifest["status_counts"]["pass"])
+        self.assertEqual(2, manifest["status_counts"]["terminal"])
+        self.assertEqual(1, manifest["status_counts"]["no_op"])
         self.assertEqual(
             {item["case_id"] for item in self.values["cases"]["valid_cases"]},
             {item["case_id"] for item in manifest["results"]},
+        )
+
+    def test_operation_stage_authority_is_exact_state_machine_projection(self) -> None:
+        self.assertEqual(
+            expected_operation_stage_contract(self.values), self.values["stage"]
+        )
+        self.assertEqual(
+            self.values["stage"]["stage_contract_digest"],
+            self.values["binding"]["operation_stage_contract_digest"],
+        )
+        self.assertEqual(
+            STAGE_CONTRACT_PATH.as_posix(),
+            self.values["handoff"]["operation_stage_contract_path"],
+        )
+        self.assertEqual(
+            {
+                "register-component",
+                "select-profile",
+                "reserve-query-budget",
+                "start-evaluation",
+                "submit-contribution",
+                "acknowledge-receipt",
+                "accept-profile-callback",
+                "evaluation-timeout",
+                "abort-and-cleanup",
+            },
+            {item["operation_id"] for item in self.values["stage"]["operations"]},
+        )
+
+    def test_operation_stage_authority_generation_is_byte_deterministic(self) -> None:
+        first = operation_stage_contract_bytes(self.values)
+        second = operation_stage_contract_bytes(self.values)
+        self.assertEqual(first, second)
+        self.assertEqual(first, (ROOT / STAGE_CONTRACT_PATH).read_bytes())
+
+    def test_early_operations_do_not_fabricate_future_state(self) -> None:
+        records = {
+            item["operation"]: operation_input_for_case(self.values, item)
+            for item in self.values["cases"]["valid_cases"]
+        }
+        selected = records["select-profile"]["presented_operation"]
+        for field in (
+            "participant_binding_digest",
+            "commitment_pair_id",
+            "evaluation_attempt_id",
+            "opaque_receipt_ref",
+            "result_state",
+        ):
+            self.assertIsNone(selected[field], field)
+        reserved = records["reserve-query-budget"]["presented_operation"]
+        self.assertNotIn("opaque_receipt_ref", reserved)
+        self.assertNotIn("verification_material_reference", reserved)
+        started = records["start-evaluation"]["presented_operation"]
+        self.assertNotIn("opaque_receipt_ref", started)
+        self.assertNotIn("acknowledgment_status", started)
+        for operation in ("select-profile", "reserve-query-budget", "start-evaluation"):
+            self.assertNotIn("party_results", records[operation]["presented_operation"])
+        acknowledgment_cases = [
+            item
+            for item in self.values["cases"]["valid_cases"]
+            if item["operation"] == "acknowledge-receipt"
+        ]
+        acknowledgments = {
+            item["party_slot"]: operation_input_for_case(self.values, item)
+            for item in acknowledgment_cases
+        }
+        self.assertIsNone(
+            acknowledgments["a"]["authoritative_context"]["initial_state"][
+                "opaque_receipt_ref"
+            ]
+        )
+        self.assertEqual(
+            acknowledgments["b"]["presented_operation"]["opaque_receipt_ref"],
+            acknowledgments["b"]["authoritative_context"]["initial_state"][
+                "opaque_receipt_ref"
+            ],
+        )
+
+    def test_presented_operations_never_contain_bilateral_plaintext_results(
+        self,
+    ) -> None:
+        for item in self.values["cases"]["valid_cases"]:
+            with self.subTest(case=item["case_id"]):
+                record = operation_input_for_case(self.values, item)
+                public = record["presented_operation"]
+                self.assertNotIn("party_results", public)
+                self.assertNotIn("party_a_result", public)
+                self.assertNotIn("party_b_result", public)
+                observer = record["synthetic_conformance_observer"]
+                if item["operation"] == "accept-profile-callback":
+                    self.assertEqual(
+                        "synthetic-global-observer", observer["visibility"]
+                    )
+                    self.assertFalse(observer["coordinator_visible"])
+                    self.assertFalse(observer["product_port_input"])
+                    self.assertFalse(observer["evidence_exported"])
+                else:
+                    self.assertIsNone(observer)
+
+    def test_plaintext_result_in_callback_or_public_operation_fails_closed(
+        self,
+    ) -> None:
+        item = next(
+            entry
+            for entry in self.values["cases"]["valid_cases"]
+            if entry["operation"] == "accept-profile-callback"
+        )
+        record = operation_input_for_case(self.values, item)
+        public_mutation = copy.deepcopy(record)
+        public_mutation["presented_operation"]["party_a_result"] = "MATCH"
+        with self.assertRaisesRegex(PetProfileError, "PET-PUBLIC-RESULT-EXPOSURE"):
+            validate_operation_input(self.values, public_mutation)
+
+        message = strict_loads((ROOT / CANONICAL_CALLBACK_PATH).read_bytes())
+        message["payload"]["local_result"] = "MATCH"
+        message = populate_digests(message)
+        with self.assertRaisesRegex(PetProfileError, "PET-CANONICAL-MESSAGE-INVALID"):
+            validate_operation_input(
+                self.values,
+                record,
+                canonical_message_bytes=canonicalize(message),
+            )
+
+    def test_operation_specific_outcomes_are_not_flattened(self) -> None:
+        results = {
+            item["case_id"]: validate_operation_input(
+                self.values, operation_input_for_case(self.values, item)
+            )
+            for item in self.values["cases"]["valid_cases"]
+        }
+        registration = next(
+            value for key, value in results.items() if "VOPRF-REGISTRATION" in key
+        )
+        timeout = next(value for key, value in results.items() if "TIMEOUT" in key)
+        abort = next(
+            results[item["case_id"]]
+            for item in self.values["cases"]["valid_cases"]
+            if item["operation"] == "abort-and-cleanup"
+        )
+        self.assertEqual("no-op", registration["protocol_outcome"])
+        self.assertEqual("terminal", timeout["protocol_outcome"])
+        self.assertEqual("terminal", abort["protocol_outcome"])
+        self.assertEqual("ABORTED", timeout["resulting_phase"])
+        self.assertEqual("ABORTED", abort["resulting_phase"])
+
+    def test_pre_post_state_and_effect_mutations_fail_closed(self) -> None:
+        expected = {
+            "incorrect-pre-phase": "PET-STAGE-PRESTATE",
+            "incorrect-transition": "PET-STATE-TRANSITION-PARITY",
+            "incorrect-post-phase": "PET-STATE-TRANSITION-PARITY",
+            "timeout-ordinary-accepted": "PET-STATE-TRANSITION-PARITY",
+            "abort-ordinary-accepted": "PET-STATE-TRANSITION-PARITY",
+            "transcript-mutation-mismatch": "PET-STATE-TRANSITION-PARITY",
+            "query-budget-effect-mismatch": "PET-STATE-TRANSITION-PARITY",
+        }
+        for mutation, code in expected.items():
+            with self.subTest(mutation=mutation):
+                record = conformance_input_for_mutation(self.values, mutation)
+                with self.assertRaises(PetProfileError) as caught:
+                    validate_operation_input(self.values, record)
+                self.assertEqual(code, caught.exception.code)
+
+    def test_product_projection_excludes_synthetic_observer_surface(self) -> None:
+        projection = json.loads(
+            (ROOT / GENERATED_PATHS["handoff"]).read_text(encoding="utf-8")
+        )
+        serialized = json.dumps(projection, sort_keys=True)
+        self.assertNotIn("synthetic_conformance_observer", serialized)
+        fields = {item["field"] for item in projection["port_fields"]}
+        self.assertTrue(
+            {
+                "operation-stage",
+                "stage-field-availability",
+                "party-local-result-visibility",
+                "pre-post-state-contract",
+            }
+            <= fields
         )
 
     def test_authoritative_context_closes_reproduced_substitutions(self) -> None:
@@ -295,8 +487,11 @@ class PetProfileTests(unittest.TestCase):
         accepted = operation_input_for_case(self.values, callback_case)
         self.assertEqual(
             {"party_a": "MATCH", "party_b": "MATCH"},
-            accepted["presented_operation"]["party_results"],
+            accepted["synthetic_conformance_observer"][
+                "party_local_result_observations"
+            ],
         )
+        self.assertNotIn("party_results", accepted["presented_operation"])
         validate_operation_input(self.values, accepted)
 
     def test_party_result_slots_and_types_fail_closed(self) -> None:
@@ -330,7 +525,9 @@ class PetProfileTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 record = operation_input_for_case(self.values, item)
-                record["presented_operation"]["party_results"] = results
+                record["synthetic_conformance_observer"][
+                    "party_local_result_observations"
+                ] = results
                 with self.assertRaises(PetProfileError) as caught:
                     validate_operation_input(self.values, record)
                 self.assertEqual(code, caught.exception.code)
@@ -360,15 +557,14 @@ class PetProfileTests(unittest.TestCase):
         context = record["authoritative_context"]
         operation = record["presented_operation"]
         context["execution_authorization"]["environment_id"] = "unreviewed-live"
-        profile = self.values["profiles"][context["profile_id"]]
+        profile = self.values["profiles"][context["profile_authority"]["profile_id"]]
         digest = _execution_authorization_digest(
             profile,
-            context["profile_instance_id"],
+            context["profile_authority"]["profile_instance_id"],
             context["execution_authorization"],
         )
         context["execution_authorization"]["authority_digest"] = digest
         operation["execution_authorization_digest"] = digest
-        operation["receipt_bindings"]["execution_authorization_digest"] = digest
         with self.assertRaisesRegex(
             PetProfileError, "PET-EXECUTION-AUTHORIZATION-BINDING"
         ):
@@ -417,7 +613,9 @@ class PetProfileTests(unittest.TestCase):
         unrelated["binding"]["binding_digest"] = detached_digest(
             "binding", unrelated["binding"], "binding_digest"
         )
-        with self.assertRaisesRegex(PetProfileError, "PET-BINDING-SEMANTICS"):
+        with self.assertRaisesRegex(
+            PetProfileError, "PET-(BINDING-SEMANTICS|STAGE-MESSAGE-PARITY)"
+        ):
             validate_semantics(unrelated)
 
     def test_canonical_result_acceptance_notice_passes_both_validators(self) -> None:
@@ -428,7 +626,8 @@ class PetProfileTests(unittest.TestCase):
         )
         record = operation_input_for_case(self.values, item)
         self.assertEqual(
-            "accepted", validate_operation_input(self.values, record)["status"]
+            "accepted",
+            validate_operation_input(self.values, record)["protocol_outcome"],
         )
         raw = (ROOT / CANONICAL_CALLBACK_PATH).read_bytes()
         self.assertEqual(canonicalize(strict_loads(raw)), raw)
@@ -541,7 +740,7 @@ class PetProfileTests(unittest.TestCase):
 
     def test_fully_redigested_binding_and_profile_policy_mutations_fail(self) -> None:
         for mutation, expected in (
-            ("binding-event", "PET-BINDING-SEMANTICS"),
+            ("binding-event", "PET-(BINDING-SEMANTICS|STAGE-MESSAGE-PARITY)"),
             ("profile-exchange", "PET-PROTOCOL-EXCHANGE-BINDING"),
             ("second-secret-evidence-hook", "PET-EVIDENCE-SECRET"),
         ):
@@ -580,9 +779,8 @@ class PetProfileTests(unittest.TestCase):
 
     def test_unknown_failure_and_secret_evidence_never_expose_values(self) -> None:
         for mutation in ("unknown-error-category", "secret-evidence-hook"):
-            record = conformance_input_for_mutation(self.values, mutation)
             with self.assertRaises(PetProfileError) as caught:
-                validate_conformance_input(self.values, record)
+                _execute_invalid_case(self.values, mutation)
             message = str(caught.exception)
             self.assertLessEqual(len(message), 128)
             self.assertNotIn("VENDOR_RAW_FAILURE", message)

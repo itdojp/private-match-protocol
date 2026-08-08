@@ -107,6 +107,11 @@ the exact Protocol policy, execution authorization, and full Message Registry
 parity. It executes synthetic contract cases only. Candidate execution requires
 a separate reviewed external grant and remains outside P4.
 
+Its operation inputs are stage-specific projections of the existing State
+Machine. Public operations contain only data available at that stage; bilateral
+Party plaintext results are isolated to a synthetic observer that is excluded
+from Coordinator and Product ports.
+
 Exit criteria:
 
 - selected integration is experimental, not production ready

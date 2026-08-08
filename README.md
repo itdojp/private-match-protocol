@@ -68,6 +68,11 @@ no production PET or adapter has been selected.
 All valid PET fixtures execute only the shared offline contract validator.
 Profile registration and contract-fixture acceptance do not authorize a PET
 candidate, AWS operation, paid resource, or production execution.
+The PET conformance model is lifecycle-stage-aware: early operations cannot
+fabricate later commitment, attempt, receipt, verification-material, or result
+state. Party plaintext decisions remain outside public callback and Product-port
+surfaces; a separate synthetic global observer is used only by offline fixture
+conformance.
 
 ## Initial design principles
 

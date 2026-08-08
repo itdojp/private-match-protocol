@@ -31,6 +31,19 @@ operation. `accept_symmetric_result` is the existing State Machine event/effect,
 not a second externally invokable operation. Validate complete Message Registry
 parity rather than checking only that referenced names exist.
 
+Derive one closed lifecycle-stage authority from the current State Machine and
+Message Registry. Use operation-specific Schemas rather than one maximal
+operation shape: fields not yet available are prohibited or explicitly
+`NONE`/JSON `null`, timeout and abort are terminal, and each case binds its
+pre-state, transition, post-state/effect, transcript behavior, budget effect,
+and result visibility.
+
+Keep Party-local plaintext results outside the public presented operation.
+Synthetic conformance may use a separate domain-separated global observer to
+compare both Party-local decisions and their common receipt. The observer is
+test-only and is never a Protocol message, Coordinator-visible value, Product
+port input, or Evidence output.
+
 The minimum complete-profile output is symmetric Party-local `MATCH`,
 `NO_MATCH`, or `INDETERMINATE` bound to one opaque receipt. Upstream native
 rows, exact counts, matching elements, raw identifiers, private inputs, and
@@ -63,7 +76,9 @@ executed. AWS execution is not authorized. Future Evidence may supersede these
 profiles after a new reviewed decision.
 
 Every valid PET catalog case is executed through the shared authoritative
-operation validator and produces a digest-bound result manifest. One callback
+stage-aware operation validator and produces a digest-bound result manifest.
+Inputs bind the selected stage and, only for result acceptance, the separate
+observer digest. One callback
 case also passes a canonical `result_acceptance_notice` through the existing
 message validator before PET-specific authority validation.
 
