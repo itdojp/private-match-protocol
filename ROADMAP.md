@@ -93,11 +93,34 @@ After the research repository completes a technology bakeoff:
 - define malicious-input, input-completeness, and repeated-query controls
 - define key and attestation responsibilities
 
+Current proposed artifacts define two materially different experimental
+complete-decision contracts—SecretFlow KKRT PSI and AWS Nitro Enclaves—and one
+RFC 9497/CIRCL VOPRF component-only contract. They bind to the existing State
+Machine, Message Registry, transcript, query-budget, timeout, cancellation, and
+cleanup authorities and project a public Product decision-engine handoff.
+Research candidate status remains `not-run`, VOPRF cannot be selected as a
+complete engine, no AWS execution is authorized, and no production PET is
+selected.
+
+The Draft executable conformance layer binds one authoritative operation context,
+the exact Protocol policy, execution authorization, and full Message Registry
+parity. It executes synthetic contract cases only. Candidate execution requires
+a separate reviewed external grant and remains outside P4.
+
+Its operation inputs are stage-specific projections of the existing State
+Machine. Public operations contain only data available at that stage; bilateral
+Party plaintext results are isolated to a synthetic observer that is excluded
+from Coordinator and Product ports.
+
 Exit criteria:
 
 - selected integration is experimental, not production ready
 - residual leakage and security model are published
 - rejected alternatives and decision expiry are documented
+
+The proposed P4 artifacts satisfy a contract-review milestone only. Human
+review, future reproduction Evidence, and an explicit promotion decision remain
+required before the exit criteria can be considered complete.
 
 ## P5 — Stable profile candidate
 

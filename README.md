@@ -53,12 +53,26 @@ The following belong in private repositories:
   [reference verifier contract](specs/conformance/REFERENCE_VERIFIER_CONTRACT_V0.1.md),
   [canonical conformance-state projection](specs/conformance/CONFORMANCE_STATE_PROJECTION_V0.1.md), and
   [offline adapter-result contract](specs/conformance/INTEROPERABILITY_ADAPTER_CONTRACT_V0.1.md)
+- [Experimental PET integration profiles](specs/pet-integration/README.md),
+  [machine-readable profile registry](registry/pet-integration-profiles.v0.1.yaml), and
+  [public Product decision-engine handoff](handoff/product-decision-engine-port.v0.1.yaml)
 
 ## Maturity
 
 The repository contains draft protocol artifacts. No artifact is `candidate` or
 `stable`, no production protocol or PET has been selected, no cryptographic
 security claim has been established, and no compatibility commitment exists yet.
+SecretFlow KKRT and Nitro Enclaves are contract-only experimental complete
+profiles; RFC 9497/CIRCL VOPRF is component-only. No candidate was executed and
+no production PET or adapter has been selected.
+All valid PET fixtures execute only the shared offline contract validator.
+Profile registration and contract-fixture acceptance do not authorize a PET
+candidate, AWS operation, paid resource, or production execution.
+The PET conformance model is lifecycle-stage-aware: early operations cannot
+fabricate later commitment, attempt, receipt, verification-material, or result
+state. Party plaintext decisions remain outside public callback and Product-port
+surfaces; a separate synthetic global observer is used only by offline fixture
+conformance.
 
 ## Initial design principles
 

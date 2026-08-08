@@ -1,0 +1,439 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+schema_version: '0.1'
+record_type: pet-operation-stage-contract
+artifact_status: experimental
+state_machine_digest: sha256:32e514a61a83aeb1593623eb1144f323d1115dc8c812b5fd72af93a3ae06ba16
+message_registry_digest: sha256:df3eea26ad07b477912b124c96c9325676e9d1a89744e672f26c00538377a7ea
+operations:
+- operation_id: register-component
+  lifecycle_stage: registry-registration
+  message_type: null
+  message_version: null
+  events: []
+  transition_ids: []
+  expected_pre_phases: []
+  expected_post_phases: []
+  fields_available_before:
+  - profile_authority
+  fields_introduced:
+  - component_registration
+  fields_required_on_input:
+  - profile_authority
+  - execution_mode
+  fields_required_none: []
+  fields_prohibited_on_input:
+  - session_state
+  - party_local_result
+  - opaque_receipt
+  fields_retained_unchanged:
+  - profile_authority
+  fields_invalidated: []
+  party_local_only_fields: []
+  coordinator_visible_fields: []
+  selected_profile_visible_fields:
+  - component_registration
+  transcript_participation: none
+  replay_idempotency_domain: profile ID/version/digest registration identity
+  result_classification: component-registration
+  query_budget_effect: none
+  transcript_mutated: false
+- operation_id: select-profile
+  lifecycle_stage: session-creation
+  message_type: session_proposal
+  message_version: '0.1'
+  events:
+  - create_session
+  transition_ids:
+  - TR-CREATE
+  expected_pre_phases:
+  - UNINITIALIZED
+  expected_post_phases:
+  - CREATED
+  fields_available_before:
+  - protocol_authority
+  - profile_authority
+  fields_introduced:
+  - session_id
+  - policy_binding
+  - selected_profile
+  fields_required_on_input:
+  - session_proposal
+  - selected_profile
+  fields_required_none:
+  - participant_binding
+  - commitment_pair_id
+  - evaluation_attempt_id
+  - opaque_receipt_ref
+  - result_state
+  - query_budget_state
+  fields_prohibited_on_input:
+  - party_local_result
+  - verification_material
+  - result_callback
+  fields_retained_unchanged:
+  - profile_authority
+  fields_invalidated: []
+  party_local_only_fields: []
+  coordinator_visible_fields:
+  - session_id
+  - policy_binding
+  - selected_profile
+  selected_profile_visible_fields:
+  - profile_authority
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
+  result_classification: accepted-mutation
+  query_budget_effect: none
+  transcript_mutated: true
+- operation_id: reserve-query-budget
+  lifecycle_stage: query-budget-reservation
+  message_type: query_budget_reservation
+  message_version: '0.1'
+  events:
+  - reserve_query_budget
+  transition_ids:
+  - TR-RESERVE-BUDGET
+  expected_pre_phases:
+  - PARTICIPANTS_BOUND
+  expected_post_phases:
+  - COMMITMENTS_PENDING
+  fields_available_before:
+  - session_id
+  - policy_binding
+  - participant_binding
+  - query_budget_state=NONE
+  fields_introduced:
+  - query_budget_state=RESERVED
+  fields_required_on_input:
+  - authorization_ref
+  - participant_binding
+  fields_required_none:
+  - commitment_pair_id
+  - evaluation_attempt_id
+  - opaque_receipt_ref
+  - result_state
+  fields_prohibited_on_input:
+  - party_local_result
+  - result_callback
+  - final_receipt
+  fields_retained_unchanged:
+  - session_id
+  - policy_binding
+  - participant_binding
+  - selected_profile
+  fields_invalidated: []
+  party_local_only_fields: []
+  coordinator_visible_fields:
+  - authorization_ref
+  - query_budget_state
+  selected_profile_visible_fields: []
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
+  result_classification: accepted-mutation
+  query_budget_effect: reserve
+  transcript_mutated: true
+- operation_id: start-evaluation
+  lifecycle_stage: evaluation-start
+  message_type: evaluation_start
+  message_version: '0.1'
+  events:
+  - start_evaluation
+  transition_ids:
+  - TR-START-EVALUATION
+  expected_pre_phases:
+  - COMMITTED
+  expected_post_phases:
+  - EVALUATING
+  fields_available_before:
+  - session_id
+  - policy_binding
+  - participant_binding
+  - commitment_pair_id
+  - query_budget_state=RESERVED
+  fields_introduced:
+  - evaluation_attempt_id
+  - evaluation_deadline
+  - query_budget_state=CONSUMED
+  fields_required_on_input:
+  - commitment_pair_id
+  - evaluation_attempt_id
+  - verification_material
+  - resource_policy
+  fields_required_none:
+  - opaque_receipt_ref
+  - result_state
+  fields_prohibited_on_input:
+  - party_local_result
+  - final_receipt
+  - result_callback
+  fields_retained_unchanged:
+  - session_id
+  - policy_binding
+  - participant_binding
+  - commitment_pair_id
+  - selected_profile
+  fields_invalidated: []
+  party_local_only_fields: []
+  coordinator_visible_fields:
+  - evaluation_attempt_id
+  - verification_material
+  - resource_policy
+  selected_profile_visible_fields:
+  - evaluation_attempt_id
+  - verification_material
+  - resource_policy
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
+  result_classification: accepted-mutation
+  query_budget_effect: consume
+  transcript_mutated: true
+- operation_id: submit-contribution
+  lifecycle_stage: party-contribution
+  message_type: evaluation_contribution
+  message_version: '0.1'
+  events:
+  - submit_evaluation_contribution
+  transition_ids:
+  - TR-SUBMIT-CONTRIBUTION-A
+  - TR-SUBMIT-CONTRIBUTION-B
+  expected_pre_phases:
+  - EVALUATING
+  expected_post_phases:
+  - EVALUATING
+  fields_available_before:
+  - session_id
+  - policy_binding
+  - commitment_pair_id
+  - evaluation_attempt_id
+  fields_introduced:
+  - party_slot_contribution
+  fields_required_on_input:
+  - party_slot
+  - contribution_ref
+  fields_required_none:
+  - opaque_receipt_ref
+  - result_state
+  fields_prohibited_on_input:
+  - party_local_result
+  - bilateral_result
+  - receipt_acknowledgment
+  fields_retained_unchanged:
+  - session_id
+  - policy_binding
+  - commitment_pair_id
+  - evaluation_attempt_id
+  - query_budget_state=CONSUMED
+  fields_invalidated: []
+  party_local_only_fields:
+  - private_contribution_source
+  coordinator_visible_fields:
+  - normalized_contribution_status
+  selected_profile_visible_fields:
+  - contribution_ref
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
+  result_classification: accepted-mutation
+  query_budget_effect: unchanged
+  transcript_mutated: true
+- operation_id: acknowledge-receipt
+  lifecycle_stage: party-receipt-acknowledgment
+  message_type: opaque_receipt_ack
+  message_version: '0.1'
+  events:
+  - acknowledge_opaque_receipt_a
+  - acknowledge_opaque_receipt_b
+  transition_ids:
+  - TR-ACK-RECEIPT-A
+  - TR-ACK-RECEIPT-B
+  expected_pre_phases:
+  - EVALUATING
+  expected_post_phases:
+  - EVALUATING
+  fields_available_before:
+  - session_id
+  - policy_binding
+  - commitment_pair_id
+  - evaluation_attempt_id
+  fields_introduced:
+  - party_slot_receipt_ack
+  - opaque_receipt_ref
+  fields_required_on_input:
+  - party_slot
+  - opaque_receipt_ref
+  - acknowledgment_status
+  - profile_evidence_ref
+  fields_required_none: []
+  fields_prohibited_on_input:
+  - party_local_result
+  - bilateral_result
+  - other_party_acknowledgment
+  fields_retained_unchanged:
+  - session_id
+  - policy_binding
+  - commitment_pair_id
+  - evaluation_attempt_id
+  - query_budget_state=CONSUMED
+  fields_invalidated: []
+  party_local_only_fields:
+  - party_local_result
+  coordinator_visible_fields:
+  - opaque_receipt_ref
+  - acknowledgment_status
+  - profile_evidence_ref
+  selected_profile_visible_fields:
+  - opaque_receipt_ref
+  - acknowledgment_status
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: (session_id,sender_participant_id,message_id/nonce)
+  result_classification: accepted-mutation
+  query_budget_effect: unchanged
+  transcript_mutated: true
+- operation_id: accept-profile-callback
+  lifecycle_stage: symmetric-result-acceptance
+  message_type: result_acceptance_notice
+  message_version: '0.1'
+  events:
+  - accept_symmetric_result
+  transition_ids:
+  - TR-ACCEPT-SYMMETRIC-RESULT
+  - TR-RESULT-CONFLICT
+  expected_pre_phases:
+  - EVALUATING
+  expected_post_phases:
+  - ABORTED
+  - RESULT_ACCEPTED
+  fields_available_before:
+  - session_id
+  - policy_binding
+  - commitment_pair_id
+  - evaluation_attempt_id
+  - both_receipt_acknowledgments
+  fields_introduced:
+  - accepted_result_state
+  - phase=RESULT_ACCEPTED
+  fields_required_on_input:
+  - callback_identity
+  - opaque_receipt_ref
+  - acknowledgment_status
+  - profile_evidence_ref
+  - verification_material
+  fields_required_none: []
+  fields_prohibited_on_input:
+  - party_local_result
+  - bilateral_result
+  - plaintext_result
+  fields_retained_unchanged:
+  - session_id
+  - policy_binding
+  - commitment_pair_id
+  - evaluation_attempt_id
+  - query_budget_state=CONSUMED
+  fields_invalidated: []
+  party_local_only_fields:
+  - party_local_result
+  coordinator_visible_fields:
+  - opaque_receipt_ref
+  - acknowledgment_status
+  - profile_evidence_ref
+  selected_profile_visible_fields:
+  - synthetic_result_comparison
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: (profile_id,profile_version,profile_instance_id,session_id,evaluation_attempt_id,callback_id/idempotency_key)
+  result_classification: accepted-mutation
+  query_budget_effect: unchanged
+  transcript_mutated: true
+- operation_id: evaluation-timeout
+  lifecycle_stage: evaluation-timeout
+  message_type: null
+  message_version: null
+  events:
+  - advance_authoritative_time
+  transition_ids:
+  - TR-EVALUATION-TIMEOUT
+  expected_pre_phases:
+  - EVALUATING
+  expected_post_phases:
+  - ABORTED
+  fields_available_before:
+  - phase=EVALUATING
+  - evaluation_attempt_id
+  - query_budget_state=CONSUMED
+  fields_introduced:
+  - terminal_failure_code=EVALUATION_TIMEOUT
+  - phase=ABORTED
+  fields_required_on_input:
+  - new_authoritative_time
+  - prior_transcript_head
+  fields_required_none: []
+  fields_prohibited_on_input:
+  - party_local_result
+  - new_receipt
+  - profile_callback
+  fields_retained_unchanged:
+  - evaluation_attempt_id
+  - query_budget_state=CONSUMED
+  fields_invalidated:
+  - disclosure_state
+  party_local_only_fields: []
+  coordinator_visible_fields:
+  - normalized_timeout_status
+  selected_profile_visible_fields: []
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: authoritative timer threshold
+  result_classification: terminal-mutation
+  query_budget_effect: preserve-consumed
+  transcript_mutated: true
+- operation_id: abort-and-cleanup
+  lifecycle_stage: abort-and-cleanup
+  message_type: abort_notice
+  message_version: '0.1'
+  events:
+  - abort_session
+  transition_ids:
+  - TR-ABORT
+  expected_pre_phases:
+  - COMMITMENTS_PENDING
+  - COMMITTED
+  - CONSENT_PENDING
+  - CREATED
+  - DISCLOSURE_AUTHORIZED
+  - EVALUATING
+  - PARTICIPANTS_BOUND
+  - RESULT_ACCEPTED
+  expected_post_phases:
+  - ABORTED
+  fields_available_before:
+  - live_session
+  fields_introduced:
+  - terminal_failure_code
+  - phase=ABORTED
+  - cleanup_evidence
+  fields_required_on_input:
+  - normalized_failure_category
+  - cleanup_completed
+  fields_required_none: []
+  fields_prohibited_on_input:
+  - fabricated_result_state
+  - bilateral_result
+  - new_receipt
+  fields_retained_unchanged:
+  - session_id
+  - policy_binding
+  - selected_profile
+  fields_invalidated:
+  - disclosure_state
+  party_local_only_fields: []
+  coordinator_visible_fields:
+  - normalized_failure_category
+  - cleanup_completed
+  selected_profile_visible_fields:
+  - cleanup_required
+  transcript_participation: accepted-mutating-event
+  replay_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
+  result_classification: terminal-mutation
+  query_budget_effect: release-if-not-started
+  transcript_mutated: true
+stage_contract_digest: sha256:64e35de4d6b067ec2c06b64990bfccafe244e8524dd0a5422282236f8ad6506b
+limitations:
+- This contract is a deterministic projection of the reviewed State Machine and Message Registry, not an independent State Machine.
+- Synthetic global-observer data is test-only and is not a Product or Coordinator input.

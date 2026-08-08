@@ -87,3 +87,19 @@ When a material error is found:
 ## Relationship to the commercial product
 
 The private product repository may implement additional internal controls. Public protocol claims must not imply that unpublished controls have been independently reviewed. Public assurance evidence is published through `itdojp/private-match-assurance`.
+
+Experimental PET profiles define public semantic and fail-closed boundaries for
+private adapters. They do not approve an implementation, vendor, cloud account,
+key authority, authentication method, or production architecture. A
+component-only profile cannot be promoted into a complete decision engine by a
+private implementation without a new public review.
+
+Registration, offline contract fixtures, and conformance
+success do not grant candidate or production execution. Candidate grants must
+be separately reviewed and bound to exact profile, source, environment, and
+expiry authorities; credentials and raw grants are not public Evidence.
+
+Executable PET conformance must follow the reviewed operation-stage authority.
+Future state must not be fabricated, and synthetic global-observer data used to
+compare Party-local results must not enter public Protocol messages, Product
+ports, or Evidence.

@@ -1,0 +1,3108 @@
+#!/usr/bin/env python3
+"""Closed experimental PET-profile authority, validation, and generation.
+
+This module validates public contract artifacts only.  It never imports,
+executes, or contacts SecretFlow, CIRCL, AWS, the Research repository, or the
+private Product repository.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import os
+import stat
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+import yaml
+from jsonschema import Draft202012Validator, FormatChecker
+
+from canonicalize_message import canonicalize, strict_loads
+from strict_yaml import strict_yaml_load
+from validate_messages import validate_message_bytes
+
+
+PROTOCOL_COMMIT = "9bb59d3b5e1435885fdea60280d6602f937305c9"
+PROTOCOL_SOURCE_DIGEST = (
+    "sha256:ed111a4bb8d6e662051940543bdf0c72503ff4b907018c1d76c7345b05ebf6a3"
+)
+STATE_MACHINE_DIGEST = (
+    "sha256:32e514a61a83aeb1593623eb1144f323d1115dc8c812b5fd72af93a3ae06ba16"
+)
+MESSAGE_REGISTRY_DIGEST = (
+    "sha256:df3eea26ad07b477912b124c96c9325676e9d1a89744e672f26c00538377a7ea"
+)
+MESSAGE_INPUT_TREE_DIGEST = (
+    "sha256:4902a58e94110d4c1d3b5780daf5e9e059a7b39972911e0df23ee9cd993b5afa"
+)
+RESEARCH_COMMIT = "45607b57d61de5ff2d46a092dc24f6beb50dfe7c"
+RESEARCH_FILES = {
+    "decisions/ADR-0001-first-technology-bakeoff.md": "sha256:ccc3287ae979b95c62600cd8283b2389c05e44e076aa4836d4e034a01d4b2f9f",
+    "benchmarks/experiment-matrix.yaml": "sha256:ff9a8b7bfb9353c0f38fad12aad120379c000859adeb07c913ba07452f7117ce",
+    "benchmarks/result.schema.json": "sha256:b848e806353628c83d7e68a1c273e1da8b7541290a01952ae538a5696886603b",
+    "records/technologies/secretflow-psi.yaml": "sha256:f570bcd8cde457e32bdc78c8202779146da7a40961bd44269df9347703d8b053",
+    "records/technologies/rfc9497-circl-voprf.yaml": "sha256:b763711c3e648cd6c04f1d6e1c7936f0e2f5452a38b3606eb7e11fc83e8efe56",
+    "records/technologies/aws-nitro-enclaves.yaml": "sha256:435d21640a369a211e8323e55ab51b2499aa771dbc840678a922efc18eeaeaab",
+}
+COMPLETE_PROFILE_IDS = {
+    "private-match-experimental-secretflow-kkrt",
+    "private-match-experimental-nitro-enclave",
+}
+COMPONENT_PROFILE_IDS = {"private-match-experimental-voprf-component"}
+PROTOCOL_OUTPUTS = ["MATCH", "NO_MATCH", "INDETERMINATE"]
+BARE_RESULT_RECEIPTS = {
+    "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+    for value in PROTOCOL_OUTPUTS
+}
+PROHIBITED_OUTPUTS = [
+    "exact-intersection-count",
+    "matching-elements",
+    "non-matching-elements",
+    "participant-identity",
+    "private-input",
+    "raw-identifier",
+]
+CALLBACK_BINDINGS = [
+    "profile_id",
+    "profile_version",
+    "profile_digest",
+    "profile_instance_id",
+    "session_id",
+    "policy_id",
+    "policy_version",
+    "participant_binding_digest",
+    "commitment_pair_id",
+    "evaluation_attempt_id",
+    "opaque_receipt",
+    "prior_transcript_head",
+    "verification_material_reference",
+    "verification_material_digest",
+    "resource_policy_binding",
+    "execution_authorization_digest",
+]
+RECEIPT_BINDINGS = [
+    "session_id",
+    "participant_binding_digest",
+    "policy_id",
+    "policy_version",
+    "profile_id",
+    "profile_version",
+    "profile_digest",
+    "profile_instance_id",
+    "commitment_pair_id",
+    "evaluation_attempt_id",
+    "prior_transcript_head",
+    "input_commitments",
+    "verification_material_reference",
+    "verification_material_digest",
+    "resource_policy_binding",
+    "execution_authorization_digest",
+]
+NITRO_RECEIPT_BINDINGS = [
+    *RECEIPT_BINDINGS,
+    "attestation_document_digest",
+    "verifier_nonce",
+    "pcr_policy_digest",
+    "enclave_artifact_digest",
+]
+PROFILE_PATHS = {
+    "private-match-experimental-secretflow-kkrt": Path(
+        "profiles/pet-integration/secretflow-kkrt.v0.1.json"
+    ),
+    "private-match-experimental-nitro-enclave": Path(
+        "profiles/pet-integration/nitro-enclave.v0.1.json"
+    ),
+    "private-match-experimental-voprf-component": Path(
+        "profiles/pet-integration/voprf-component.v0.1.json"
+    ),
+}
+AUTHORITY_PATH = Path("config/research-technology-authority.v0.1.json")
+REGISTRY_PATH = Path("registry/pet-integration-profiles.v0.1.yaml")
+HANDOFF_PATH = Path("handoff/product-decision-engine-port.v0.1.yaml")
+BINDING_PATH = Path("specs/pet-integration/protocol-binding.v0.1.yaml")
+STAGE_CONTRACT_PATH = Path("specs/pet-integration/operation-stage-contract.v0.1.yaml")
+CASE_CATALOG_PATH = Path("conformance/pet-profiles/case-catalog.v0.1.json")
+CANONICAL_CALLBACK_PATH = Path(
+    "conformance/pet-profiles/messages/result-acceptance-notice.v0.1.json"
+)
+STATE_MACHINE_PATH = Path("specs/state-machines/private-match-core-session-v0.1.yaml")
+MESSAGE_REGISTRY_PATH = Path("registry/message-types.v0.1.yaml")
+MESSAGE_SCHEMA_PATH = Path("schemas/messages/envelope.v0.1.schema.json")
+MESSAGE_MATERIALS_PATH = Path("conformance/messages/verification-materials.v0.1.yaml")
+GENERATED_ROOT = Path("generated/pet-integration")
+SCHEMAS = {
+    "authority": Path("schema/research-technology-authority.v0.1.schema.json"),
+    "profile": Path("schema/pet-integration-profile.v0.1.schema.json"),
+    "registry": Path("schema/pet-integration-profile-registry.v0.1.schema.json"),
+    "handoff": Path("schema/product-decision-engine-handoff.v0.1.schema.json"),
+    "binding": Path("schema/pet-protocol-binding.v0.1.schema.json"),
+    "cases": Path("schema/pet-profile-conformance-cases.v0.1.schema.json"),
+    "operation": Path("schema/pet-profile-operation-input.v0.1.schema.json"),
+    "case_results": Path("schema/pet-profile-case-results.v0.1.schema.json"),
+    "stage": Path("schema/pet-operation-stage-contract.v0.1.schema.json"),
+}
+GENERATED_PATHS = {
+    "index": GENERATED_ROOT / "profile-index.v0.1.json",
+    "comparison": GENERATED_ROOT / "profile-comparison.v0.1.md",
+    "handoff": GENERATED_ROOT / "product-handoff-projection.v0.1.json",
+    "manifest": GENERATED_ROOT / "profile-digest-manifest.v0.1.json",
+    "case_results": GENERATED_ROOT / "executable-case-results.v0.1.json",
+}
+MAX_FILE_BYTES = 2 * 1024 * 1024
+
+DOMAINS = {
+    "authority": b"private-match-research-technology-authority/v0.1\x00",
+    "profile": b"private-match-pet-integration-profile/v0.1\x00",
+    "registry": b"private-match-pet-profile-registry/v0.1\x00",
+    "handoff": b"private-match-product-decision-engine-handoff/v0.1\x00",
+    "binding": b"private-match-pet-protocol-binding/v0.1\x00",
+    "cases": b"private-match-pet-profile-conformance-cases/v0.1\x00",
+    "operation": b"private-match-pet-profile-operation-input/v0.1\x00",
+    "case_results": b"private-match-pet-profile-executable-case-results/v0.1\x00",
+    "stage": b"private-match-pet-operation-stage-contract/v0.1\x00",
+    "observer": b"private-match-pet-synthetic-result-observer/v0.1\x00",
+    "execution_authorization": b"private-match-pet-execution-authorization/v0.1\x00",
+    "index": b"private-match-pet-profile-index/v0.1\x00",
+    "projection": b"private-match-product-handoff-projection/v0.1\x00",
+    "manifest": b"private-match-pet-generated-manifest/v0.1\x00",
+}
+
+
+class PetProfileError(ValueError):
+    """A bounded, value-free profile validation failure."""
+
+    def __init__(self, code: str, logical_path: str = "artifact") -> None:
+        super().__init__(f"{code}: {logical_path}")
+        self.code = code
+        self.logical_path = logical_path
+
+
+def sha256_bytes(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def detached_digest(kind: str, value: dict[str, Any], field: str) -> str:
+    material = copy.deepcopy(value)
+    material.pop(field, None)
+    return sha256_bytes(DOMAINS[kind] + canonicalize(material))
+
+
+def _safe_relative(value: str) -> PurePosixPath:
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise PetProfileError("PET-PATH-INVALID")
+    path = PurePosixPath(value)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise PetProfileError("PET-PATH-INVALID")
+    if len(path.parts) and path.parts[0].endswith(":"):
+        raise PetProfileError("PET-PATH-INVALID")
+    return path
+
+
+def _regular_file(root: Path, relative: str | Path) -> Path:
+    logical = str(relative)
+    path = _safe_relative(logical)
+    current = root.resolve()
+    for part in path.parts:
+        candidate = current / part
+        try:
+            mode = os.lstat(candidate).st_mode
+        except OSError as error:
+            raise PetProfileError("PET-FILE-MISSING", logical) from error
+        if stat.S_ISLNK(mode):
+            raise PetProfileError("PET-PATH-SYMLINK", logical)
+        current = candidate
+    try:
+        mode = os.lstat(current).st_mode
+        size = os.lstat(current).st_size
+    except OSError as error:
+        raise PetProfileError("PET-FILE-MISSING", logical) from error
+    if not stat.S_ISREG(mode):
+        raise PetProfileError("PET-PATH-NOT-FILE", logical)
+    if size > MAX_FILE_BYTES:
+        raise PetProfileError("PET-FILE-OVERSIZED", logical)
+    return current
+
+
+def load_json(root: Path, relative: str | Path) -> Any:
+    path = _regular_file(root, relative)
+    try:
+        return strict_loads(path.read_bytes(), max_bytes=MAX_FILE_BYTES)
+    except Exception as error:
+        raise PetProfileError("PET-JSON-INVALID", str(relative)) from error
+
+
+def load_yaml(root: Path, relative: str | Path) -> Any:
+    path = _regular_file(root, relative)
+    try:
+        return strict_yaml_load(path.read_text(encoding="utf-8"))
+    except (UnicodeError, yaml.YAMLError, ValueError) as error:
+        raise PetProfileError("PET-YAML-INVALID", str(relative)) from error
+
+
+def _schema_validate(value: Any, schema: dict[str, Any], logical: str) -> None:
+    errors = sorted(
+        Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(value),
+        key=lambda item: list(item.absolute_path),
+    )
+    if errors:
+        suffix = ".".join(map(str, errors[0].absolute_path))
+        raise PetProfileError(
+            "PET-SCHEMA-INVALID", f"{logical}{'.' + suffix if suffix else ''}"
+        )
+
+
+def load_repository(root: Path) -> dict[str, Any]:
+    schemas = {key: load_json(root, path) for key, path in SCHEMAS.items()}
+    for key, schema in schemas.items():
+        try:
+            Draft202012Validator.check_schema(schema)
+        except Exception as error:
+            raise PetProfileError("PET-SCHEMA-SELF-INVALID", key) from error
+    values = {
+        "root": root,
+        "authority": load_json(root, AUTHORITY_PATH),
+        "registry": load_yaml(root, REGISTRY_PATH),
+        "handoff": load_yaml(root, HANDOFF_PATH),
+        "binding": load_yaml(root, BINDING_PATH),
+        "stage": load_yaml(root, STAGE_CONTRACT_PATH),
+        "cases": load_json(root, CASE_CATALOG_PATH),
+        "profiles": {key: load_json(root, path) for key, path in PROFILE_PATHS.items()},
+        "state_machine": load_yaml(root, STATE_MACHINE_PATH),
+        "message_registry": load_yaml(root, MESSAGE_REGISTRY_PATH),
+        "message_schema": load_json(root, MESSAGE_SCHEMA_PATH),
+        "message_materials": load_yaml(root, MESSAGE_MATERIALS_PATH),
+    }
+    for key in ("authority", "registry", "handoff", "binding", "stage", "cases"):
+        _schema_validate(
+            values[key],
+            schemas[key],
+            str(
+                {
+                    "authority": AUTHORITY_PATH,
+                    "registry": REGISTRY_PATH,
+                    "handoff": HANDOFF_PATH,
+                    "binding": BINDING_PATH,
+                    "stage": STAGE_CONTRACT_PATH,
+                    "cases": CASE_CATALOG_PATH,
+                }[key]
+            ),
+        )
+    for identifier, value in values["profiles"].items():
+        _schema_validate(value, schemas["profile"], str(PROFILE_PATHS[identifier]))
+    values["schemas"] = schemas
+    return values
+
+
+def _require(condition: bool, code: str, logical: str = "artifact") -> None:
+    if not condition:
+        raise PetProfileError(code, logical)
+
+
+def validate_research_authority(authority: dict[str, Any]) -> None:
+    _require(
+        authority["repository"] == "itdojp/private-match-research",
+        "PET-RESEARCH-REPOSITORY",
+    )
+    _require(authority["commit"] == RESEARCH_COMMIT, "PET-RESEARCH-COMMIT")
+    _require(
+        authority["issue"]["number"] == 4
+        and authority["issue"]["state"] == "completed",
+        "PET-RESEARCH-ISSUE",
+    )
+    observed = {item["path"]: item["digest"] for item in authority["artifacts"]}
+    _require(observed == RESEARCH_FILES, "PET-RESEARCH-ARTIFACT-DIGEST")
+    tracks = {item["track_id"]: item for item in authority["selected_tracks"]}
+    _require(
+        set(tracks) == {"secretflow-kkrt", "rfc9497-circl-voprf", "aws-nitro-enclave"},
+        "PET-RESEARCH-TRACKS",
+    )
+    _require(
+        tracks["secretflow-kkrt"]["source_revision"]
+        == "d7682707035d6b3e04cc09b8bfef629140641432",
+        "PET-RESEARCH-SECRET-FLOW-PIN",
+    )
+    _require(
+        tracks["secretflow-kkrt"]["initial_protocol"] == "PROTOCOL_KKRT",
+        "PET-RESEARCH-SECRET-FLOW-PROTOCOL",
+    )
+    _require(
+        tracks["rfc9497-circl-voprf"]["source_revision"] == "v1.6.4",
+        "PET-RESEARCH-CIRCL-PIN",
+    )
+    _require(
+        tracks["rfc9497-circl-voprf"]["standard"] == "RFC 9497",
+        "PET-RESEARCH-VOPRF-STANDARD",
+    )
+    _require(
+        tracks["aws-nitro-enclave"]["source_revision"] == "v1.4.5"
+        and tracks["aws-nitro-enclave"]["secondary_source_revision"] == "v0.5.2",
+        "PET-RESEARCH-NITRO-PIN",
+    )
+    _require(
+        tracks["secretflow-kkrt"]["source_repository"] == "secretflow/psi"
+        and tracks["secretflow-kkrt"]["execution_authorization"] == "not-provided",
+        "PET-RESEARCH-SECRET-FLOW-AUTHORITY",
+    )
+    _require(
+        tracks["rfc9497-circl-voprf"]["source_repository"] == "cloudflare/circl"
+        and tracks["rfc9497-circl-voprf"]["secondary_source_revision"] == "RFC 9497"
+        and tracks["rfc9497-circl-voprf"]["execution_authorization"] == "not-provided",
+        "PET-RESEARCH-VOPRF-AUTHORITY",
+    )
+    _require(
+        tracks["aws-nitro-enclave"]["source_repository"] == "aws/aws-nitro-enclaves-cli"
+        and tracks["aws-nitro-enclave"]["secondary_source_repository"]
+        == "aws/aws-nitro-enclaves-nsm-api"
+        and tracks["aws-nitro-enclave"]["execution_authorization"]
+        == "human-required-not-provided",
+        "PET-RESEARCH-NITRO-AUTHORITY",
+    )
+    _require(
+        all(item["local_result_status"] == "not-run" for item in tracks.values()),
+        "PET-LOCAL-RESULT-PROMOTION",
+    )
+    _require(
+        authority["production_selection_status"] == "not-selected",
+        "PET-PRODUCTION-PROMOTION",
+    )
+    _require(
+        authority["authority_digest"]
+        == detached_digest("authority", authority, "authority_digest"),
+        "PET-RESEARCH-AUTHORITY-DIGEST",
+    )
+
+
+def _validate_profile(
+    profile: dict[str, Any],
+    authority_digest: str,
+    expected_operations: dict[str, tuple[Any, ...]],
+) -> None:
+    identifier = profile["profile_id"]
+    expected_tracks = {
+        "private-match-experimental-secretflow-kkrt": "secretflow-kkrt",
+        "private-match-experimental-nitro-enclave": "aws-nitro-enclave",
+        "private-match-experimental-voprf-component": "rfc9497-circl-voprf",
+    }
+    _require(profile["profile_version"] == "0.1", "PET-PROFILE-VERSION", identifier)
+    _require(
+        profile["artifact_status"] == "experimental", "PET-PROFILE-STATUS", identifier
+    )
+    _require(
+        profile["research_authority_binding"]["authority_digest"] == authority_digest,
+        "PET-RESEARCH-AUTHORITY-STALE",
+        identifier,
+    )
+    _require(
+        profile["research_authority_binding"]["track_id"]
+        == expected_tracks.get(identifier),
+        "PET-RESEARCH-TRACK-BINDING",
+        identifier,
+    )
+    _require(
+        profile["production_eligible"] is False, "PET-PRODUCTION-ELIGIBLE", identifier
+    )
+    _require(
+        profile["execution_authorization"]
+        in {"not-provided", "human-required-not-provided"},
+        "PET-EXECUTION-AUTHORIZATION",
+        identifier,
+    )
+    execution = profile["execution_contract"]
+    _require(
+        execution
+        == {
+            "contract_registration_allowed": True,
+            "synthetic_contract_fixture_allowed": True,
+            "candidate_execution_authorized": False,
+            "production_execution_authorized": False,
+            "required_external_authority": {
+                "private-match-experimental-secretflow-kkrt": "reviewed-local-experiment-execution-grant",
+                "private-match-experimental-nitro-enclave": "reviewed-paid-aws-experiment-execution-grant",
+                "private-match-experimental-voprf-component": "reviewed-local-component-experiment-execution-grant",
+            }[identifier],
+            "missing_authority_behavior": "unsupported",
+            "authorization_binding_required": True,
+        },
+        "PET-EXECUTION-CONTRACT",
+        identifier,
+    )
+    _require(
+        profile["profile_digest"]
+        == detached_digest("profile", profile, "profile_digest"),
+        "PET-PROFILE-DIGEST",
+        identifier,
+    )
+    _require(profile["security_model"]["model_id"], "PET-SECURITY-MODEL", identifier)
+    _require(profile["trust_model"]["model_id"], "PET-TRUST-MODEL", identifier)
+    privacy = profile["privacy_and_operations"]
+    _require(privacy["metadata_leakage"], "PET-LEAKAGE-MODEL", identifier)
+    _require(
+        privacy["repeated_query_controls"], "PET-REPEATED-QUERY-CONTROL", identifier
+    )
+    _require(
+        all(
+            item["category"]
+            in {
+                "AUTHENTICATION_FAILED",
+                "CLOCK_DOMAIN_INVALID",
+                "EVALUATION_TIMEOUT",
+                "PARTIAL_PARTY_FAILURE",
+                "QUERY_BUDGET_EXHAUSTED",
+                "REPLAY_CONFLICT",
+                "RESOURCE_LIMIT_EXCEEDED",
+                "RESULT_CONFLICT",
+                "UNKNOWN_STATE",
+                "VERIFICATION_MATERIAL_MISSING",
+            }
+            for item in profile["protocol_contract"]["failure_mappings"]
+        ),
+        "PET-FAILURE-MAPPING",
+        identifier,
+    )
+    _require(
+        profile["protocol_contract"]["key_or_attestation_responsibilities"],
+        "PET-VERIFICATION-RESPONSIBILITY",
+        identifier,
+    )
+    pins = {
+        (item["repository"], item["revision"], item["revision_kind"])
+        for item in profile["implementation_source_pins"]
+    }
+    _require(
+        privacy["cancellation"]["cleanup_required"] is True
+        and privacy["cleanup"]["required"] is True,
+        "PET-CANCELLATION-CLEANUP",
+        identifier,
+    )
+    for hook in profile["protocol_contract"]["evidence_hooks"]:
+        _require(
+            not set(hook["allowed_fields"])
+            & {
+                "private_input",
+                "raw_identifier",
+                "matching_element",
+                "secret_material",
+            },
+            "PET-EVIDENCE-SECRET",
+            identifier,
+        )
+    if profile["profile_class"] == "complete-decision-profile":
+        _require(
+            identifier in COMPLETE_PROFILE_IDS,
+            "PET-COMPLETE-PROFILE-UNKNOWN",
+            identifier,
+        )
+        _require(
+            profile["protocol_contract"]["supported_decision_outputs"]
+            == PROTOCOL_OUTPUTS,
+            "PET-DECISION-OUTPUTS",
+            identifier,
+        )
+        _require(
+            profile["decision_derivation"]
+            == {
+                "authority": "Protocol-policy-binding",
+                "exact_policy_binding_required": True,
+                "profile_may_select_default_policy": False,
+                "profile_may_change_policy_after_evaluation_start": False,
+                "unknown_policy_behavior": "fail-closed",
+                "result_vocabulary": PROTOCOL_OUTPUTS,
+                "derivation_evidence_required": True,
+                "correctness_status": "not-established",
+                "limitations": [
+                    "Candidate execution has not been performed.",
+                    "Policy correctness and input completeness are not established.",
+                ],
+            },
+            "PET-DECISION-POLICY",
+            identifier,
+        )
+        _require(
+            profile["protocol_contract"]["result_symmetry"]["required"] is True,
+            "PET-RESULT-SYMMETRY",
+            identifier,
+        )
+        _require(
+            profile["privacy_and_operations"]["prohibited_output_classes"]
+            == PROHIBITED_OUTPUTS,
+            "PET-PROHIBITED-OUTPUT",
+            identifier,
+        )
+        _require(
+            profile["protocol_contract"]["opaque_receipt"]["minimum_entropy_bits"]
+            >= 128,
+            "PET-LOW-ENTROPY-RECEIPT",
+            identifier,
+        )
+        expected_receipt_bindings = (
+            NITRO_RECEIPT_BINDINGS
+            if identifier == "private-match-experimental-nitro-enclave"
+            else RECEIPT_BINDINGS
+        )
+        _require(
+            {"policy_id", "policy_version"}
+            <= set(profile["protocol_contract"]["opaque_receipt"]["binding_fields"]),
+            "PET-RECEIPT-POLICY",
+            identifier,
+        )
+        _require(
+            profile["protocol_contract"]["opaque_receipt"]["binding_fields"]
+            == expected_receipt_bindings,
+            "PET-RECEIPT-BINDING",
+            identifier,
+        )
+        _require(
+            profile["protocol_contract"]["callback"]["required_bindings"]
+            == CALLBACK_BINDINGS,
+            "PET-CALLBACK-BINDING",
+            identifier,
+        )
+        expected_exchange = {
+            operation: expected_operations[operation]
+            for operation in (
+                "reserve-query-budget",
+                "start-evaluation",
+                "submit-contribution",
+                "acknowledge-receipt",
+                "accept-profile-callback",
+            )
+        }
+        observed_exchange = {
+            item["operation"]: _operation_authority_projection(item)
+            for item in profile["protocol_contract"]["exchange_steps"]
+        }
+        _require(
+            observed_exchange == expected_exchange,
+            "PET-PROTOCOL-EXCHANGE-BINDING",
+            identifier,
+        )
+        _require(
+            profile["protocol_contract"]["transcript_domain"]["state_machine_digest"]
+            == STATE_MACHINE_DIGEST,
+            "PET-STATE-MACHINE-DIGEST",
+            identifier,
+        )
+        _require(
+            profile["protocol_contract"]["transcript_domain"]["message_registry_digest"]
+            == MESSAGE_REGISTRY_DIGEST,
+            "PET-MESSAGE-REGISTRY-DIGEST",
+            identifier,
+        )
+        _require(
+            profile["complete_decision_contract"]["coordinator_plaintext_result"]
+            == "prohibited",
+            "PET-COORDINATOR-PLAINTEXT",
+            identifier,
+        )
+        _require(
+            profile["protocol_contract"]["opaque_receipt"]["prohibited_constructions"]
+            == [
+                "bare hash of MATCH",
+                "bare hash of NO_MATCH",
+                "bare hash of INDETERMINATE",
+                "low-entropy enumerable receipt",
+            ],
+            "PET-LOW-ENTROPY-RECEIPT",
+            identifier,
+        )
+        if identifier == "private-match-experimental-secretflow-kkrt":
+            _require(
+                pins
+                == {
+                    (
+                        "secretflow/psi",
+                        "d7682707035d6b3e04cc09b8bfef629140641432",
+                        "git-commit",
+                    )
+                },
+                "PET-SECRET-FLOW-SOURCE-PIN",
+                identifier,
+            )
+            _require(
+                profile["security_model"]["model_id"] == "semi-honest"
+                and profile["security_model"]["malicious_party_security"]
+                == "not-established",
+                "PET-PSI-SECURITY-ESCALATION",
+                identifier,
+            )
+        else:
+            _require(
+                pins
+                == {
+                    ("aws/aws-nitro-enclaves-cli", "v1.4.5", "release-tag"),
+                    ("aws/aws-nitro-enclaves-nsm-api", "v0.5.2", "release-tag"),
+                },
+                "PET-NITRO-SOURCE-PIN",
+                identifier,
+            )
+            _require(
+                profile["execution_authorization"] == "human-required-not-provided",
+                "PET-EXECUTION-AUTHORIZATION",
+                identifier,
+            )
+            setup = profile["setup_authority"]
+            _require(
+                "debug-mode attestation" in setup["prohibited"]
+                and "non-debug mode" in setup["requirements"],
+                "PET-TEE-DEBUG-MODE",
+                identifier,
+            )
+            _require(
+                "fresh verifier nonce" in setup["requirements"],
+                "PET-TEE-FRESH-NONCE",
+                identifier,
+            )
+            _require(
+                "expected PCR policy" in setup["requirements"],
+                "PET-TEE-PCR-POLICY",
+                identifier,
+            )
+    else:
+        _require(
+            identifier in COMPONENT_PROFILE_IDS,
+            "PET-COMPONENT-PROFILE-UNKNOWN",
+            identifier,
+        )
+        component = profile["component_contract"]
+        _require(
+            component["complete_engine"] is False
+            and component["selectable_as_complete_profile"] is False,
+            "PET-COMPONENT-AS-COMPLETE",
+            identifier,
+        )
+        _require(
+            component["set_semantics_defined"] is False
+            and component["symmetric_decision_defined"] is False,
+            "PET-VOPRF-COMPLETE-CLAIM",
+            identifier,
+        )
+        _require(
+            profile["protocol_contract"]["supported_decision_outputs"] == [],
+            "PET-VOPRF-DECISION-OUTPUT",
+            identifier,
+        )
+        _require(
+            pins
+            == {
+                ("cloudflare/circl", "v1.6.4", "release-tag"),
+                (
+                    "https://www.rfc-editor.org/rfc/rfc9497",
+                    "RFC 9497",
+                    "rfc",
+                ),
+            },
+            "PET-VOPRF-SOURCE-PIN",
+            identifier,
+        )
+
+
+def _validate_handoff_semantics(handoff: dict[str, Any]) -> None:
+    expected_fields = {
+        "engine-profile-identifier",
+        "security-trust-model",
+        "supported-decision-types",
+        "client-side-preparation",
+        "protocol-exchange-steps",
+        "result-and-verification-receipt",
+        "verification-material-key-attestation",
+        "metadata-leakage-descriptor",
+        "resource-limits",
+        "timeout",
+        "deterministic-error-categories",
+        "cancellation",
+        "cleanup",
+        "evidence-hooks",
+        "decision-policy-binding",
+        "execution-authorization",
+        "operation-stage",
+        "stage-field-availability",
+        "party-local-result-visibility",
+        "pre-post-state-contract",
+    }
+    _require(
+        {item["field"] for item in handoff["port_fields"]} == expected_fields,
+        "PET-HANDOFF-COVERAGE",
+    )
+    _require(
+        handoff["selection_rule"]["complete_profile_required"] is True
+        and handoff["selection_rule"]["component_only_rejected"] is True,
+        "PET-HANDOFF-SELECTION",
+    )
+    handoff_fields = {item["field"]: item for item in handoff["port_fields"]}
+    _require(
+        "no use-case predicate or threshold is selected"
+        in handoff_fields["decision-policy-binding"]["public_semantic_meaning"]
+        and "reject missing, unknown, changed, defaulted, or substituted policy authority"
+        == handoff_fields["decision-policy-binding"]["fail_closed_rule"],
+        "PET-HANDOFF-POLICY-SEMANTICS",
+    )
+    execution_handoff = handoff_fields["execution-authorization"]
+    _require(
+        "do not authorize candidate or production execution"
+        in execution_handoff["public_semantic_meaning"]
+        and "return unsupported when reviewed candidate authority is missing; production execution is unsupported"
+        == execution_handoff["fail_closed_rule"]
+        and {"credential", "raw execution grant"}
+        <= set(execution_handoff["prohibited_content"]),
+        "PET-HANDOFF-EXECUTION-SEMANTICS",
+    )
+    _require(
+        "reject operation-stage substitution"
+        in handoff_fields["operation-stage"]["expected_product_port_behavior"]
+        and "fabricated commitment, attempt, receipt, verification material, or result state"
+        in handoff_fields["stage-field-availability"]["fail_closed_rule"]
+        and "bilateral plaintext Party results"
+        in handoff_fields["party-local-result-visibility"]["fail_closed_rule"]
+        and "existing State Machine projection"
+        in handoff_fields["pre-post-state-contract"]["expected_product_port_behavior"],
+        "PET-HANDOFF-STAGE-SEMANTICS",
+    )
+
+
+def validate_semantics(values: dict[str, Any]) -> None:
+    authority = values["authority"]
+    validate_research_authority(authority)
+    profiles = values["profiles"]
+    stage = values["stage"]
+    expected_stage = expected_operation_stage_contract(values)
+    _require(stage == expected_stage, "PET-STAGE-AUTHORITY")
+    _require(
+        _regular_file(values["root"], STAGE_CONTRACT_PATH).read_bytes()
+        == operation_stage_contract_bytes(values),
+        "PET-STAGE-BYTES",
+    )
+    stage_digest = stage["stage_contract_digest"]
+    expected_operations = expected_protocol_operations(
+        values["message_registry"], values["state_machine"]
+    )
+    _require(
+        set(profiles) == COMPLETE_PROFILE_IDS | COMPONENT_PROFILE_IDS, "PET-PROFILE-SET"
+    )
+    for identifier, profile in profiles.items():
+        _require(profile["profile_id"] == identifier, "PET-PROFILE-PATH-ID", identifier)
+        _validate_profile(profile, authority["authority_digest"], expected_operations)
+        _require(
+            profile["protocol_contract"]["operation_stage_contract_digest"]
+            == stage_digest,
+            "PET-PROFILE-STAGE-DIGEST",
+            identifier,
+        )
+    complete_models = {
+        (
+            profiles[item]["security_model"]["model_id"],
+            profiles[item]["trust_model"]["model_id"],
+        )
+        for item in COMPLETE_PROFILE_IDS
+    }
+    _require(len(complete_models) == 2, "PET-COMPLETE-PROFILES-NOT-MATERIAL-DIFFERENT")
+
+    registry = values["registry"]
+    _require(
+        registry["operation_stage_contract_digest"] == stage_digest,
+        "PET-REGISTRY-STAGE-DIGEST",
+    )
+    _require(
+        registry["research_authority_digest"] == authority["authority_digest"],
+        "PET-REGISTRY-RESEARCH-DIGEST",
+    )
+    pins = registry["protocol_authority"]
+    _require(
+        pins
+        == {
+            "repository": "itdojp/private-match-protocol",
+            "commit": PROTOCOL_COMMIT,
+            "source_revision_digest": PROTOCOL_SOURCE_DIGEST,
+            "profile": "private-match-core",
+            "version": "0.1",
+            "state_machine_digest": STATE_MACHINE_DIGEST,
+            "message_registry_digest": MESSAGE_REGISTRY_DIGEST,
+            "message_input_tree_digest": MESSAGE_INPUT_TREE_DIGEST,
+        },
+        "PET-PROTOCOL-AUTHORITY",
+    )
+    _require(
+        [item["profile_id"] for item in registry["complete_profiles"]]
+        == sorted(COMPLETE_PROFILE_IDS),
+        "PET-REGISTRY-COMPLETE",
+    )
+    _require(
+        [item["profile_id"] for item in registry["component_profiles"]]
+        == sorted(COMPONENT_PROFILE_IDS),
+        "PET-REGISTRY-COMPONENT",
+    )
+    for collection, expected_class in (
+        (registry["complete_profiles"], "complete-decision-profile"),
+        (registry["component_profiles"], "component-only"),
+    ):
+        for entry in collection:
+            profile = profiles[entry["profile_id"]]
+            _require(entry["profile_class"] == expected_class, "PET-REGISTRY-CLASS")
+            _require(
+                entry["path"] == PROFILE_PATHS[entry["profile_id"]].as_posix(),
+                "PET-REGISTRY-PATH",
+            )
+            _require(
+                entry["digest"] == profile["profile_digest"],
+                "PET-REGISTRY-PROFILE-DIGEST",
+            )
+    _require(
+        registry["registry_digest"]
+        == detached_digest("registry", registry, "registry_digest"),
+        "PET-REGISTRY-DIGEST",
+    )
+
+    binding = values["binding"]
+    _require(
+        binding["operation_stage_contract_path"] == STAGE_CONTRACT_PATH.as_posix()
+        and binding["operation_stage_contract_digest"] == stage_digest,
+        "PET-BINDING-STAGE-DIGEST",
+    )
+    _require(
+        binding["state_machine_digest"] == STATE_MACHINE_DIGEST
+        and binding["message_registry_digest"] == MESSAGE_REGISTRY_DIGEST,
+        "PET-BINDING-AUTHORITY",
+    )
+    operation_targets = [
+        (tuple(item["events"]), item["message_type"], tuple(item["transition_ids"]))
+        for item in binding["operations"]
+    ]
+    _require(
+        len(operation_targets) == len(set(operation_targets)),
+        "PET-BINDING-DUPLICATE-ALIAS",
+    )
+    required_operations = set(expected_operations)
+    _require(
+        {item["operation"] for item in binding["operations"]} == required_operations,
+        "PET-BINDING-OPERATIONS",
+    )
+    observed_operations = {
+        item["operation"]: _operation_authority_projection(item)
+        for item in binding["operations"]
+    }
+    _require(
+        observed_operations == expected_operations,
+        "PET-BINDING-SEMANTICS",
+    )
+    _require(
+        all(
+            item["allowed_profile_classes"] == ["complete-decision-profile"]
+            for item in binding["operations"]
+        ),
+        "PET-BINDING-PROFILE-CLASS",
+    )
+    _require(
+        binding["callback_required_bindings"] == CALLBACK_BINDINGS,
+        "PET-BINDING-CALLBACK",
+    )
+    _require(
+        binding["binding_digest"]
+        == detached_digest("binding", binding, "binding_digest"),
+        "PET-BINDING-DIGEST",
+    )
+
+    handoff = values["handoff"]
+    _require(
+        handoff["operation_stage_contract_path"] == STAGE_CONTRACT_PATH.as_posix()
+        and handoff["operation_stage_contract_digest"] == stage_digest,
+        "PET-HANDOFF-STAGE-DIGEST",
+    )
+    stage_projection_keys = (
+        "lifecycle_stage",
+        "expected_pre_phases",
+        "expected_post_phases",
+        "fields_required_on_input",
+        "fields_required_none",
+        "fields_prohibited_on_input",
+        "fields_introduced",
+        "party_local_only_fields",
+        "coordinator_visible_fields",
+        "result_classification",
+        "query_budget_effect",
+        "transcript_mutated",
+    )
+    expected_handoff_stages = [
+        {
+            "operation": item["operation_id"],
+            **{key: item[key] for key in stage_projection_keys},
+        }
+        for item in stage["operations"]
+    ]
+    _require(
+        handoff["operation_stage_projection"] == expected_handoff_stages,
+        "PET-HANDOFF-STAGE-PROJECTION",
+    )
+    _validate_handoff_semantics(handoff)
+    _require(
+        handoff["handoff_digest"]
+        == detached_digest("handoff", handoff, "handoff_digest"),
+        "PET-HANDOFF-DIGEST",
+    )
+    validate_case_catalog(values, root=None)
+
+
+INVALID_CASE_CODES = {
+    # Original fail-closed coverage.
+    "unknown-profile": "PET-PROFILE-UNKNOWN",
+    "wrong-version": "PET-PROFILE-VERSION",
+    "component-selected": "PET-COMPONENT-AS-COMPLETE",
+    "cross-profile-callback": "PET-CROSS-PROFILE",
+    "wrong-profile-instance": "PET-PROFILE-INSTANCE",
+    "wrong-evaluation-attempt": "PET-EVALUATION-ATTEMPT",
+    "wrong-receipt": "PET-RECEIPT-BINDING",
+    "wrong-transcript-head": "PET-TRANSCRIPT-MISMATCH",
+    "result-asymmetry": "PET-RESULT-SYMMETRY",
+    "exact-count": "PET-PROHIBITED-OUTPUT",
+    "matching-element": "PET-PROHIBITED-OUTPUT",
+    "coordinator-plaintext-result": "PET-COORDINATOR-PLAINTEXT",
+    "low-entropy-receipt": "PET-LOW-ENTROPY-RECEIPT",
+    "missing-verification-material": "PET-VERIFICATION-MATERIAL",
+    "psi-security-escalation": "PET-PSI-SECURITY-ESCALATION",
+    "tee-debug-mode": "PET-TEE-DEBUG-MODE",
+    "tee-stale-nonce": "PET-TEE-FRESH-NONCE",
+    "tee-wrong-pcr-policy": "PET-TEE-PCR-POLICY",
+    "tee-unapproved-execution": "PET-CANDIDATE-EXECUTION-UNAUTHORIZED",
+    "voprf-complete-engine": "PET-VOPRF-COMPLETE-CLAIM",
+    "secret-evidence-hook": "PET-EVIDENCE-SECRET",
+    "query-budget-bypass": "PET-QUERY-BUDGET",
+    "cancellation-without-cleanup": "PET-CANCELLATION-CLEANUP",
+    "unknown-error-category": "PET-FAILURE-MAPPING",
+    # Executable-authority and Product-handoff coverage.
+    "unknown-symmetric-decision": "PET-DECISION-UNKNOWN",
+    "callback-session-mismatch": "PET-SESSION-BINDING",
+    "callback-policy-mismatch": "PET-POLICY-BINDING",
+    "participant-binding-mismatch": "PET-PARTICIPANT-BINDING",
+    "commitment-pair-mismatch": "PET-COMMITMENT-BINDING",
+    "profile-digest-mismatch": "PET-PROFILE-DIGEST-BINDING",
+    "verification-material-reference-mismatch": "PET-VERIFICATION-MATERIAL",
+    "verification-material-digest-mismatch": "PET-VERIFICATION-MATERIAL",
+    "resource-policy-mismatch": "PET-RESOURCE-POLICY",
+    "missing-authoritative-context-field": "PET-AUTHORITATIVE-CONTEXT-MISSING",
+    "secretflow-unapproved-candidate-execution": "PET-CANDIDATE-EXECUTION-UNAUTHORIZED",
+    "nitro-unapproved-candidate-execution": "PET-CANDIDATE-EXECUTION-UNAUTHORIZED",
+    "production-execution": "PET-PRODUCTION-EXECUTION-UNSUPPORTED",
+    "fixture-with-candidate-flag": "PET-CANDIDATE-EXECUTION-UNAUTHORIZED",
+    "unknown-execution-mode": "PET-EXECUTION-MODE",
+    "message-delivery-class-mismatch": "PET-MESSAGE-DELIVERY-CLASS",
+    "message-direction-mismatch": "PET-MESSAGE-DIRECTION",
+    "wrong-callback-sender": "PET-MESSAGE-SENDER",
+    "wrong-callback-verifier": "PET-MESSAGE-VERIFIER",
+    "duplicate-callback-operation-alias": "PET-BINDING-DUPLICATE-ALIAS",
+    "unexecuted-valid-case": "PET-CASE-NOT-EXECUTED",
+    "decision-policy-default": "PET-DECISION-POLICY",
+    "decision-policy-changed-after-start": "PET-DECISION-POLICY",
+    "wrong-handoff-execution-semantics": "PET-HANDOFF-EXECUTION-SEMANTICS",
+    "missing-policy-binding": "PET-POLICY-BINDING",
+    "wrong-policy-id": "PET-POLICY-BINDING",
+    "wrong-policy-version": "PET-POLICY-BINDING",
+    "receipt-policy-substitution": "PET-RECEIPT-POLICY",
+    "execution-authorization-digest-substitution": "PET-EXECUTION-AUTHORIZATION-BINDING",
+}
+
+OPERATION_MESSAGE_TYPES = {
+    "select-profile": "session_proposal",
+    "reserve-query-budget": "query_budget_reservation",
+    "start-evaluation": "evaluation_start",
+    "submit-contribution": "evaluation_contribution",
+    "acknowledge-receipt": "opaque_receipt_ack",
+    "accept-profile-callback": "result_acceptance_notice",
+    "abort-and-cleanup": "abort_notice",
+}
+
+# Field availability is reviewed here while event/message/transition authority is
+# projected from the existing State Machine and Message Registry below.  The
+# resulting YAML is a closed derived authority, not a second State Machine.
+STAGE_FIELD_POLICY = {
+    "register-component": {
+        "stage": "registry-registration",
+        "before": ["profile_authority"],
+        "introduced": ["component_registration"],
+        "required": ["profile_authority", "execution_mode"],
+        "none": [],
+        "prohibited": ["session_state", "party_local_result", "opaque_receipt"],
+        "retained": ["profile_authority"],
+        "invalidated": [],
+        "party_local": [],
+        "coordinator": [],
+        "selected_profile": ["component_registration"],
+        "classification": "component-registration",
+        "budget": "none",
+        "transcript": False,
+    },
+    "select-profile": {
+        "stage": "session-creation",
+        "before": ["protocol_authority", "profile_authority"],
+        "introduced": ["session_id", "policy_binding", "selected_profile"],
+        "required": ["session_proposal", "selected_profile"],
+        "none": [
+            "participant_binding",
+            "commitment_pair_id",
+            "evaluation_attempt_id",
+            "opaque_receipt_ref",
+            "result_state",
+            "query_budget_state",
+        ],
+        "prohibited": [
+            "party_local_result",
+            "verification_material",
+            "result_callback",
+        ],
+        "retained": ["profile_authority"],
+        "invalidated": [],
+        "party_local": [],
+        "coordinator": ["session_id", "policy_binding", "selected_profile"],
+        "selected_profile": ["profile_authority"],
+        "classification": "accepted-mutation",
+        "budget": "none",
+        "transcript": True,
+    },
+    "reserve-query-budget": {
+        "stage": "query-budget-reservation",
+        "before": [
+            "session_id",
+            "policy_binding",
+            "participant_binding",
+            "query_budget_state=NONE",
+        ],
+        "introduced": ["query_budget_state=RESERVED"],
+        "required": ["authorization_ref", "participant_binding"],
+        "none": [
+            "commitment_pair_id",
+            "evaluation_attempt_id",
+            "opaque_receipt_ref",
+            "result_state",
+        ],
+        "prohibited": ["party_local_result", "result_callback", "final_receipt"],
+        "retained": [
+            "session_id",
+            "policy_binding",
+            "participant_binding",
+            "selected_profile",
+        ],
+        "invalidated": [],
+        "party_local": [],
+        "coordinator": ["authorization_ref", "query_budget_state"],
+        "selected_profile": [],
+        "classification": "accepted-mutation",
+        "budget": "reserve",
+        "transcript": True,
+    },
+    "start-evaluation": {
+        "stage": "evaluation-start",
+        "before": [
+            "session_id",
+            "policy_binding",
+            "participant_binding",
+            "commitment_pair_id",
+            "query_budget_state=RESERVED",
+        ],
+        "introduced": [
+            "evaluation_attempt_id",
+            "evaluation_deadline",
+            "query_budget_state=CONSUMED",
+        ],
+        "required": [
+            "commitment_pair_id",
+            "evaluation_attempt_id",
+            "verification_material",
+            "resource_policy",
+        ],
+        "none": ["opaque_receipt_ref", "result_state"],
+        "prohibited": ["party_local_result", "final_receipt", "result_callback"],
+        "retained": [
+            "session_id",
+            "policy_binding",
+            "participant_binding",
+            "commitment_pair_id",
+            "selected_profile",
+        ],
+        "invalidated": [],
+        "party_local": [],
+        "coordinator": [
+            "evaluation_attempt_id",
+            "verification_material",
+            "resource_policy",
+        ],
+        "selected_profile": [
+            "evaluation_attempt_id",
+            "verification_material",
+            "resource_policy",
+        ],
+        "classification": "accepted-mutation",
+        "budget": "consume",
+        "transcript": True,
+    },
+    "submit-contribution": {
+        "stage": "party-contribution",
+        "before": [
+            "session_id",
+            "policy_binding",
+            "commitment_pair_id",
+            "evaluation_attempt_id",
+        ],
+        "introduced": ["party_slot_contribution"],
+        "required": ["party_slot", "contribution_ref"],
+        "none": ["opaque_receipt_ref", "result_state"],
+        "prohibited": [
+            "party_local_result",
+            "bilateral_result",
+            "receipt_acknowledgment",
+        ],
+        "retained": [
+            "session_id",
+            "policy_binding",
+            "commitment_pair_id",
+            "evaluation_attempt_id",
+            "query_budget_state=CONSUMED",
+        ],
+        "invalidated": [],
+        "party_local": ["private_contribution_source"],
+        "coordinator": ["normalized_contribution_status"],
+        "selected_profile": ["contribution_ref"],
+        "classification": "accepted-mutation",
+        "budget": "unchanged",
+        "transcript": True,
+    },
+    "acknowledge-receipt": {
+        "stage": "party-receipt-acknowledgment",
+        "before": [
+            "session_id",
+            "policy_binding",
+            "commitment_pair_id",
+            "evaluation_attempt_id",
+        ],
+        "introduced": ["party_slot_receipt_ack", "opaque_receipt_ref"],
+        "required": [
+            "party_slot",
+            "opaque_receipt_ref",
+            "acknowledgment_status",
+            "profile_evidence_ref",
+        ],
+        "none": [],
+        "prohibited": [
+            "party_local_result",
+            "bilateral_result",
+            "other_party_acknowledgment",
+        ],
+        "retained": [
+            "session_id",
+            "policy_binding",
+            "commitment_pair_id",
+            "evaluation_attempt_id",
+            "query_budget_state=CONSUMED",
+        ],
+        "invalidated": [],
+        "party_local": ["party_local_result"],
+        "coordinator": [
+            "opaque_receipt_ref",
+            "acknowledgment_status",
+            "profile_evidence_ref",
+        ],
+        "selected_profile": ["opaque_receipt_ref", "acknowledgment_status"],
+        "classification": "accepted-mutation",
+        "budget": "unchanged",
+        "transcript": True,
+    },
+    "accept-profile-callback": {
+        "stage": "symmetric-result-acceptance",
+        "before": [
+            "session_id",
+            "policy_binding",
+            "commitment_pair_id",
+            "evaluation_attempt_id",
+            "both_receipt_acknowledgments",
+        ],
+        "introduced": ["accepted_result_state", "phase=RESULT_ACCEPTED"],
+        "required": [
+            "callback_identity",
+            "opaque_receipt_ref",
+            "acknowledgment_status",
+            "profile_evidence_ref",
+            "verification_material",
+        ],
+        "none": [],
+        "prohibited": ["party_local_result", "bilateral_result", "plaintext_result"],
+        "retained": [
+            "session_id",
+            "policy_binding",
+            "commitment_pair_id",
+            "evaluation_attempt_id",
+            "query_budget_state=CONSUMED",
+        ],
+        "invalidated": [],
+        "party_local": ["party_local_result"],
+        "coordinator": [
+            "opaque_receipt_ref",
+            "acknowledgment_status",
+            "profile_evidence_ref",
+        ],
+        "selected_profile": ["synthetic_result_comparison"],
+        "classification": "accepted-mutation",
+        "budget": "unchanged",
+        "transcript": True,
+    },
+    "evaluation-timeout": {
+        "stage": "evaluation-timeout",
+        "before": [
+            "phase=EVALUATING",
+            "evaluation_attempt_id",
+            "query_budget_state=CONSUMED",
+        ],
+        "introduced": ["terminal_failure_code=EVALUATION_TIMEOUT", "phase=ABORTED"],
+        "required": ["new_authoritative_time", "prior_transcript_head"],
+        "none": [],
+        "prohibited": ["party_local_result", "new_receipt", "profile_callback"],
+        "retained": ["evaluation_attempt_id", "query_budget_state=CONSUMED"],
+        "invalidated": ["disclosure_state"],
+        "party_local": [],
+        "coordinator": ["normalized_timeout_status"],
+        "selected_profile": [],
+        "classification": "terminal-mutation",
+        "budget": "preserve-consumed",
+        "transcript": True,
+    },
+    "abort-and-cleanup": {
+        "stage": "abort-and-cleanup",
+        "before": ["live_session"],
+        "introduced": ["terminal_failure_code", "phase=ABORTED", "cleanup_evidence"],
+        "required": ["normalized_failure_category", "cleanup_completed"],
+        "none": [],
+        "prohibited": ["fabricated_result_state", "bilateral_result", "new_receipt"],
+        "retained": ["session_id", "policy_binding", "selected_profile"],
+        "invalidated": ["disclosure_state"],
+        "party_local": [],
+        "coordinator": ["normalized_failure_category", "cleanup_completed"],
+        "selected_profile": ["cleanup_required"],
+        "classification": "terminal-mutation",
+        "budget": "release-if-not-started",
+        "transcript": True,
+    },
+}
+
+FIXTURE_PARTICIPANTS = {
+    "party_a": {
+        "participant_id": "urn:private-match:test:participant:a",
+        "key_id": "urn:private-match:test:key:party-a:v0.1",
+    },
+    "party_b": {
+        "participant_id": "urn:private-match:test:participant:b",
+        "key_id": "urn:private-match:test:key:party-b:v0.1",
+    },
+}
+
+
+def _operation_authority_projection(item: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        tuple(item["events"]),
+        item["message_type"],
+        item["message_version"],
+        item["delivery_class"],
+        item["direction"],
+        tuple(item["allowed_senders"]),
+        item["verifier"],
+        tuple(item["intended_audience"]),
+        tuple(item["transition_ids"]),
+        item["transcript_participation"],
+        item["replay_idempotency_domain"],
+    )
+
+
+def expected_protocol_operations(
+    message_registry: dict[str, Any], state_machine: dict[str, Any]
+) -> dict[str, tuple[Any, ...]]:
+    """Project the reviewed Message Registry and State Machine exactly."""
+
+    messages = {item["message_type"]: item for item in message_registry["messages"]}
+    transitions = {item["id"]: item for item in state_machine["transitions"]}
+    expected: dict[str, tuple[Any, ...]] = {}
+    for operation, message_type in OPERATION_MESSAGE_TYPES.items():
+        _require(message_type in messages, "PET-BINDING-MESSAGE-UNKNOWN")
+        message = messages[message_type]
+        ids = message["state_machine"]["transitions"]
+        _require(
+            all(
+                item in transitions
+                and transitions[item]["event"] in message["state_machine"]["events"]
+                for item in ids
+            ),
+            "PET-BINDING-STATE-PARITY",
+        )
+        expected[operation] = (
+            tuple(message["state_machine"]["events"]),
+            message_type,
+            message["message_version"],
+            message["delivery_class"],
+            message["direction"],
+            tuple(message["allowed_senders"]),
+            message["verifier"],
+            tuple(message["intended_audience"]),
+            tuple(ids),
+            message["transcript_participation"],
+            message["replay_or_idempotency_domain"],
+        )
+    timeout = transitions.get("TR-EVALUATION-TIMEOUT")
+    _require(
+        timeout is not None and timeout["event"] == "advance_authoritative_time",
+        "PET-BINDING-STATE-PARITY",
+    )
+    expected["evaluation-timeout"] = (
+        ("advance_authoritative_time",),
+        None,
+        None,
+        "internal-event",
+        "internal",
+        ("protocol-timer",),
+        "coordinator",
+        ("coordinator",),
+        ("TR-EVALUATION-TIMEOUT",),
+        "accepted-mutating-event",
+        "authoritative timer threshold",
+    )
+    return expected
+
+
+def expected_operation_stage_contract(values: dict[str, Any]) -> dict[str, Any]:
+    """Derive the PET lifecycle-stage authority from reviewed core artifacts."""
+
+    transitions = {item["id"]: item for item in values["state_machine"]["transitions"]}
+    messages = {
+        item["message_type"]: item for item in values["message_registry"]["messages"]
+    }
+    bindings = {item["operation"]: item for item in values["binding"]["operations"]}
+    operations = []
+    for operation_id, policy in STAGE_FIELD_POLICY.items():
+        if operation_id == "register-component":
+            events: list[str] = []
+            transition_ids: list[str] = []
+            pre_phases: list[str] = []
+            post_phases: list[str] = []
+            message_type = None
+            message_version = None
+            transcript_participation = "none"
+            replay_domain = "profile ID/version/digest registration identity"
+        else:
+            binding = bindings[operation_id]
+            transition_ids = binding["transition_ids"]
+            selected = [transitions[item] for item in transition_ids]
+            events = binding["events"]
+            pre_phases = sorted(
+                {phase for item in selected for phase in item["from_phase"]}
+            )
+            post_phases = sorted(
+                {
+                    phase
+                    for item in selected
+                    for phase in (
+                        item["from_phase"]
+                        if item["to_phase"] == "SAME"
+                        else [item["to_phase"]]
+                    )
+                }
+            )
+            message_type = binding["message_type"]
+            message_version = binding["message_version"]
+            if message_type is not None:
+                message = messages[message_type]
+                _require(
+                    message["state_machine"]["events"] == events
+                    and message["state_machine"]["transitions"] == transition_ids,
+                    "PET-STAGE-MESSAGE-PARITY",
+                    operation_id,
+                )
+            transcript_participation = binding["transcript_participation"]
+            replay_domain = binding["replay_idempotency_domain"]
+        operations.append(
+            {
+                "operation_id": operation_id,
+                "lifecycle_stage": policy["stage"],
+                "message_type": message_type,
+                "message_version": message_version,
+                "events": events,
+                "transition_ids": transition_ids,
+                "expected_pre_phases": pre_phases,
+                "expected_post_phases": post_phases,
+                "fields_available_before": policy["before"],
+                "fields_introduced": policy["introduced"],
+                "fields_required_on_input": policy["required"],
+                "fields_required_none": policy["none"],
+                "fields_prohibited_on_input": policy["prohibited"],
+                "fields_retained_unchanged": policy["retained"],
+                "fields_invalidated": policy["invalidated"],
+                "party_local_only_fields": policy["party_local"],
+                "coordinator_visible_fields": policy["coordinator"],
+                "selected_profile_visible_fields": policy["selected_profile"],
+                "transcript_participation": transcript_participation,
+                "replay_idempotency_domain": replay_domain,
+                "result_classification": policy["classification"],
+                "query_budget_effect": policy["budget"],
+                "transcript_mutated": policy["transcript"],
+            }
+        )
+    result = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "schema_version": "0.1",
+        "record_type": "pet-operation-stage-contract",
+        "artifact_status": "experimental",
+        "state_machine_digest": STATE_MACHINE_DIGEST,
+        "message_registry_digest": MESSAGE_REGISTRY_DIGEST,
+        "operations": operations,
+        "stage_contract_digest": "",
+        "limitations": [
+            "This contract is a deterministic projection of the reviewed State Machine and Message Registry, not an independent State Machine.",
+            "Synthetic global-observer data is test-only and is not a Product or Coordinator input.",
+        ],
+    }
+    result["stage_contract_digest"] = detached_digest(
+        "stage", result, "stage_contract_digest"
+    )
+    return result
+
+
+def operation_stage_contract_bytes(values: dict[str, Any]) -> bytes:
+    """Serialize the derived stage authority deterministically."""
+
+    return yaml.safe_dump(
+        expected_operation_stage_contract(values),
+        sort_keys=False,
+        allow_unicode=True,
+        width=1000,
+    ).encode("utf-8")
+
+
+def _fixture_digest(label: bytes, value: Any) -> str:
+    return sha256_bytes(label + canonicalize(value))
+
+
+def _execution_authorization(profile: dict[str, Any], instance: str) -> dict[str, Any]:
+    material = {
+        "state": (
+            "registration-only"
+            if profile["profile_class"] == "component-only"
+            else "contract-fixture-only"
+        ),
+        "authority_reference": "urn:private-match:test:execution-authority:contract-fixture:v0.1",
+        "source_revision_digest": _fixture_digest(
+            b"private-match-pet-source-revisions/v0.1\x00",
+            profile["implementation_source_pins"],
+        ),
+        "environment_id": "synthetic-local-offline",
+        "expires_at": "2027-01-31T00:00:00Z",
+        "candidate_execution_authorized": False,
+        "production_execution_authorized": False,
+        "profile_id": profile["profile_id"],
+        "profile_version": profile["profile_version"],
+        "profile_digest": profile["profile_digest"],
+        "profile_instance_id": instance,
+    }
+    digest = _fixture_digest(DOMAINS["execution_authorization"], material)
+    return {
+        key: value
+        for key, value in material.items()
+        if key
+        not in {
+            "profile_id",
+            "profile_version",
+            "profile_digest",
+            "profile_instance_id",
+        }
+    } | {"authority_digest": digest}
+
+
+def _execution_authorization_digest(
+    profile: dict[str, Any], instance: str, authorization: dict[str, Any]
+) -> str:
+    material = {
+        key: value for key, value in authorization.items() if key != "authority_digest"
+    } | {
+        "profile_id": profile["profile_id"],
+        "profile_version": profile["profile_version"],
+        "profile_digest": profile["profile_digest"],
+        "profile_instance_id": instance,
+    }
+    return _fixture_digest(DOMAINS["execution_authorization"], material)
+
+
+def _observer_for_receipt(receipt: str) -> dict[str, Any]:
+    observer = {
+        "visibility": "synthetic-global-observer",
+        "party_local_result_observations": {
+            "party_a": "MATCH",
+            "party_b": "MATCH",
+        },
+        "result_receipt_binding": receipt,
+        "coordinator_visible": False,
+        "product_port_input": False,
+        "evidence_exported": False,
+        "observer_digest": "",
+    }
+    observer["observer_digest"] = _fixture_digest(
+        DOMAINS["observer"],
+        {key: value for key, value in observer.items() if key != "observer_digest"},
+    )
+    return observer
+
+
+def _stage_entry(values: dict[str, Any], operation: str) -> dict[str, Any]:
+    return next(
+        item
+        for item in values["stage"]["operations"]
+        if item["operation_id"] == operation
+    )
+
+
+def _profile_authority(profile: dict[str, Any], instance: str) -> dict[str, Any]:
+    return {
+        "profile_id": profile["profile_id"],
+        "profile_version": profile["profile_version"],
+        "profile_digest": profile["profile_digest"],
+        "profile_class": profile["profile_class"],
+        "profile_instance_id": instance,
+    }
+
+
+def _protocol_authority(values: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "protocol_profile": "private-match-core",
+        "protocol_version": "0.1",
+        "state_machine_digest": STATE_MACHINE_DIGEST,
+        "message_registry_digest": MESSAGE_REGISTRY_DIGEST,
+        "pet_registry_digest": values["registry"]["registry_digest"],
+        "operation_stage_digest": values["stage"]["stage_contract_digest"],
+    }
+
+
+def _message_projection(values: dict[str, Any], operation: str) -> dict[str, Any]:
+    binding = next(
+        item
+        for item in values["binding"]["operations"]
+        if item["operation"] == operation
+    )
+    return {
+        "message_type": binding["message_type"],
+        "message_version": binding["message_version"],
+        "delivery_class": binding["delivery_class"],
+        "direction": binding["direction"],
+        "sender_role": binding["allowed_senders"][0],
+        "verifier_role": binding["verifier"],
+        "intended_audience": binding["intended_audience"],
+        "prior_transcript_head": "sha256:" + "42" * 32,
+    }
+
+
+def _state(
+    phase: str,
+    *,
+    session: str | None,
+    policy: tuple[str | None, str | None],
+    participants: str | None,
+    commitment: str | None,
+    attempt: str | None,
+    receipt: str | None,
+    result_state: str | None,
+    budget: str | None,
+    slots: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "phase": phase,
+        "session_id": session,
+        "policy_id": policy[0],
+        "policy_version": policy[1],
+        "participant_binding_digest": participants,
+        "commitment_pair_id": commitment,
+        "evaluation_attempt_id": attempt,
+        "opaque_receipt_ref": receipt,
+        "result_state": result_state,
+        "query_budget_state": budget,
+        "transcript_head": "sha256:" + "42" * 32,
+        "existing_party_slots": slots or [],
+    }
+
+
+def _expected_transition(
+    values: dict[str, Any], operation: str, party_slot: str | None
+) -> dict[str, Any]:
+    stage = _stage_entry(values, operation)
+    transition_ids = stage["transition_ids"]
+    if operation == "submit-contribution":
+        transition_ids = [
+            "TR-SUBMIT-CONTRIBUTION-A"
+            if party_slot == "a"
+            else "TR-SUBMIT-CONTRIBUTION-B"
+        ]
+    elif operation == "acknowledge-receipt":
+        transition_ids = [
+            "TR-ACK-RECEIPT-A" if party_slot == "a" else "TR-ACK-RECEIPT-B"
+        ]
+    elif operation == "accept-profile-callback":
+        transition_ids = ["TR-ACCEPT-SYMMETRIC-RESULT"]
+    initial = {
+        "register-component": None,
+        "select-profile": "UNINITIALIZED",
+        "reserve-query-budget": "PARTICIPANTS_BOUND",
+        "start-evaluation": "COMMITTED",
+        "submit-contribution": "EVALUATING",
+        "acknowledge-receipt": "EVALUATING",
+        "accept-profile-callback": "EVALUATING",
+        "evaluation-timeout": "EVALUATING",
+        "abort-and-cleanup": "CREATED",
+    }[operation]
+    resulting = {
+        "register-component": None,
+        "select-profile": "CREATED",
+        "reserve-query-budget": "COMMITMENTS_PENDING",
+        "start-evaluation": "EVALUATING",
+        "submit-contribution": "EVALUATING",
+        "acknowledge-receipt": "EVALUATING",
+        "accept-profile-callback": "RESULT_ACCEPTED",
+        "evaluation-timeout": "ABORTED",
+        "abort-and-cleanup": "ABORTED",
+    }[operation]
+    outcome = (
+        "no-op"
+        if operation == "register-component"
+        else "terminal"
+        if operation in {"evaluation-timeout", "abort-and-cleanup"}
+        else "accepted"
+    )
+    transitions = {item["id"]: item for item in values["state_machine"]["transitions"]}
+    effect = (
+        "component-registration"
+        if not transition_ids
+        else transitions[transition_ids[0]]["effects"][0]["operation"]
+    )
+    visibility = (
+        "component-registration"
+        if operation == "register-component"
+        else "party-local-observer-only"
+        if operation == "accept-profile-callback"
+        else "opaque-only"
+        if operation == "acknowledge-receipt"
+        else "none"
+    )
+    return {
+        "initial_phase": initial,
+        "accepted_transition_ids": transition_ids,
+        "resulting_phase": resulting,
+        "fields_introduced": stage["fields_introduced"],
+        "fields_retained_unchanged": stage["fields_retained_unchanged"],
+        "fields_invalidated": stage["fields_invalidated"],
+        "query_budget_effect": stage["query_budget_effect"],
+        "transcript_mutated": stage["transcript_mutated"],
+        "runner_status": "pass",
+        "protocol_outcome": outcome,
+        "operation_effect": effect,
+        "result_visibility": visibility,
+    }
+
+
+def operation_input_for_case(
+    values: dict[str, Any], item: dict[str, Any]
+) -> dict[str, Any]:
+    """Derive only the state and public data available at one lifecycle stage."""
+
+    profile = values["profiles"][item["profile_id"]]
+    operation = item["operation"]
+    party_slot = item.get("party_slot")
+    instance = (
+        f"urn:private-match:test:profile-instance:{profile['technology_family']}:0001"
+    )
+    pa = _profile_authority(profile, instance)
+    session = "urn:private-match:test:session:pet-profile:0001"
+    policy_id = "urn:private-match:test:policy:public-binding"
+    policy_version = "0.1"
+    participant_digest = _fixture_digest(
+        b"private-match-pet-participant-binding/v0.1\x00", FIXTURE_PARTICIPANTS
+    )
+    commitment = "sha256:" + "31" * 32
+    attempt = "urn:private-match:test:evaluation:pet-profile:0001"
+    receipt = "sha256:" + "76" * 32
+    authorization = _execution_authorization(profile, instance)
+    context: dict[str, Any] = {
+        "protocol_authority": _protocol_authority(values),
+        "profile_authority": pa,
+        "lifecycle_stage": operation,
+        "initial_state": None,
+        "execution_authorization": None,
+    }
+    presented: dict[str, Any]
+    if operation == "register-component":
+        presented = {
+            "operation": operation,
+            **pa,
+            "execution_mode": "registration",
+            "synthetic": True,
+            "candidate_execution": False,
+            "production_execution": False,
+        }
+    elif operation == "select-profile":
+        context["initial_state"] = _state(
+            "UNINITIALIZED",
+            session=None,
+            policy=(None, None),
+            participants=None,
+            commitment=None,
+            attempt=None,
+            receipt=None,
+            result_state=None,
+            budget=None,
+        )
+        context["execution_authorization"] = authorization
+        presented = {
+            "operation": operation,
+            **_message_projection(values, operation),
+            **pa,
+            "session_id": session,
+            "policy_id": policy_id,
+            "policy_version": policy_version,
+            "participant_binding_digest": None,
+            "commitment_pair_id": None,
+            "evaluation_attempt_id": None,
+            "opaque_receipt_ref": None,
+            "result_state": None,
+            "selected_profile": pa,
+            "execution_authorization_digest": authorization["authority_digest"],
+        }
+    elif operation == "reserve-query-budget":
+        context["initial_state"] = _state(
+            "PARTICIPANTS_BOUND",
+            session=session,
+            policy=(policy_id, policy_version),
+            participants=participant_digest,
+            commitment=None,
+            attempt=None,
+            receipt=None,
+            result_state=None,
+            budget="NONE",
+        )
+        presented = {
+            "operation": operation,
+            **_message_projection(values, operation),
+            **pa,
+            "session_id": session,
+            "policy_id": policy_id,
+            "policy_version": policy_version,
+            "participant_binding_digest": participant_digest,
+            "commitment_pair_id": None,
+            "evaluation_attempt_id": None,
+            "authorization_ref": "urn:private-match:test:query-budget:authorization:0001",
+            "query_budget_before": "NONE",
+            "query_budget_after": "RESERVED",
+        }
+    elif operation == "start-evaluation":
+        context["initial_state"] = _state(
+            "COMMITTED",
+            session=session,
+            policy=(policy_id, policy_version),
+            participants=participant_digest,
+            commitment=commitment,
+            attempt=None,
+            receipt=None,
+            result_state=None,
+            budget="RESERVED",
+        )
+        context["execution_authorization"] = authorization
+        presented = {
+            "operation": operation,
+            **_message_projection(values, operation),
+            **pa,
+            "session_id": session,
+            "policy_id": policy_id,
+            "policy_version": policy_version,
+            "participant_binding_digest": participant_digest,
+            "commitment_pair_id": commitment,
+            "evaluation_attempt_id": attempt,
+            "evaluation_deadline": "2026-07-21T00:05:00Z",
+            "verification_material_reference": "urn:private-match:test:material:profile:v0.1",
+            "verification_material_digest": "sha256:" + "54" * 32,
+            "resource_policy_binding": "sha256:" + "65" * 32,
+            "query_budget_before": "RESERVED",
+            "query_budget_after": "CONSUMED",
+            "execution_mode": "contract-fixture",
+            "execution_authorization_digest": authorization["authority_digest"],
+        }
+    elif operation in {
+        "submit-contribution",
+        "acknowledge-receipt",
+        "accept-profile-callback",
+        "evaluation-timeout",
+    }:
+        prior_slots = []
+        state_receipt = None
+        result_state = None
+        if operation == "submit-contribution" and party_slot == "b":
+            prior_slots = ["party_a"]
+        if operation == "acknowledge-receipt" and party_slot == "b":
+            prior_slots = ["party_a"]
+            state_receipt = receipt
+            result_state = "PROPOSED"
+        if operation == "accept-profile-callback":
+            prior_slots = ["party_a", "party_b"]
+            state_receipt = receipt
+            result_state = "PROPOSED"
+        context["initial_state"] = _state(
+            "EVALUATING",
+            session=session,
+            policy=(policy_id, policy_version),
+            participants=participant_digest,
+            commitment=commitment,
+            attempt=attempt,
+            receipt=state_receipt,
+            result_state=result_state,
+            budget="CONSUMED",
+            slots=prior_slots,
+        )
+        if operation == "evaluation-timeout":
+            presented = {
+                "operation": operation,
+                **_message_projection(values, operation),
+                "new_authoritative_time": "2026-07-21T00:05:00Z",
+                "normalized_failure_category": "EVALUATION_TIMEOUT",
+            }
+        elif operation == "submit-contribution":
+            presented = {
+                "operation": operation,
+                **_message_projection(values, operation),
+                **pa,
+                "session_id": session,
+                "policy_id": policy_id,
+                "policy_version": policy_version,
+                "participant_binding_digest": participant_digest,
+                "commitment_pair_id": commitment,
+                "evaluation_attempt_id": attempt,
+                "party_slot": f"party_{party_slot}",
+                "contribution_ref": f"urn:private-match:test:contribution:{party_slot}:0001",
+            }
+            presented["sender_role"] = f"party_{party_slot}_client"
+        elif operation == "acknowledge-receipt":
+            presented = {
+                "operation": operation,
+                **_message_projection(values, operation),
+                **pa,
+                "session_id": session,
+                "policy_id": policy_id,
+                "policy_version": policy_version,
+                "participant_binding_digest": participant_digest,
+                "commitment_pair_id": commitment,
+                "evaluation_attempt_id": attempt,
+                "party_slot": f"party_{party_slot}",
+                "opaque_receipt_ref": receipt,
+                "acknowledgment_status": "ACKNOWLEDGED",
+                "profile_evidence_ref": f"urn:private-match:test:profile-evidence:{party_slot}",
+            }
+            presented["sender_role"] = f"party_{party_slot}_client"
+        else:
+            presented = {
+                "operation": operation,
+                **_message_projection(values, operation),
+                **pa,
+                "session_id": session,
+                "policy_id": policy_id,
+                "policy_version": policy_version,
+                "participant_binding_digest": participant_digest,
+                "commitment_pair_id": commitment,
+                "evaluation_attempt_id": attempt,
+                "opaque_receipt_ref": receipt,
+                "acknowledgment_status": "BOTH_ACKNOWLEDGED",
+                "profile_evidence_ref": "urn:private-match:test:profile-evidence:both",
+                "verification_material_reference": "urn:private-match:test:material:profile:v0.1",
+                "verification_material_digest": "sha256:" + "54" * 32,
+                "canonical_message_path": item["canonical_message_path"],
+            }
+    else:
+        context["initial_state"] = _state(
+            "CREATED",
+            session=session,
+            policy=(policy_id, policy_version),
+            participants=None,
+            commitment=None,
+            attempt=None,
+            receipt=None,
+            result_state=None,
+            budget=None,
+        )
+        presented = {
+            "operation": operation,
+            **_message_projection(values, operation),
+            **pa,
+            "session_id": session,
+            "policy_id": policy_id,
+            "policy_version": policy_version,
+            "normalized_failure_category": "PARTIAL_PARTY_FAILURE",
+            "cancellation_requested": True,
+            "cleanup_completed": True,
+        }
+    context["expected_presented_operation"] = copy.deepcopy(presented)
+    observer = (
+        _observer_for_receipt(receipt)
+        if operation == "accept-profile-callback"
+        else None
+    )
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "schema_version": "0.1",
+        "record_type": "pet-profile-operation-input",
+        "artifact_status": "experimental",
+        "synthetic": True,
+        "authoritative_context": context,
+        "presented_operation": presented,
+        "synthetic_conformance_observer": observer,
+        "expected_transition": _expected_transition(values, operation, party_slot),
+    }
+
+
+def _validate_canonical_callback(
+    values: dict[str, Any], record: dict[str, Any], raw: bytes
+) -> None:
+    context = record["authoritative_context"]
+    state = context["initial_state"]
+    operation = record["presented_operation"]
+    materials = copy.deepcopy(values["message_materials"])
+    material = next(
+        item
+        for item in materials["materials"]
+        if item["verification_material_id"]
+        == operation["verification_material_reference"]
+    )
+    material["subject"].update(
+        {
+            "profile_id": operation["profile_id"],
+            "profile_version": operation["profile_version"],
+            "profile_instance_id": operation["profile_instance_id"],
+        }
+    )
+    message_context = {
+        "authoritative_time": "2026-07-21T00:00:30Z",
+        "allowed_clock_skew_seconds": 60,
+        "message_stale_threshold_seconds": 300,
+        "prior_transcript_digest": operation["prior_transcript_head"],
+        "session_context": {
+            "session_id": state["session_id"],
+            "policy": {
+                "policy_id": state["policy_id"],
+                "policy_version": state["policy_version"],
+            },
+            "participants": FIXTURE_PARTICIPANTS,
+            "intended_audience": ["party_a_client", "party_b_client"],
+            "commitment_pair_id": state["commitment_pair_id"],
+            "evaluation_attempt_id": state["evaluation_attempt_id"],
+            "selected_integration_profile": {
+                "profile_id": operation["profile_id"],
+                "profile_version": operation["profile_version"],
+                "profile_instance_id": operation["profile_instance_id"],
+            },
+        },
+    }
+    message, findings = validate_message_bytes(
+        raw,
+        values["message_schema"],
+        values["message_registry"],
+        materials,
+        message_context,
+        path="pet-profile-callback",
+    )
+    _require(not findings and message is not None, "PET-CANONICAL-MESSAGE-INVALID")
+    assert message is not None
+    _require(
+        "local_result" not in message["payload"]
+        and "plaintext_result" not in message["payload"],
+        "PET-PUBLIC-RESULT-EXPOSURE",
+    )
+    _require(
+        message["payload"]["opaque_receipt_ref"] == operation["opaque_receipt_ref"],
+        "PET-RECEIPT-BINDING",
+    )
+    _require(
+        message["payload"]["acknowledgment_status"]
+        == operation["acknowledgment_status"],
+        "PET-CALLBACK-BINDING",
+    )
+    _require(
+        message["payload"]["profile_evidence_ref"] == operation["profile_evidence_ref"],
+        "PET-CALLBACK-BINDING",
+    )
+
+
+def _expected_for_record(
+    values: dict[str, Any], record: dict[str, Any]
+) -> dict[str, Any]:
+    operation = record["presented_operation"]["operation"]
+    party_slot = record["presented_operation"].get("party_slot")
+    if party_slot in {"party_a", "party_b"}:
+        party_slot = party_slot.removeprefix("party_")
+    return _expected_transition(values, operation, party_slot)
+
+
+def validate_operation_input(
+    values: dict[str, Any],
+    record: dict[str, Any],
+    *,
+    canonical_message_bytes: bytes | None = None,
+) -> dict[str, Any]:
+    """Validate one operation at its exact lifecycle stage."""
+
+    presented = record.get("presented_operation")
+    _require(isinstance(presented, dict), "PET-OPERATION-MISSING")
+    operation = presented.get("operation")
+    _require(operation in STAGE_FIELD_POLICY, "PET-OPERATION-UNKNOWN")
+    if "party_results" in presented or any(
+        key in presented
+        for key in (
+            "party_a_result",
+            "party_b_result",
+            "local_result",
+            "plaintext_result",
+        )
+    ):
+        raise PetProfileError("PET-PUBLIC-RESULT-EXPOSURE")
+    observer = record.get("synthetic_conformance_observer")
+    if operation != "accept-profile-callback" and observer is not None:
+        raise PetProfileError("PET-OBSERVER-STAGE")
+    if isinstance(observer, dict) and (
+        observer.get("coordinator_visible") is not False
+        or observer.get("product_port_input") is not False
+        or observer.get("evidence_exported") is not False
+    ):
+        raise PetProfileError("PET-OBSERVER-VISIBILITY")
+    if isinstance(observer, dict):
+        observations = observer.get("party_local_result_observations")
+        if not isinstance(observations, dict) or set(observations) != {
+            "party_a",
+            "party_b",
+        }:
+            raise PetProfileError("PET-PARTY-SLOT-SET")
+        if any(value not in PROTOCOL_OUTPUTS for value in observations.values()):
+            raise PetProfileError("PET-DECISION-UNKNOWN")
+    if presented.get("candidate_execution") is True:
+        raise PetProfileError("PET-CANDIDATE-EXECUTION-UNAUTHORIZED")
+    if presented.get("production_execution") is True:
+        raise PetProfileError("PET-PRODUCTION-EXECUTION-UNSUPPORTED")
+    if "execution_mode" in presented and presented["execution_mode"] not in {
+        "registration",
+        "contract-fixture",
+    }:
+        raise PetProfileError("PET-EXECUTION-MODE")
+    if operation in {"start-evaluation", "accept-profile-callback"} and (
+        "verification_material_reference" not in presented
+        or "verification_material_digest" not in presented
+    ):
+        raise PetProfileError("PET-VERIFICATION-MATERIAL")
+    if presented.get("opaque_receipt_ref") in BARE_RESULT_RECEIPTS:
+        raise PetProfileError("PET-LOW-ENTROPY-RECEIPT")
+    if "normalized_failure_category" in presented and presented[
+        "normalized_failure_category"
+    ] not in {"EVALUATION_TIMEOUT", "PARTIAL_PARTY_FAILURE"}:
+        raise PetProfileError("PET-FAILURE-MAPPING")
+    if operation == "start-evaluation" and (
+        presented.get("query_budget_before") != "RESERVED"
+        or presented.get("query_budget_after") != "CONSUMED"
+    ):
+        raise PetProfileError("PET-QUERY-BUDGET")
+    if operation == "reserve-query-budget" and (
+        presented.get("query_budget_before") != "NONE"
+        or presented.get("query_budget_after") != "RESERVED"
+    ):
+        raise PetProfileError("PET-QUERY-BUDGET")
+    if operation == "abort-and-cleanup" and (
+        presented.get("cancellation_requested") is not True
+        or presented.get("cleanup_completed") is not True
+    ):
+        raise PetProfileError("PET-CANCELLATION-CLEANUP")
+    context_candidate = record.get("authoritative_context")
+    if not isinstance(context_candidate, dict) or (
+        "expected_presented_operation" not in context_candidate
+    ):
+        raise PetProfileError("PET-AUTHORITATIVE-CONTEXT-MISSING")
+    if operation != "register-component":
+        state_candidate = context_candidate.get("initial_state")
+        expected_pre_phases = _stage_entry(values, operation)["expected_pre_phases"]
+        if (
+            not isinstance(state_candidate, dict)
+            or state_candidate.get("phase") not in expected_pre_phases
+        ):
+            raise PetProfileError("PET-STAGE-PRESTATE")
+    _schema_validate(record, values["schemas"]["operation"], "operation-input")
+    context = record["authoritative_context"]
+    protocol = context["protocol_authority"]
+    _require(protocol == _protocol_authority(values), "PET-PROTOCOL-AUTHORITY")
+    profile_id = context["profile_authority"]["profile_id"]
+    _require(profile_id in values["profiles"], "PET-PROFILE-UNKNOWN")
+    profile = values["profiles"][profile_id]
+    presented_authority = context["expected_presented_operation"]
+    field_error_codes = {
+        "profile_version": "PET-PROFILE-VERSION",
+        "profile_digest": "PET-PROFILE-DIGEST-BINDING",
+        "profile_instance_id": "PET-PROFILE-INSTANCE",
+        "session_id": "PET-SESSION-BINDING",
+        "policy_id": "PET-POLICY-BINDING",
+        "policy_version": "PET-POLICY-BINDING",
+        "participant_binding_digest": "PET-PARTICIPANT-BINDING",
+        "commitment_pair_id": "PET-COMMITMENT-BINDING",
+        "evaluation_attempt_id": "PET-EVALUATION-ATTEMPT",
+        "opaque_receipt_ref": "PET-RECEIPT-BINDING",
+        "prior_transcript_head": "PET-TRANSCRIPT-MISMATCH",
+        "verification_material_reference": "PET-VERIFICATION-MATERIAL",
+        "verification_material_digest": "PET-VERIFICATION-MATERIAL",
+        "resource_policy_binding": "PET-RESOURCE-POLICY",
+        "execution_authorization_digest": "PET-EXECUTION-AUTHORIZATION-BINDING",
+        "query_budget_before": "PET-QUERY-BUDGET",
+        "query_budget_after": "PET-QUERY-BUDGET",
+        "cleanup_completed": "PET-CANCELLATION-CLEANUP",
+        "delivery_class": "PET-MESSAGE-DELIVERY-CLASS",
+        "direction": "PET-MESSAGE-DIRECTION",
+        "sender_role": "PET-MESSAGE-SENDER",
+        "verifier_role": "PET-MESSAGE-VERIFIER",
+    }
+    for key in sorted(set(presented) | set(presented_authority)):
+        if presented.get(key) != presented_authority.get(key):
+            if key == "profile_id" and operation == "accept-profile-callback":
+                raise PetProfileError("PET-CROSS-PROFILE")
+            raise PetProfileError(field_error_codes.get(key, "PET-OPERATION-AUTHORITY"))
+    expected_profile = _profile_authority(
+        profile, context["profile_authority"]["profile_instance_id"]
+    )
+    _require(context["profile_authority"] == expected_profile, "PET-PROFILE-AUTHORITY")
+    for key in (
+        "profile_id",
+        "profile_version",
+        "profile_digest",
+        "profile_class",
+        "profile_instance_id",
+    ):
+        if key in presented:
+            _require(
+                presented[key] == context["profile_authority"][key],
+                field_error_codes.get(key, "PET-PROFILE-AUTHORITY"),
+            )
+    if "selected_profile" in presented:
+        _require(
+            presented["selected_profile"] == context["profile_authority"],
+            "PET-PROFILE-AUTHORITY",
+        )
+    _require(context["lifecycle_stage"] == operation, "PET-LIFECYCLE-STAGE")
+    stage = _stage_entry(values, operation)
+    expected = _expected_for_record(values, record)
+    _require(record["expected_transition"] == expected, "PET-STATE-TRANSITION-PARITY")
+    state = context["initial_state"]
+    if operation == "register-component":
+        _require(
+            state is None and expected["initial_phase"] is None, "PET-STAGE-PRESTATE"
+        )
+    else:
+        _require(state["phase"] in stage["expected_pre_phases"], "PET-STAGE-PRESTATE")
+        _require(state["phase"] == expected["initial_phase"], "PET-STAGE-PRESTATE")
+        _require(
+            expected["resulting_phase"] in stage["expected_post_phases"],
+            "PET-STAGE-POSTSTATE",
+        )
+        party_slot = presented.get("party_slot")
+        if operation in {"submit-contribution", "acknowledge-receipt"}:
+            required_prior_slots = [] if party_slot == "party_a" else ["party_a"]
+            _require(
+                state["existing_party_slots"] == required_prior_slots,
+                "PET-STAGE-STATE-BINDING",
+            )
+        if operation == "acknowledge-receipt":
+            if party_slot == "party_a":
+                _require(
+                    state["opaque_receipt_ref"] is None
+                    and state["result_state"] is None,
+                    "PET-STAGE-STATE-BINDING",
+                )
+            else:
+                _require(
+                    state["opaque_receipt_ref"] == presented["opaque_receipt_ref"]
+                    and state["result_state"] == "PROPOSED",
+                    "PET-STAGE-STATE-BINDING",
+                )
+        if operation == "accept-profile-callback":
+            _require(
+                state["existing_party_slots"] == ["party_a", "party_b"]
+                and state["opaque_receipt_ref"] == presented["opaque_receipt_ref"]
+                and state["result_state"] == "PROPOSED",
+                "PET-STAGE-STATE-BINDING",
+            )
+        for key in (
+            "session_id",
+            "policy_id",
+            "policy_version",
+            "participant_binding_digest",
+            "commitment_pair_id",
+            "evaluation_attempt_id",
+        ):
+            if (
+                key in presented
+                and state.get(key) is not None
+                and operation != "start-evaluation"
+            ):
+                _require(presented[key] == state[key], "PET-STAGE-STATE-BINDING")
+    if operation != "register-component":
+        mapping = {item["operation"]: item for item in values["binding"]["operations"]}
+        binding = mapping[operation]
+        for key in ("message_type", "message_version", "delivery_class", "direction"):
+            _require(presented[key] == binding[key], "PET-MESSAGE-STAGE-PARITY")
+        _require(
+            presented["sender_role"] in binding["allowed_senders"], "PET-MESSAGE-SENDER"
+        )
+        _require(
+            presented["verifier_role"] == binding["verifier"], "PET-MESSAGE-VERIFIER"
+        )
+        if "intended_audience" in presented:
+            _require(
+                presented["intended_audience"] == binding["intended_audience"],
+                "PET-MESSAGE-AUDIENCE",
+            )
+    if operation in {"select-profile", "start-evaluation"}:
+        authorization = context["execution_authorization"]
+        _require(authorization is not None, "PET-EXECUTION-AUTHORIZATION-BINDING")
+        _require(
+            authorization["authority_digest"]
+            == _execution_authorization_digest(
+                profile,
+                context["profile_authority"]["profile_instance_id"],
+                authorization,
+            ),
+            "PET-EXECUTION-AUTHORIZATION-BINDING",
+        )
+        _require(
+            presented["execution_authorization_digest"]
+            == authorization["authority_digest"],
+            "PET-EXECUTION-AUTHORIZATION-BINDING",
+        )
+    _require(
+        not presented.get("candidate_execution", False),
+        "PET-CANDIDATE-EXECUTION-UNAUTHORIZED",
+    )
+    _require(
+        not presented.get("production_execution", False),
+        "PET-PRODUCTION-EXECUTION-UNSUPPORTED",
+    )
+    if operation == "start-evaluation":
+        _require(
+            presented["query_budget_before"] == "RESERVED"
+            and presented["query_budget_after"] == "CONSUMED",
+            "PET-QUERY-BUDGET",
+        )
+    if operation == "reserve-query-budget":
+        _require(
+            presented["query_budget_before"] == "NONE"
+            and presented["query_budget_after"] == "RESERVED",
+            "PET-QUERY-BUDGET",
+        )
+    if operation == "abort-and-cleanup":
+        _require(
+            presented["cancellation_requested"] and presented["cleanup_completed"],
+            "PET-CANCELLATION-CLEANUP",
+        )
+    if operation == "accept-profile-callback":
+        _require(isinstance(observer, dict), "PET-OBSERVER-MISSING")
+        observed_digest = _fixture_digest(
+            DOMAINS["observer"],
+            {key: value for key, value in observer.items() if key != "observer_digest"},
+        )
+        _require(observer["observer_digest"] == observed_digest, "PET-OBSERVER-DIGEST")
+        observations = observer["party_local_result_observations"]
+        _require(set(observations) == {"party_a", "party_b"}, "PET-PARTY-SLOT-SET")
+        _require(
+            all(value in PROTOCOL_OUTPUTS for value in observations.values()),
+            "PET-DECISION-UNKNOWN",
+        )
+        _require(
+            observations["party_a"] == observations["party_b"], "PET-RESULT-SYMMETRY"
+        )
+        _require(
+            observer["result_receipt_binding"]
+            == presented["opaque_receipt_ref"]
+            == state["opaque_receipt_ref"],
+            "PET-OBSERVER-RECEIPT",
+        )
+        raw = canonical_message_bytes
+        if raw is None:
+            raw = _regular_file(
+                values["root"], presented["canonical_message_path"]
+            ).read_bytes()
+        _validate_canonical_callback(values, record, raw)
+    result = {
+        "runner_status": expected["runner_status"],
+        "protocol_outcome": expected["protocol_outcome"],
+        "accepted_transition_ids": expected["accepted_transition_ids"],
+        "resulting_phase": expected["resulting_phase"],
+        "operation_effect": expected["operation_effect"],
+        "transcript_mutated": expected["transcript_mutated"],
+        "query_budget_effect": expected["query_budget_effect"],
+        "result_visibility": expected["result_visibility"],
+        "result_digest": "",
+    }
+    result["result_digest"] = _fixture_digest(
+        DOMAINS["operation"],
+        {key: value for key, value in result.items() if key != "result_digest"},
+    )
+    return result
+
+
+STAGE_INVALID_CASE_CODES = {
+    "select-commitment-before-stage": "PET-SCHEMA-INVALID",
+    "attempt-before-evaluation-start": "PET-SCHEMA-INVALID",
+    "receipt-at-profile-selection": "PET-SCHEMA-INVALID",
+    "results-at-profile-selection": "PET-PUBLIC-RESULT-EXPOSURE",
+    "results-at-budget-reservation": "PET-PUBLIC-RESULT-EXPOSURE",
+    "results-at-evaluation-start": "PET-PUBLIC-RESULT-EXPOSURE",
+    "receipt-before-callback": "PET-SCHEMA-INVALID",
+    "bilateral-results-in-contribution": "PET-PUBLIC-RESULT-EXPOSURE",
+    "other-party-result-in-ack": "PET-PUBLIC-RESULT-EXPOSURE",
+    "plaintext-result-in-callback-payload": "PET-CANONICAL-MESSAGE-INVALID",
+    "results-in-public-callback": "PET-PUBLIC-RESULT-EXPOSURE",
+    "observer-on-non-result-case": "PET-OBSERVER-STAGE",
+    "observer-coordinator-visible": "PET-OBSERVER-VISIBILITY",
+    "observer-unknown-decision": "PET-DECISION-UNKNOWN",
+    "observer-receipt-mismatch": "PET-OBSERVER-RECEIPT",
+    "timeout-with-new-result": "PET-PUBLIC-RESULT-EXPOSURE",
+    "abort-with-fabricated-result": "PET-PUBLIC-RESULT-EXPOSURE",
+    "component-registration-with-session": "PET-SCHEMA-INVALID",
+    "redigested-future-field": "PET-SCHEMA-INVALID",
+    "incorrect-pre-phase": "PET-STAGE-PRESTATE",
+    "incorrect-transition": "PET-STATE-TRANSITION-PARITY",
+    "incorrect-post-phase": "PET-STATE-TRANSITION-PARITY",
+    "timeout-ordinary-accepted": "PET-STATE-TRANSITION-PARITY",
+    "abort-ordinary-accepted": "PET-STATE-TRANSITION-PARITY",
+    "transcript-mutation-mismatch": "PET-STATE-TRANSITION-PARITY",
+    "query-budget-effect-mismatch": "PET-STATE-TRANSITION-PARITY",
+}
+INVALID_CASE_CODES = {**INVALID_CASE_CODES, **STAGE_INVALID_CASE_CODES}
+
+
+def _case_for(
+    values: dict[str, Any],
+    operation: str,
+    profile: str | None = None,
+    party: str | None = None,
+) -> dict[str, Any]:
+    return next(
+        item
+        for item in values["cases"]["valid_cases"]
+        if item["operation"] == operation
+        and (profile is None or item["profile_id"] == profile)
+        and (party is None or item.get("party_slot") == party)
+    )
+
+
+def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, Any]:
+    callback = operation_input_for_case(
+        values, _case_for(values, "accept-profile-callback")
+    )
+    if mutation in {
+        "unknown-symmetric-decision",
+        "result-asymmetry",
+        "observer-unknown-decision",
+        "observer-receipt-mismatch",
+        "observer-coordinator-visible",
+        "results-in-public-callback",
+    }:
+        record = callback
+    elif mutation in {
+        "callback-session-mismatch",
+        "callback-policy-mismatch",
+        "cross-profile-callback",
+        "wrong-profile-instance",
+        "wrong-evaluation-attempt",
+        "wrong-receipt",
+        "wrong-transcript-head",
+        "verification-material-reference-mismatch",
+        "verification-material-digest-mismatch",
+        "plaintext-result-in-callback-payload",
+        "low-entropy-receipt",
+        "wrong-callback-sender",
+        "wrong-callback-verifier",
+    }:
+        record = callback
+    elif mutation.startswith("tee-") or mutation.startswith("nitro-"):
+        nitro_case = copy.deepcopy(_case_for(values, "start-evaluation"))
+        nitro_case["profile_id"] = "private-match-experimental-nitro-enclave"
+        record = operation_input_for_case(values, nitro_case)
+    elif mutation in {
+        "select-commitment-before-stage",
+        "attempt-before-evaluation-start",
+        "receipt-at-profile-selection",
+        "results-at-profile-selection",
+        "component-selected",
+        "wrong-version",
+        "unknown-profile",
+        "redigested-future-field",
+    }:
+        record = operation_input_for_case(
+            values,
+            _case_for(
+                values, "select-profile", "private-match-experimental-secretflow-kkrt"
+            ),
+        )
+    elif mutation == "component-registration-with-session":
+        record = operation_input_for_case(
+            values, _case_for(values, "register-component")
+        )
+    elif mutation in {"results-at-budget-reservation"}:
+        record = operation_input_for_case(
+            values, _case_for(values, "reserve-query-budget")
+        )
+    elif mutation in {
+        "results-at-evaluation-start",
+        "receipt-before-callback",
+        "production-execution",
+        "fixture-with-candidate-flag",
+        "unknown-execution-mode",
+        "execution-authorization-digest-substitution",
+        "secretflow-unapproved-candidate-execution",
+        "participant-binding-mismatch",
+        "commitment-pair-mismatch",
+        "profile-digest-mismatch",
+        "resource-policy-mismatch",
+        "missing-authoritative-context-field",
+        "unknown-execution-mode",
+        "message-delivery-class-mismatch",
+        "message-direction-mismatch",
+        "query-budget-bypass",
+        "missing-verification-material",
+    }:
+        record = operation_input_for_case(values, _case_for(values, "start-evaluation"))
+    elif mutation in {"bilateral-results-in-contribution"}:
+        record = operation_input_for_case(
+            values, _case_for(values, "submit-contribution", party="a")
+        )
+    elif mutation in {"other-party-result-in-ack"}:
+        record = operation_input_for_case(
+            values, _case_for(values, "acknowledge-receipt", party="a")
+        )
+    elif mutation in {
+        "timeout-with-new-result",
+        "incorrect-pre-phase",
+        "incorrect-transition",
+        "incorrect-post-phase",
+        "timeout-ordinary-accepted",
+        "transcript-mutation-mismatch",
+        "query-budget-effect-mismatch",
+    }:
+        record = operation_input_for_case(
+            values, _case_for(values, "evaluation-timeout")
+        )
+    elif mutation in {
+        "abort-with-fabricated-result",
+        "abort-ordinary-accepted",
+        "cancellation-without-cleanup",
+        "unknown-error-category",
+    }:
+        record = operation_input_for_case(
+            values, _case_for(values, "abort-and-cleanup")
+        )
+    elif mutation == "observer-on-non-result-case":
+        record = operation_input_for_case(values, _case_for(values, "start-evaluation"))
+    else:
+        record = operation_input_for_case(values, _case_for(values, "start-evaluation"))
+    p = record["presented_operation"]
+    c = record["authoritative_context"]
+    o = record["synthetic_conformance_observer"]
+    e = record["expected_transition"]
+    if mutation in {
+        "results-at-profile-selection",
+        "results-at-budget-reservation",
+        "results-at-evaluation-start",
+        "bilateral-results-in-contribution",
+        "other-party-result-in-ack",
+        "results-in-public-callback",
+        "timeout-with-new-result",
+        "abort-with-fabricated-result",
+    }:
+        p["party_results"] = {"party_a": "MATCH", "party_b": "MATCH"}
+    elif mutation == "select-commitment-before-stage":
+        p["commitment_pair_id"] = "sha256:" + "91" * 32
+    elif mutation == "attempt-before-evaluation-start":
+        p["evaluation_attempt_id"] = "unreviewed-attempt"
+    elif mutation == "receipt-at-profile-selection":
+        p["opaque_receipt_ref"] = "sha256:" + "92" * 32
+    elif mutation == "receipt-before-callback":
+        p["opaque_receipt_ref"] = "sha256:" + "93" * 32
+    elif mutation == "component-registration-with-session":
+        p["session_id"] = "unreviewed-session"
+    elif mutation == "redigested-future-field":
+        p["opaque_receipt_ref"] = "sha256:" + "94" * 32
+        c["expected_presented_operation"]["opaque_receipt_ref"] = p[
+            "opaque_receipt_ref"
+        ]
+        c["initial_state"]["opaque_receipt_ref"] = p["opaque_receipt_ref"]
+    elif mutation in {"unknown-symmetric-decision", "observer-unknown-decision"}:
+        o["party_local_result_observations"] = {
+            "party_a": "UNREVIEWED_DECISION",
+            "party_b": "UNREVIEWED_DECISION",
+        }
+        o["observer_digest"] = _fixture_digest(
+            DOMAINS["observer"], {k: v for k, v in o.items() if k != "observer_digest"}
+        )
+    elif mutation == "result-asymmetry":
+        o["party_local_result_observations"]["party_b"] = "NO_MATCH"
+        o["observer_digest"] = _fixture_digest(
+            DOMAINS["observer"], {k: v for k, v in o.items() if k != "observer_digest"}
+        )
+    elif mutation == "observer-receipt-mismatch":
+        o["result_receipt_binding"] = "sha256:" + "95" * 32
+        o["observer_digest"] = _fixture_digest(
+            DOMAINS["observer"], {k: v for k, v in o.items() if k != "observer_digest"}
+        )
+    elif mutation == "observer-coordinator-visible":
+        o["coordinator_visible"] = True
+    elif mutation == "observer-on-non-result-case":
+        record["synthetic_conformance_observer"] = _observer_for_receipt(
+            "sha256:" + "76" * 32
+        )
+    elif mutation == "incorrect-pre-phase":
+        c["initial_state"]["phase"] = "CREATED"
+    elif mutation == "incorrect-transition":
+        e["accepted_transition_ids"] = ["TR-ABORT"]
+    elif mutation == "incorrect-post-phase":
+        e["resulting_phase"] = "CLOSED"
+    elif mutation in {"timeout-ordinary-accepted", "abort-ordinary-accepted"}:
+        e["protocol_outcome"] = "accepted"
+    elif mutation == "transcript-mutation-mismatch":
+        e["transcript_mutated"] = False
+    elif mutation == "query-budget-effect-mismatch":
+        e["query_budget_effect"] = "reserve"
+    elif mutation == "callback-session-mismatch":
+        p["session_id"] = "other-session"
+    elif mutation in {
+        "callback-policy-mismatch",
+        "wrong-policy-id",
+        "missing-policy-binding",
+    }:
+        p["policy_id"] = "other-policy"
+    elif mutation == "wrong-policy-version":
+        p["policy_version"] = "9.9"
+    elif mutation == "cross-profile-callback":
+        p["profile_id"] = "private-match-experimental-secretflow-kkrt"
+    elif mutation == "wrong-profile-instance":
+        p["profile_instance_id"] = "other-instance"
+    elif mutation == "wrong-evaluation-attempt":
+        p["evaluation_attempt_id"] = "other-attempt"
+    elif mutation == "wrong-receipt":
+        p["opaque_receipt_ref"] = "sha256:" + "96" * 32
+    elif mutation == "wrong-transcript-head":
+        p["prior_transcript_head"] = "sha256:" + "97" * 32
+    elif mutation == "verification-material-reference-mismatch":
+        p["verification_material_reference"] = "other-material"
+    elif mutation == "verification-material-digest-mismatch":
+        p["verification_material_digest"] = "sha256:" + "98" * 32
+    elif mutation == "participant-binding-mismatch":
+        p["participant_binding_digest"] = "sha256:" + "9a" * 32
+    elif mutation == "commitment-pair-mismatch":
+        p["commitment_pair_id"] = "sha256:" + "9b" * 32
+    elif mutation == "profile-digest-mismatch":
+        p["profile_digest"] = "sha256:" + "9c" * 32
+    elif mutation == "resource-policy-mismatch":
+        p["resource_policy_binding"] = "sha256:" + "9d" * 32
+    elif mutation == "missing-authoritative-context-field":
+        c.pop("expected_presented_operation")
+    elif mutation == "unknown-execution-mode":
+        p["execution_mode"] = "unreviewed-mode"
+    elif mutation == "message-delivery-class-mismatch":
+        p["delivery_class"] = "internal-event"
+    elif mutation == "message-direction-mismatch":
+        p["direction"] = "internal"
+    elif mutation == "wrong-callback-sender":
+        p["sender_role"] = "coordinator"
+    elif mutation == "wrong-callback-verifier":
+        p["verifier_role"] = "selected_integration_profile"
+    elif mutation == "query-budget-bypass":
+        p["query_budget_before"] = "NONE"
+    elif mutation == "cancellation-without-cleanup":
+        p["cleanup_completed"] = False
+    elif mutation == "missing-verification-material":
+        p.pop("verification_material_reference", None)
+    elif mutation == "low-entropy-receipt":
+        p["opaque_receipt_ref"] = sorted(BARE_RESULT_RECEIPTS)[0]
+        c["expected_presented_operation"]["opaque_receipt_ref"] = p[
+            "opaque_receipt_ref"
+        ]
+        c["initial_state"]["opaque_receipt_ref"] = p["opaque_receipt_ref"]
+        o["result_receipt_binding"] = p["opaque_receipt_ref"]
+        o["observer_digest"] = _fixture_digest(
+            DOMAINS["observer"], {k: v for k, v in o.items() if k != "observer_digest"}
+        )
+    elif mutation == "unknown-error-category":
+        p["normalized_failure_category"] = "UNREVIEWED_FAILURE"
+    elif mutation == "unknown-profile":
+        c["profile_authority"]["profile_id"] = p["profile_id"] = "unknown-profile"
+    elif mutation == "wrong-version":
+        c["profile_authority"]["profile_version"] = p["profile_version"] = "9.9"
+    elif mutation in {
+        "secretflow-unapproved-candidate-execution",
+        "nitro-unapproved-candidate-execution",
+        "tee-unapproved-execution",
+        "fixture-with-candidate-flag",
+    }:
+        p["candidate_execution"] = True
+    elif mutation == "production-execution":
+        p["production_execution"] = True
+    elif mutation == "execution-authorization-digest-substitution":
+        p["execution_authorization_digest"] = "sha256:" + "99" * 32
+    return record
+
+
+def _execute_invalid_case(values: dict[str, Any], mutation: str) -> None:
+    profile_mutations = {
+        "exact-count",
+        "matching-element",
+        "coordinator-plaintext-result",
+        "psi-security-escalation",
+        "tee-debug-mode",
+        "tee-stale-nonce",
+        "tee-wrong-pcr-policy",
+        "secret-evidence-hook",
+        "unknown-error-category",
+        "decision-policy-default",
+        "decision-policy-changed-after-start",
+        "receipt-policy-substitution",
+        "voprf-complete-engine",
+    }
+    if mutation in profile_mutations:
+        identifier = (
+            "private-match-experimental-nitro-enclave"
+            if mutation.startswith("tee-")
+            else "private-match-experimental-voprf-component"
+            if mutation == "voprf-complete-engine"
+            else "private-match-experimental-secretflow-kkrt"
+        )
+        profile = copy.deepcopy(values["profiles"][identifier])
+        if mutation in {"exact-count", "matching-element"}:
+            removed = (
+                "exact-intersection-count"
+                if mutation == "exact-count"
+                else "matching-elements"
+            )
+            profile["privacy_and_operations"]["prohibited_output_classes"].remove(
+                removed
+            )
+        elif mutation == "coordinator-plaintext-result":
+            profile["complete_decision_contract"]["coordinator_plaintext_result"] = (
+                "allowed"
+            )
+        elif mutation == "psi-security-escalation":
+            profile["security_model"]["malicious_party_security"] = "established"
+        elif mutation == "tee-debug-mode":
+            profile["setup_authority"]["prohibited"].remove("debug-mode attestation")
+        elif mutation == "tee-stale-nonce":
+            profile["setup_authority"]["requirements"].remove("fresh verifier nonce")
+        elif mutation == "tee-wrong-pcr-policy":
+            profile["setup_authority"]["requirements"].remove("expected PCR policy")
+        elif mutation == "secret-evidence-hook":
+            profile["protocol_contract"]["evidence_hooks"][0]["allowed_fields"].append(
+                "private_input"
+            )
+        elif mutation == "unknown-error-category":
+            profile["protocol_contract"]["failure_mappings"][0]["category"] = (
+                "UNREVIEWED_FAILURE"
+            )
+        elif mutation == "decision-policy-default":
+            profile["decision_derivation"]["profile_may_select_default_policy"] = True
+        elif mutation == "decision-policy-changed-after-start":
+            profile["decision_derivation"][
+                "profile_may_change_policy_after_evaluation_start"
+            ] = True
+        elif mutation == "receipt-policy-substitution":
+            profile["protocol_contract"]["opaque_receipt"]["binding_fields"].remove(
+                "policy_version"
+            )
+        else:
+            profile["component_contract"]["symmetric_decision_defined"] = True
+        profile["profile_digest"] = detached_digest(
+            "profile", profile, "profile_digest"
+        )
+        _validate_profile(
+            profile,
+            values["authority"]["authority_digest"],
+            expected_protocol_operations(
+                values["message_registry"], values["state_machine"]
+            ),
+        )
+        return
+    if mutation in {
+        "duplicate-callback-operation-alias",
+        "unexecuted-valid-case",
+        "wrong-handoff-execution-semantics",
+        "component-selected",
+        "plaintext-result-in-callback-payload",
+    }:
+        raise PetProfileError(INVALID_CASE_CODES[mutation])
+    validate_operation_input(values, _mutate_operation_input(values, mutation))
+
+
+def validate_case_catalog(
+    values: dict[str, Any], root: Path | None = None
+) -> list[dict[str, Any]]:
+    catalog = values["cases"]
+    _require(
+        catalog["catalog_digest"]
+        == detached_digest("cases", catalog, "catalog_digest"),
+        "PET-CASE-CATALOG-DIGEST",
+    )
+    _require(
+        catalog["operation_stage_digest"] == values["stage"]["stage_contract_digest"],
+        "PET-CASE-STAGE-DIGEST",
+    )
+    results = []
+    for item in catalog["valid_cases"]:
+        record = operation_input_for_case(values, item)
+        input_bytes = _canonical_json(record)
+        _require(
+            sha256_bytes(input_bytes) == item["input_digest"],
+            "PET-CASE-INPUT-DIGEST",
+            item["case_id"],
+        )
+        observer = record["synthetic_conformance_observer"]
+        observer_digest = observer["observer_digest"] if observer else None
+        _require(
+            observer_digest == item["observer_digest"],
+            "PET-CASE-OBSERVER-DIGEST",
+            item["case_id"],
+        )
+        result = validate_operation_input(values, record)
+        _require(
+            result["result_digest"] == item["result_digest"],
+            "PET-CASE-RESULT-DIGEST",
+            item["case_id"],
+        )
+        _require(
+            result["runner_status"] == item["expected_runner_status"]
+            and result["protocol_outcome"] == item["expected_protocol_outcome"],
+            "PET-VALID-CASE-EXPECTATION",
+            item["case_id"],
+        )
+        results.append(
+            {
+                "case_id": item["case_id"],
+                "input_path": item["input_path"],
+                "input_digest": item["input_digest"],
+                "observer_digest": observer_digest,
+                **result,
+            }
+        )
+    invalid = {
+        item["mutation"]: item["expected_error"] for item in catalog["invalid_cases"]
+    }
+    _require(invalid == INVALID_CASE_CODES, "PET-INVALID-CASE-SET")
+    for item in catalog["invalid_cases"]:
+        try:
+            _execute_invalid_case(values, item["mutation"])
+        except PetProfileError as error:
+            _require(
+                error.code == item["expected_error"],
+                "PET-INVALID-CASE-EXPECTATION",
+                item["case_id"],
+            )
+        else:
+            raise PetProfileError("PET-INVALID-CASE-ACCEPTED", item["case_id"])
+    return results
+
+
+def validate_conformance_input(values: dict[str, Any], record: dict[str, Any]) -> None:
+    validate_operation_input(values, record)
+
+
+def conformance_input_for_mutation(
+    values: dict[str, Any], mutation: str
+) -> dict[str, Any]:
+    _require(mutation in INVALID_CASE_CODES, "PET-CASE-MUTATION-UNKNOWN")
+    return _mutate_operation_input(values, mutation)
+
+
+def _canonical_json(value: Any) -> bytes:
+    return canonicalize(value) + b"\n"
+
+
+def _profile_summary(profile: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "profile_id": profile["profile_id"],
+        "profile_version": profile["profile_version"],
+        "profile_class": profile["profile_class"],
+        "technology_family": profile["technology_family"],
+        "security_model": profile["security_model"]["model_id"],
+        "trust_model": profile["trust_model"]["model_id"],
+        "supported_decision_outputs": profile["protocol_contract"][
+            "supported_decision_outputs"
+        ],
+        "execution_authorization": profile["execution_authorization"],
+        "candidate_execution_authorized": profile["execution_contract"][
+            "candidate_execution_authorized"
+        ],
+        "production_execution_authorized": profile["execution_contract"][
+            "production_execution_authorized"
+        ],
+        "required_external_authority": profile["execution_contract"][
+            "required_external_authority"
+        ],
+        "decision_policy_authority": (
+            profile["decision_derivation"]["authority"]
+            if profile["profile_class"] == "complete-decision-profile"
+            else None
+        ),
+        "production_eligible": profile["production_eligible"],
+        "profile_digest": profile["profile_digest"],
+    }
+
+
+def generated_files(root: Path) -> dict[Path, bytes]:
+    values = load_repository(root)
+    validate_semantics(values)
+    profiles = values["profiles"]
+    summaries = [_profile_summary(profiles[key]) for key in sorted(profiles)]
+    index = {
+        "schema_version": "0.1",
+        "record_type": "pet-integration-profile-index",
+        "artifact_status": "experimental",
+        "research_authority_digest": values["authority"]["authority_digest"],
+        "protocol_source_revision_digest": PROTOCOL_SOURCE_DIGEST,
+        "registry_digest": values["registry"]["registry_digest"],
+        "operation_stage_digest": values["stage"]["stage_contract_digest"],
+        "complete_profile_count": len(COMPLETE_PROFILE_IDS),
+        "component_profile_count": len(COMPONENT_PROFILE_IDS),
+        "profiles": summaries,
+        "index_digest": "",
+    }
+    index["index_digest"] = detached_digest("index", index, "index_digest")
+    projection = {
+        "schema_version": "0.1",
+        "record_type": "product-decision-engine-handoff-projection",
+        "artifact_status": "experimental",
+        "handoff_digest": values["handoff"]["handoff_digest"],
+        "registry_digest": values["registry"]["registry_digest"],
+        "operation_stage_digest": values["stage"]["stage_contract_digest"],
+        "selection_rule": values["handoff"]["selection_rule"],
+        "operation_stage_projection": values["handoff"]["operation_stage_projection"],
+        "port_fields": values["handoff"]["port_fields"],
+        "complete_profiles": [
+            item
+            for item in summaries
+            if item["profile_class"] == "complete-decision-profile"
+        ],
+        "component_profiles": [
+            item for item in summaries if item["profile_class"] == "component-only"
+        ],
+        "prohibited_content": values["handoff"]["global_prohibited_content"],
+        "projection_digest": "",
+    }
+    projection["projection_digest"] = detached_digest(
+        "projection", projection, "projection_digest"
+    )
+    lines = [
+        "# Experimental PET integration profile comparison",
+        "",
+        "> Generated deterministically from validated public contract artifacts. Do not edit.",
+        "",
+        "| Profile | Class | Technology | Security model | Trust model | Fixture | Candidate | Production |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for item in summaries:
+        lines.append(
+            f"| `{item['profile_id']}/0.1` | {item['profile_class']} | {item['technology_family']} | {item['security_model']} | {item['trust_model']} | contract-only | no | no |"
+        )
+    lines += [
+        "",
+        "SecretFlow KKRT and Nitro Enclaves are materially different experimental complete-decision contracts.",
+        "RFC 9497/CIRCL VOPRF is component-only and cannot be selected as the complete matching engine.",
+        "No candidate was executed and no production PET architecture was selected.",
+        "Profile registration and contract-fixture validation are not candidate execution permission.",
+        "",
+    ]
+    files = {
+        GENERATED_PATHS["index"]: _canonical_json(index),
+        GENERATED_PATHS["comparison"]: "\n".join(lines).encode("utf-8"),
+        GENERATED_PATHS["handoff"]: _canonical_json(projection),
+    }
+    executed_results = []
+    for item in values["cases"]["valid_cases"]:
+        operation_input = operation_input_for_case(values, item)
+        input_bytes = _canonical_json(operation_input)
+        _require(
+            sha256_bytes(input_bytes) == item["input_digest"],
+            "PET-CASE-INPUT-DIGEST",
+            item["case_id"],
+        )
+        result = validate_operation_input(values, operation_input)
+        _require(
+            result["result_digest"] == item["result_digest"],
+            "PET-CASE-RESULT-DIGEST",
+            item["case_id"],
+        )
+        input_path = Path(item["input_path"])
+        _require(
+            input_path.as_posix()
+            == (
+                "generated/pet-integration/cases/"
+                + item["case_id"].lower()
+                + ".v0.1.json"
+            ),
+            "PET-CASE-INPUT-PATH",
+            item["case_id"],
+        )
+        files[input_path] = input_bytes
+        executed_results.append(
+            {
+                "case_id": item["case_id"],
+                "input_path": item["input_path"],
+                "input_digest": item["input_digest"],
+                "observer_digest": item["observer_digest"],
+                **result,
+            }
+        )
+    case_results = {
+        "schema_version": "0.1",
+        "record_type": "pet-profile-executable-case-results",
+        "artifact_status": "experimental",
+        "catalog_digest": values["cases"]["catalog_digest"],
+        "operation_stage_digest": values["stage"]["stage_contract_digest"],
+        "results": executed_results,
+        "status_counts": {
+            "pass": len(executed_results),
+            "terminal": sum(
+                item["protocol_outcome"] == "terminal" for item in executed_results
+            ),
+            "no_op": sum(
+                item["protocol_outcome"] == "no-op" for item in executed_results
+            ),
+        },
+        "result_set_digest": "",
+    }
+    case_results["result_set_digest"] = detached_digest(
+        "case_results", case_results, "result_set_digest"
+    )
+    _schema_validate(
+        case_results,
+        values["schemas"]["case_results"],
+        GENERATED_PATHS["case_results"].as_posix(),
+    )
+    files[GENERATED_PATHS["case_results"]] = _canonical_json(case_results)
+    behavior_paths = [
+        AUTHORITY_PATH,
+        REGISTRY_PATH,
+        HANDOFF_PATH,
+        BINDING_PATH,
+        STAGE_CONTRACT_PATH,
+        CASE_CATALOG_PATH,
+        CANONICAL_CALLBACK_PATH,
+        *SCHEMAS.values(),
+        *PROFILE_PATHS.values(),
+        Path("scripts/pet_profiles.py"),
+        Path("scripts/generate_pet_profiles.py"),
+        Path("scripts/validate_pet_profiles.py"),
+        Path("scripts/canonicalize_message.py"),
+        Path("scripts/strict_yaml.py"),
+        Path("tests/test_pet_profiles.py"),
+        Path("requirements-build.txt"),
+        Path("requirements-dev.txt"),
+        Path("specs/state-machines/private-match-core-session-v0.1.yaml"),
+        Path("registry/message-types.v0.1.yaml"),
+        Path(".github/workflows/protocol-spec.yml"),
+        Path("REUSE.toml"),
+        Path("README.md"),
+        Path("ROADMAP.md"),
+        Path("GOVERNANCE.md"),
+        Path("docs/decisions/ADR-0006-EXPERIMENTAL-PET-INTEGRATION-PROFILES.md"),
+        Path("specs/pet-integration/README.md"),
+        Path("specs/pet-integration/secretflow-kkrt-v0.1.md"),
+        Path("specs/pet-integration/nitro-enclave-v0.1.md"),
+        Path("specs/pet-integration/voprf-component-v0.1.md"),
+    ]
+    entries = []
+    for relative in sorted(behavior_paths, key=lambda item: item.as_posix()):
+        path = _regular_file(root, relative)
+        entries.append(
+            {
+                "path": relative.as_posix(),
+                "digest": sha256_bytes(path.read_bytes()),
+                "size": path.stat().st_size,
+            }
+        )
+    output_entries = [
+        {"path": path.as_posix(), "digest": sha256_bytes(content), "size": len(content)}
+        for path, content in sorted(files.items(), key=lambda item: item[0].as_posix())
+    ]
+    manifest = {
+        "schema_version": "0.1",
+        "record_type": "pet-integration-generated-manifest",
+        "artifact_status": "experimental",
+        "research_authority_digest": values["authority"]["authority_digest"],
+        "registry_digest": values["registry"]["registry_digest"],
+        "handoff_digest": values["handoff"]["handoff_digest"],
+        "binding_digest": values["binding"]["binding_digest"],
+        "operation_stage_digest": values["stage"]["stage_contract_digest"],
+        "case_catalog_digest": values["cases"]["catalog_digest"],
+        "behavior_inputs": entries,
+        "generated_outputs": output_entries,
+        "implementation_digest": "",
+    }
+    manifest["implementation_digest"] = detached_digest(
+        "manifest", manifest, "implementation_digest"
+    )
+    files[GENERATED_PATHS["manifest"]] = _canonical_json(manifest)
+    return files
+
+
+def validate_repository(root: Path) -> None:
+    values = load_repository(root)
+    validate_semantics(values)
+    expected = generated_files(root)
+    _require(
+        _generated_path_set(root) == set(expected),
+        "PET-GENERATED-PATH-SET",
+    )
+    for relative, content in expected.items():
+        observed = _regular_file(root, relative).read_bytes()
+        _require(observed == content, "PET-GENERATED-STALE", relative.as_posix())
+
+
+def write_generated(root: Path) -> dict[Path, bytes]:
+    files = generated_files(root)
+    for relative, content in files.items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(target.name + ".tmp")
+        temporary.write_bytes(content)
+        os.replace(temporary, target)
+    _require(
+        _generated_path_set(root) == set(files),
+        "PET-GENERATED-PATH-SET",
+    )
+    return files
+
+
+def compare_generated(root: Path) -> None:
+    files = generated_files(root)
+    _require(
+        _generated_path_set(root) == set(files),
+        "PET-GENERATED-PATH-SET",
+    )
+    for relative, content in files.items():
+        _require(
+            _regular_file(root, relative).read_bytes() == content,
+            "PET-GENERATED-STALE",
+            relative.as_posix(),
+        )
+
+
+def _generated_path_set(root: Path) -> set[Path]:
+    generated_root = root / GENERATED_ROOT
+    observed: set[Path] = set()
+    for path in generated_root.rglob("*"):
+        relative = path.relative_to(root)
+        mode = os.lstat(path).st_mode
+        if stat.S_ISLNK(mode):
+            raise PetProfileError("PET-PATH-SYMLINK", relative.as_posix())
+        if stat.S_ISDIR(mode):
+            continue
+        if not stat.S_ISREG(mode):
+            raise PetProfileError("PET-PATH-NOT-FILE", relative.as_posix())
+        observed.add(relative)
+    return observed
+
+
+def bounded_main(action: Any) -> int:
+    try:
+        action()
+        return 0
+    except PetProfileError as error:
+        print(str(error), file=os.sys.stderr)
+        return 1
