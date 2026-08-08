@@ -45,9 +45,9 @@ from strict_yaml import strict_yaml_load
 SOURCE_REVISION = "af09252fd1d36f75292119752a6ef5dfe08acecb"
 PROTOCOL_PINS = {
     "protocol_source_revision_digest": "sha256:ed111a4bb8d6e662051940543bdf0c72503ff4b907018c1d76c7345b05ebf6a3",
-    "state_machine_digest": "sha256:32e514a61a83aeb1593623eb1144f323d1115dc8c812b5fd72af93a3ae06ba16",
-    "message_registry_digest": "sha256:df3eea26ad07b477912b124c96c9325676e9d1a89744e672f26c00538377a7ea",
-    "message_conformance_tree_digest": "sha256:4902a58e94110d4c1d3b5780daf5e9e059a7b39972911e0df23ee9cd993b5afa",
+    "state_machine_digest": "sha256:7d710270b4fae68dfb2596fe2dd8158b7d5b02f3235be43d0ed8e21f232c8b94",
+    "message_registry_digest": "sha256:cd41e5fe0b932f720b005ded2c535e4e5264dd9ff2893e77add00d64da9bf950",
+    "message_conformance_tree_digest": "sha256:5ea8e3de7e6d2174f238548b879b0c30a7ec5165fd69b86f572eafa515a21909",
 }
 CASE_DEFINITIONS = Path("conformance/source/case-definitions.v0.1.json")
 NORMATIVE_ORACLE = Path("conformance/source/normative-expected-results.v0.1.json")

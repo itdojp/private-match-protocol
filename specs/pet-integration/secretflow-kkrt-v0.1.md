@@ -32,6 +32,9 @@ operational limitations.
 Contributions bind session, participants, policy, profile ID/version/instance,
 commitment pair, evaluation attempt, transcript head, input commitments, and
 resource policy. A callback must match those authorities and one opaque receipt.
+It also repeats the exact resource-policy and execution-authorization digests
+bound at evaluation start. Receipt acknowledgment is unavailable until both
+Party contributions are complete.
 The Coordinator may record the receipt reference and normalized lifecycle only;
 it must not observe the plaintext outcome.
 

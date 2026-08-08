@@ -303,7 +303,8 @@ event_parameter_catalog:
   - id: maximum_jump
     type: nonnegative_duration
     required: true
-    description: Reviewed finite upper bound for one authoritative-time proposal; clients cannot override it.
+    description: Reviewed finite upper bound for one authoritative-time proposal; clients cannot override
+      it.
 - id: participant_binding_parameter
   type: record<participant_id,key_id>
   description: One party binding for bind_participant_a or bind_participant_b.
@@ -349,8 +350,9 @@ event_parameter_catalog:
     required: true
     description: Commitment without raw or normalized input.
 - id: evaluation_attempt_parameter
-  type: record<evaluation_attempt_id,supplied_evaluation_deadline>
-  description: Single attempt identifier and claimed deadline for the commitment pair; the deadline must equal the Coordinator-derived value.
+  type: record<evaluation_attempt_id,supplied_evaluation_deadline,resource_policy_binding,execution_authorization_digest>
+  description: Single attempt, deadline, resource-policy, and execution-authorization authority for the
+    commitment pair; all values are fixed at accepted start_evaluation.
   fields:
   - id: evaluation_attempt_id
     type: opaque_identifier
@@ -359,7 +361,17 @@ event_parameter_catalog:
   - id: supplied_evaluation_deadline
     type: canonical_utc_timestamp
     required: true
-    description: Claimed whole-second UTC deadline; accepted only when it exactly equals min(current authoritative time + evaluation timeout, session expiry).
+    description: Claimed whole-second UTC deadline; accepted only when it exactly equals min(current authoritative
+      time + evaluation timeout, session expiry).
+  - id: resource_policy_binding
+    type: sha256_digest
+    required: true
+    description: Reviewed resource-policy binding fixed for this evaluation attempt.
+  - id: execution_authorization_digest
+    type: sha256_digest
+    required: true
+    description: Digest of the separately reviewed execution-authorization authority; raw grant or credential
+      content is prohibited.
 - id: evaluation_contribution_parameter
   type: opaque_profile_contribution
   description: Profile-defined contribution or reference.
@@ -503,9 +515,14 @@ event_parameter_catalog:
     required: true
     description: RFC 8785 and domain-separated coordinator-command message digest.
 - id: profile_callback_envelope
-  type: record<profile_id,profile_version,profile_instance_id,callback_id,canonical_callback_digest,idempotency_key,session_id,evaluation_attempt_id,prior_transcript_digest,canonical_message_digest>
-  description: Reviewed profile callback identity bound to profile instance, session, and evaluation attempt.
+  type: record<message_version,profile_id,profile_version,profile_instance_id,callback_id,canonical_callback_digest,idempotency_key,session_id,evaluation_attempt_id,resource_policy_binding,execution_authorization_digest,prior_transcript_digest,canonical_message_digest>
+  description: Reviewed versioned profile callback identity and evaluation-start authority bound to profile
+    instance, session, attempt, resource policy, and execution authorization.
   fields:
+  - id: message_version
+    type: version
+    required: true
+    description: Exact registered callback message version.
   - id: profile_id
     type: opaque_profile_identifier
     required: true
@@ -538,6 +555,15 @@ event_parameter_catalog:
     type: opaque_identifier
     required: true
     description: Must equal current evaluation_attempt_id.
+  - id: resource_policy_binding
+    type: sha256_digest
+    required: true
+    description: Must equal the immutable resource-policy binding fixed at evaluation start.
+  - id: execution_authorization_digest
+    type: sha256_digest
+    required: true
+    description: Must equal the immutable execution-authorization digest fixed at evaluation start; no
+      raw grant or credential is carried.
   - id: prior_transcript_digest
     type: sha256_digest
     required: true
@@ -1106,7 +1132,8 @@ state_variables:
   - coordinator
   - selected_integration_profile
   coordinator_access: read-write
-  description: Reviewed session policy parameter used with the authoritative time at accepted start_evaluation; no production duration is selected here.
+  description: Reviewed session policy parameter used with the authoritative time at accepted start_evaluation;
+    no production duration is selected here.
 - id: maximum_time_jump
   type: nonnegative_policy_duration
   initial: POLICY_PARAMETER
@@ -1115,7 +1142,8 @@ state_variables:
   visibility:
   - coordinator
   coordinator_access: read-write
-  description: Reviewed finite bound for one authoritative-time proposal; no Party or timer event can override it.
+  description: Reviewed finite bound for one authoritative-time proposal; no Party or timer event can
+    override it.
 - id: verification_material_validity
   type: record<not_before,not_after,status>
   initial: NONE
@@ -1185,6 +1213,28 @@ state_variables:
   - selected_integration_profile
   coordinator_access: read-write
   description: Policy-derived deadline set atomically at start_evaluation and compared against authoritative_time.
+- id: resource_policy_binding
+  type: sha256_digest_or_none
+  initial: NONE
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - selected_integration_profile
+  coordinator_access: read-write
+  description: Immutable reviewed resource-policy binding stored at accepted start_evaluation and repeated
+    by the canonical profile callback.
+- id: execution_authorization_digest
+  type: sha256_digest_or_none
+  initial: NONE
+  owner:
+  - coordinator
+  visibility:
+  - coordinator
+  - selected_integration_profile
+  coordinator_access: read-write
+  description: Immutable digest of the separately reviewed execution authority stored at accepted start_evaluation;
+    raw grant and credential material are never stored.
 - id: accepted_message_records
   type: map<replay_domain,map<message_id,record<nonce,sequence,issued_at,canonical_message_digest,canonical_wire_digest,verification_material_id,original_authenticated_subject,response_recipient_binding,normalized_response_ref>>>
   initial: '{}'
@@ -1212,7 +1262,8 @@ state_variables:
       B: party_b_client
     whole_map_party_access: false
     peer_entry_access: forbidden
-    authorization_source: independent authenticated_requester trusted projection; never replayed message sender
+    authorization_source: independent authenticated_requester trusted projection; never replayed message
+      sender
     exact_subject_match: required against response_recipient_binding
     no_requester_behavior: classify exact duplicate internally but return no response
   description: Authoritative sender-scoped cache; each Party receives only a response originally bound
@@ -4535,11 +4586,17 @@ transitions:
     - evaluation_started
     - evaluation_attempt_id
     - phase
+    - resource_policy_binding
+    - execution_authorization_digest
     arguments:
     - RESERVED->CONSUMED exactly once
     - bind one new attempt ID
+    - bind one immutable resource-policy digest
+    - bind one immutable execution-authorization digest without raw grant material
     parameter_reads:
     - evaluation_attempt_parameter.evaluation_attempt_id
+    - evaluation_attempt_parameter.resource_policy_binding
+    - evaluation_attempt_parameter.execution_authorization_digest
   - *id004
   - id: E-ACCEPT-OPERATION
     operation: record_actor_scoped_operation
@@ -5132,6 +5189,8 @@ transitions:
     - selected_integration_profile_binding
     - session_id
     - evaluation_attempt_id
+    - resource_policy_binding
+    - execution_authorization_digest
     parameter_reads:
     - profile_callback_envelope.callback_id
     - profile_callback_envelope.canonical_callback_digest
@@ -5141,10 +5200,15 @@ transitions:
     - profile_callback_envelope.profile_instance_id
     - profile_callback_envelope.profile_version
     - profile_callback_envelope.session_id
+    - profile_callback_envelope.message_version
+    - profile_callback_envelope.resource_policy_binding
+    - profile_callback_envelope.execution_authorization_digest
     arguments:
     - profile, version, instance, session, and attempt equal current state
     - ID index and idempotency-key index are both new or both exactly equal
     - any one-sided or differing binding is REPLAY_CONFLICT with no state change
+    - callback message version equals the registered exact version
+    - callback resource policy and execution authorization equal the immutable evaluation-start state
   - *id005
   - id: G-BOTH-ACKS
     predicate: all_set
@@ -5247,8 +5311,12 @@ transitions:
     - profile_callback_envelope.profile_instance_id
     - profile_callback_envelope.profile_version
     - profile_callback_envelope.session_id
+    - profile_callback_envelope.message_version
+    - profile_callback_envelope.resource_policy_binding
+    - profile_callback_envelope.execution_authorization_digest
     arguments:
     - atomically store both callback-ID and idempotency-key indexes with the prior normalized response
+    - store exact message version and evaluation authority bindings with both replay indexes
   - id: E-APPEND-CALLBACK-TRANSCRIPT
     operation: append_canonical_transcript
     writes:
@@ -5327,6 +5395,8 @@ transitions:
     - selected_integration_profile_binding
     - session_id
     - evaluation_attempt_id
+    - resource_policy_binding
+    - execution_authorization_digest
     parameter_reads:
     - profile_callback_envelope.callback_id
     - profile_callback_envelope.canonical_callback_digest
@@ -5336,10 +5406,15 @@ transitions:
     - profile_callback_envelope.profile_instance_id
     - profile_callback_envelope.profile_version
     - profile_callback_envelope.session_id
+    - profile_callback_envelope.message_version
+    - profile_callback_envelope.resource_policy_binding
+    - profile_callback_envelope.execution_authorization_digest
     arguments:
     - profile, version, instance, session, and attempt equal current state
     - ID index and idempotency-key index are both new or both exactly equal
     - any one-sided or differing binding is REPLAY_CONFLICT with no state change
+    - callback message version equals the registered exact version
+    - callback resource policy and execution authorization equal the immutable evaluation-start state
   - *id005
   - id: G-RESULT-CONFLICT
     predicate: any_true
@@ -5395,8 +5470,12 @@ transitions:
     - profile_callback_envelope.profile_instance_id
     - profile_callback_envelope.profile_version
     - profile_callback_envelope.session_id
+    - profile_callback_envelope.message_version
+    - profile_callback_envelope.resource_policy_binding
+    - profile_callback_envelope.execution_authorization_digest
     arguments:
     - atomically store both callback-ID and idempotency-key indexes with the prior normalized response
+    - store exact message version and evaluation authority bindings with both replay indexes
   - id: E-TERMINAL-BUDGET-ABORT
     operation: apply_terminal_budget_disposition
     writes:
@@ -7045,7 +7124,8 @@ transitions:
     - session_id
     arguments:
     - lookup only Party A replay domain (session_id,sender_participant_id)
-    - message_id, nonce, sequence, issued_at, semantic/full-wire digests, material, and original subject all equal
+    - message_id, nonce, sequence, issued_at, semantic/full-wire digests, material, and original subject
+      all equal
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -7061,7 +7141,8 @@ transitions:
     - participant_binding
     - session_id
     arguments:
-    - Party A response recipient exactly equals an independent authenticated requester; replayed sender is not authority
+    - Party A response recipient exactly equals an independent authenticated requester; replayed sender
+      is not authority
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -7075,7 +7156,8 @@ transitions:
     operation: return_prior_response
     writes: []
     arguments:
-    - return only when an independent authenticated requester exactly equals Party A's original participant, key, material, and subject binding
+    - return only when an independent authenticated requester exactly equals Party A's original participant,
+      key, material, and subject binding
     - no state, sequence, nonce, audit, or budget change
     parameter_reads:
     - session_context.session_id
@@ -7204,7 +7286,8 @@ transitions:
     - session_id
     arguments:
     - lookup only Party B replay domain (session_id,sender_participant_id)
-    - message_id, nonce, sequence, issued_at, semantic/full-wire digests, material, and original subject all equal
+    - message_id, nonce, sequence, issued_at, semantic/full-wire digests, material, and original subject
+      all equal
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -7220,7 +7303,8 @@ transitions:
     - participant_binding
     - session_id
     arguments:
-    - Party B response recipient exactly equals an independent authenticated requester; replayed sender is not authority
+    - Party B response recipient exactly equals an independent authenticated requester; replayed sender
+      is not authority
     parameter_reads:
     - session_context.session_id
     - replay_envelope.sender_participant_id
@@ -7234,7 +7318,8 @@ transitions:
     operation: return_prior_response
     writes: []
     arguments:
-    - return only when an independent authenticated requester exactly equals Party B's original participant, key, material, and subject binding
+    - return only when an independent authenticated requester exactly equals Party B's original participant,
+      key, material, and subject binding
     - no state, sequence, nonce, audit, or budget change
     parameter_reads:
     - session_context.session_id
@@ -7872,7 +7957,8 @@ transitions:
     - session_context.selected_integration_profile_binding
     - session_context.session_id
     arguments:
-    - actor is coordinator and both indexes bind the same ID, key, semantic/full-wire digests, material, original subject, and prior response
+    - actor is coordinator and both indexes bind the same ID, key, semantic/full-wire digests, material,
+      original subject, and prior response
   effects:
   - id: E-RETURN-PRIOR-OPERATION
     operation: return_prior_response
@@ -7883,7 +7969,8 @@ transitions:
     - operation_envelope.canonical_operation_digest
     - operation_envelope.idempotency_key
     arguments:
-    - return response only when both independent indexes agree and an independent requester equals the original coordinator subject
+    - return response only when both independent indexes agree and an independent requester equals the
+      original coordinator subject
   visibility:
   - actor: coordinator
     data:
@@ -7951,7 +8038,8 @@ transitions:
     - session_context.selected_integration_profile_binding
     - session_context.session_id
     arguments:
-    - bound profile/session/attempt and both callback indexes bind equal IDs, keys, semantic/full-wire digests, material, and original subject
+    - bound profile/session/attempt and both callback indexes bind equal IDs, keys, semantic/full-wire
+      digests, material, and original subject
   effects:
   - id: E-RETURN-PRIOR-PROFILE-CALLBACK
     operation: return_prior_response
@@ -7966,7 +8054,8 @@ transitions:
     - profile_callback_envelope.session_id
     - profile_callback_envelope.evaluation_attempt_id
     arguments:
-    - return response only when both indexes/current binding agree and an independent requester equals the original profile-instance subject
+    - return response only when both indexes/current binding agree and an independent requester equals
+      the original profile-instance subject
   visibility:
   - actor: coordinator
     data:
@@ -8204,8 +8293,8 @@ invariants:
     - operation_by_key
     parameter_reads: []
     arguments:
-    - same actor operation_id idempotency_key canonical message digest canonical wire digest material and original
-      authenticated subject
+    - same actor operation_id idempotency_key canonical message digest canonical wire digest material
+      and original authenticated subject
   - id: I-EXACT-CALLBACK-DUPLICATE
     predicate: exact_duplicate
     reads:
@@ -8213,8 +8302,8 @@ invariants:
     - callback_by_key
     parameter_reads: []
     arguments:
-    - same profile instance session attempt callback_id key canonical message digest canonical wire digest material
-      and original authenticated subject
+    - same profile instance session attempt callback_id key canonical message digest canonical wire digest
+      material and original authenticated subject
   violation_effect: conflicting duplicate is REPLAY_CONFLICT
 - id: INV-ONE-EVALUATION
   statement: A commitment pair receives at most one accepted evaluation; INDETERMINATE, timeout, and failure
@@ -8234,7 +8323,9 @@ invariants:
     parameter_reads: []
   violation_effect: current session remains terminal or result-accepted; a new authorized session is required
 - id: INV-EVALUATION-DEADLINE-BINDING
-  statement: The first accepted start_evaluation binds one immutable Coordinator-derived deadline equal to min(current authoritative time plus the reviewed evaluation timeout, session expiry); a message claim cannot shorten or extend it.
+  statement: The first accepted start_evaluation binds one immutable Coordinator-derived deadline equal
+    to min(current authoritative time plus the reviewed evaluation timeout, session expiry); a message
+    claim cannot shorten or extend it.
   state_variables:
   - evaluation_started
   - authoritative_time
@@ -8251,10 +8342,12 @@ invariants:
     - session_expires_at
     - evaluation_deadline
     arguments:
-    - accepted start_evaluation validates exact equality before atomic budget, attempt, replay, transcript, and audit mutation
+    - accepted start_evaluation validates exact equality before atomic budget, attempt, replay, transcript,
+      and audit mutation
     - session expiry caps the derived deadline and wins equal-threshold timer precedence
     parameter_reads: []
-  violation_effect: reject EVALUATION_DEADLINE_MISMATCH without state, budget, attempt, replay, transcript, or accepted-audit mutation
+  violation_effect: reject EVALUATION_DEADLINE_MISMATCH without state, budget, attempt, replay, transcript,
+    or accepted-audit mutation
 - id: INV-EXPIRY
   statement: Time never rolls back; crossed session, evaluation, or consent deadlines are terminalized
     atomically, and terminal sessions admit only non-mutating exact delivery responses, bounded rejection,
@@ -8522,7 +8615,8 @@ clock_and_expiry:
     constraint: bounded by policy and finite TimeDomain; no client override
   evaluation_deadline:
     type: authoritative timestamp
-    effect: set atomically at accepted start_evaluation to min(authoritative_time + evaluation_timeout, session_expires_at); timeout when authoritative_time >= evaluation_deadline
+    effect: set atomically at accepted start_evaluation to min(authoritative_time + evaluation_timeout,
+      session_expires_at); timeout when authoritative_time >= evaluation_deadline
   evaluation_deadline_derivation:
     authority: coordinator-authoritative-current-state
     accepted_transition: TR-START-EVALUATION
@@ -8555,7 +8649,8 @@ clock_and_expiry:
     TR-ADVANCE-TIME-EXPIRE: SESSION_EXPIRY_THRESHOLD
     TR-EVALUATION-TIMEOUT: EVALUATION_DEADLINE
     TR-CONSENT-EXPIRED: CONSENT_EXPIRY_THRESHOLD
-  timer_same_time_policy: same authoritative time in a live phase is a no-op with no transcript or audit append
+  timer_same_time_policy: same authoritative time in a live phase is a no-op with no transcript or audit
+    append
 replay_and_ordering:
   replay_domain:
   - session_id
@@ -8568,8 +8663,8 @@ replay_and_ordering:
   - sequence
   - issued_at
   - canonical event digest
-  exact_duplicate: no-op; authorize the prior normalized response only when an independent authenticated requester
-    exactly matches the original response recipient binding
+  exact_duplicate: no-op; authorize the prior normalized response only when an independent authenticated
+    requester exactly matches the original response recipient binding
   conflicting_duplicate: REPLAY_CONFLICT; no partial state change and policy-defined abort
   stale_sequence: REPLAY or STALE_MESSAGE; no state change
   future_sequence_gap: retryable OUT_OF_ORDER; no buffering and no state change
@@ -8617,8 +8712,11 @@ replay_and_ordering:
   - current transcript head
   - historical message expiry or staleness
   - verification material expiry or revocation after original acceptance
-  cached_response_effect: return only the accepted record's prior recipient-scoped response after exact independent requester equality; absent or unauthorized requester receives no response and never mutates state, dedup, sequence, nonce, budget, audit, or transcript
-  stateless_validator_boundary: a stateless validator without authoritative accepted-record state validates as a current message and never fabricates exact-duplicate success
+  cached_response_effect: return only the accepted record's prior recipient-scoped response after exact
+    independent requester equality; absent or unauthorized requester receives no response and never mutates
+    state, dedup, sequence, nonce, budget, audit, or transcript
+  stateless_validator_boundary: a stateless validator without authoritative accepted-record state validates
+    as a current message and never fabricates exact-duplicate success
   canonical_wire_fingerprint:
     domain: private-match-wire-message/v0.1
     canonicalization: RFC 8785 JCS of the complete strict message including authentication.value and message_digest
@@ -8630,7 +8728,8 @@ replay_and_ordering:
     - semantic message digest
     - accepted transcript
     - Party projection
-    retry_policy: byte-identical canonical retransmission only; regenerated authentication values are conflicts
+    retry_policy: byte-identical canonical retransmission only; regenerated authentication values are
+      conflicts
   accepted_record_equality:
   - complete delivery-class replay or idempotency domain
   - message nonce sequence operation callback and idempotency identity as applicable
@@ -8639,7 +8738,8 @@ replay_and_ordering:
   - verification material ID
   - original authenticated subject binding
   authenticated_requester_contract:
-    source: independent trusted projection from channel authentication, service principal, or reviewed profile instance; never copied from replayed message sender or identity
+    source: independent trusted projection from channel authentication, service principal, or reviewed
+      profile instance; never copied from replayed message sender or identity
     party_fields:
     - actor
     - participant_id
@@ -8661,7 +8761,8 @@ replay_and_ordering:
     - verification_material_id
     eligibility: exact equality with original response_recipient_binding
     no_requester_behavior: preserve exact-duplicate classification but return no cached response
-    unauthorized_behavior: return no cached response and no mutation of state, dedup, transcript, budget, or audit
+    unauthorized_behavior: return no cached response and no mutation of state, dedup, transcript, budget,
+      or audit
 retry_semantics:
   idempotent_resend: exact duplicate; return prior normalized response without budget or sequence change
   transient_message_retry: new message_id and nonce at the expected sequence after correcting a retryable
@@ -8839,7 +8940,9 @@ failure_taxonomy:
   query_budget_effect: unchanged-from-current-state
   party_error_category: EVALUATION_ERROR
   detail_visibility: coordinator-and-approved-audit-only; parties receive normalized category
-  description: The supplied start-evaluation deadline was malformed, non-canonical, earlier, or later than the Coordinator-derived min(authoritative time plus policy timeout, session expiry); reject without accepted mutation.
+  description: The supplied start-evaluation deadline was malformed, non-canonical, earlier, or later
+    than the Coordinator-derived min(authoritative time plus policy timeout, session expiry); reject without
+    accepted mutation.
 - code: EVALUATION_TIMEOUT
   disposition: session-abort
   retryable: false
@@ -9045,6 +9148,8 @@ formalization:
   - commitment_pair_id
   - evaluation_started
   - evaluation_attempt_id
+  - resource_policy_binding
+  - execution_authorization_digest
   - evaluation_contribution
   - accepted_evaluation_count
   - query_budget_state
@@ -9235,7 +9340,9 @@ formalization:
   next_state_relation: disjunction of delivery-class-specific enabled transition relations; each accepted
     mutating relation atomically applies its protocol effects and the canonical transcript append; exact
     duplicates, rejects, conflicts, derived notices, local guidance, and timer no-op stutter without transcript
-    mutation; authoritative clock relations prevent rollback or a live post-deadline window; accepted start_evaluation derives and exactly binds the immutable deadline from Coordinator state and reviewed policy
+    mutation; authoritative clock relations prevent rollback or a live post-deadline window; accepted
+    start_evaluation derives and exactly binds the immutable deadline from Coordinator state and reviewed
+    policy
   invariant_ids:
   - INV-REVEAL-SAFETY
   - INV-RESULT-SYMMETRY
@@ -9696,7 +9803,8 @@ parameter_flow_contracts:
   kind: predicate
   required_parameter_reads:
   - evaluation_attempt_parameter.supplied_evaluation_deadline
-  description: Every occurrence consumes the canonical supplied claim and requires exact equality with the Coordinator-derived deadline; omission or substitution fails closed.
+  description: Every occurrence consumes the canonical supplied claim and requires exact equality with
+    the Coordinator-derived deadline; omission or substitution fails closed.
 - id: G-EVALUATION-DEADLINE-CROSSED
   kind: predicate
   required_parameter_reads:

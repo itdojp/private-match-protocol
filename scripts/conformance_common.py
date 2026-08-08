@@ -86,9 +86,9 @@ REFERENCE_PROTOCOL_ARTIFACTS = {
     "message-conformance-input-tree": MESSAGE_INPUT_MANIFEST.as_posix(),
 }
 REFERENCE_PROTOCOL_DIGESTS = {
-    "state-machine": "sha256:32e514a61a83aeb1593623eb1144f323d1115dc8c812b5fd72af93a3ae06ba16",
-    "message-registry": "sha256:df3eea26ad07b477912b124c96c9325676e9d1a89744e672f26c00538377a7ea",
-    "message-conformance-input-tree": "sha256:4902a58e94110d4c1d3b5780daf5e9e059a7b39972911e0df23ee9cd993b5afa",
+    "state-machine": "sha256:7d710270b4fae68dfb2596fe2dd8158b7d5b02f3235be43d0ed8e21f232c8b94",
+    "message-registry": "sha256:cd41e5fe0b932f720b005ded2c535e4e5264dd9ff2893e77add00d64da9bf950",
+    "message-conformance-input-tree": "sha256:5ea8e3de7e6d2174f238548b879b0c30a7ec5165fd69b86f572eafa515a21909",
 }
 
 RUNNER_STATUSES = {

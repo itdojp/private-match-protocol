@@ -56,7 +56,10 @@
     },
     "message_version": {
       "type": "string",
-      "const": "0.1"
+      "enum": [
+        "0.1",
+        "0.2"
+      ]
     },
     "delivery_class": {
       "type": "string",
@@ -153,6 +156,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_session_proposal"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -178,6 +184,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_session_acceptance"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -203,6 +212,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_participant_binding"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -228,6 +240,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_policy_acceptance"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -253,6 +268,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_commitment_registration"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -278,6 +296,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_query_budget_reservation"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -303,6 +324,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_evaluation_start"
+          },
+          "message_version": {
+            "const": "0.2"
           }
         }
       }
@@ -328,6 +352,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_evaluation_contribution"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -353,6 +380,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_opaque_receipt_ack"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -378,6 +408,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_result_acceptance_notice"
+          },
+          "message_version": {
+            "const": "0.2"
           }
         }
       }
@@ -403,6 +436,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_consent_grant"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -428,6 +464,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_consent_withdrawal"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -453,6 +492,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_disclosure_extension_authorization"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -478,6 +520,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_disclosure_completion_notice"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -503,6 +548,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_abort_notice"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -528,6 +576,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_normalized_error_notice"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -553,6 +604,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_close_notice"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -578,6 +632,9 @@
           },
           "payload": {
             "$ref": "#/$defs/payload_expiry_notice"
+          },
+          "message_version": {
+            "const": "0.1"
           }
         }
       }
@@ -1213,7 +1270,9 @@
       "additionalProperties": false,
       "required": [
         "evaluation_attempt_id",
-        "evaluation_deadline"
+        "evaluation_deadline",
+        "resource_policy_binding",
+        "execution_authorization_digest"
       ],
       "properties": {
         "evaluation_attempt_id": {
@@ -1225,6 +1284,14 @@
         "evaluation_deadline": {
           "type": "string",
           "format": "date-time"
+        },
+        "resource_policy_binding": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "execution_authorization_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
         }
       }
     },
@@ -1275,7 +1342,9 @@
       "required": [
         "opaque_receipt_ref",
         "acknowledgment_status",
-        "profile_evidence_ref"
+        "profile_evidence_ref",
+        "resource_policy_binding",
+        "execution_authorization_digest"
       ],
       "properties": {
         "opaque_receipt_ref": {
@@ -1292,6 +1361,14 @@
           "minLength": 1,
           "maxLength": 160,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$"
+        },
+        "resource_policy_binding": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "execution_authorization_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
         }
       }
     },

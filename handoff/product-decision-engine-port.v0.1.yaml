@@ -62,11 +62,11 @@ port_fields:
   - plaintext Coordinator result
   - secret material
 - field: deterministic-error-categories
-  public_semantic_meaning: Closed Protocol failure mapping without secret detail.
+  public_semantic_meaning: Closed normalized failure categories and bounded PET validator codes from config/pet-profile-error-codes.v0.1.json; runtime, Schema, mutation, and generated-result vocabularies must match exactly.
   requirement: required
   source_profile_field: protocol_contract.failure_mappings
-  expected_product_port_behavior: map adapter failures to reviewed categories
-  fail_closed_rule: reject unknown mapping and redact raw failure detail
+  expected_product_port_behavior: map only catalogued codes and normalized profile categories without raw vendor, secret, or local-path detail
+  fail_closed_rule: reject unknown, misspelled, out-of-vocabulary, or semantically combined error codes
   prohibited_content:
   - private input
   - raw identifier
@@ -150,11 +150,11 @@ port_fields:
   - synthetic observer data
   - Coordinator plaintext result
 - field: pre-post-state-contract
-  public_semantic_meaning: Exact authoritative pre-phase, transition set, post-phase or effect, transcript mutation, query-budget disposition, and operation-specific outcome.
+  public_semantic_meaning: Exact authoritative pre-phase, phase-specific TR-ABORT state shape, transition set, post-phase or effect, transcript mutation, query-budget disposition, cleanup state, and operation-specific outcome.
   requirement: required
   source_profile_field: operation_stage_contract.operations.expected_pre_phases
-  expected_product_port_behavior: validate the operation against the existing State Machine projection before and after invocation without implementing a second State Machine
-  fail_closed_rule: reject impossible pre-phase, unrelated transition, incorrect post-phase, budget effect, transcript mutation, visibility, or flattened terminal outcome
+  expected_product_port_behavior: validate the operation and every abort source phase against the existing State Machine and operation-stage projection before and after invocation without implementing a second State Machine
+  fail_closed_rule: reject impossible pre-phase or phase field, unrelated transition, incorrect post-phase, budget effect, transcript mutation, cleanup state, visibility, or flattened terminal outcome
   prohibited_content:
   - independent State Machine
   - generic accepted terminal outcome
@@ -186,7 +186,7 @@ port_fields:
   - plaintext Coordinator result
   - secret material
 - field: result-and-verification-receipt
-  public_semantic_meaning: Symmetric Party-local result and high-entropy opaque receipt.
+  public_semantic_meaning: Symmetric Party-local result and high-entropy opaque receipt. Canonical result_acceptance_notice version 0.2 carries the evaluation-start resource-policy and execution-authorization digests inside its signed/digested payload.
   requirement: required
   source_profile_field: protocol_contract.result_symmetry/callback/opaque_receipt
   expected_product_port_behavior: verify exact bindings before accepting each local result
@@ -297,9 +297,9 @@ limitations:
 - The handoff defines public semantics, not private Product implementation structure.
 - Registration and contract-fixture validation are not candidate execution permission.
 - No match predicate, production adapter, authentication, cloud, or KMS selection is made.
-handoff_digest: sha256:067e24e3bfd9ebc325e376fc0e6dfcc1f3b73cfb67250a108673b7289f891cc3
+handoff_digest: sha256:78ec09f6ac288e12ef3708ad36e0fe9b43c4217a441562507d720bae17fce303
 operation_stage_contract_path: specs/pet-integration/operation-stage-contract.v0.1.yaml
-operation_stage_contract_digest: sha256:64e35de4d6b067ec2c06b64990bfccafe244e8524dd0a5422282236f8ad6506b
+operation_stage_contract_digest: sha256:f14ce77c1f5ad266bf3983243f384ef7df1ce4f8029fc0bfd77856a6433d7588
 operation_stage_projection:
 - operation: register-component
   lifecycle_stage: registry-registration
@@ -475,6 +475,8 @@ operation_stage_projection:
   - acknowledgment_status
   - profile_evidence_ref
   - verification_material
+  - resource_policy_binding
+  - execution_authorization_digest
   fields_required_none: []
   fields_prohibited_on_input:
   - party_local_result
@@ -489,6 +491,8 @@ operation_stage_projection:
   - opaque_receipt_ref
   - acknowledgment_status
   - profile_evidence_ref
+  - resource_policy_binding
+  - execution_authorization_digest
   result_classification: accepted-mutation
   query_budget_effect: unchanged
   transcript_mutated: true
@@ -500,6 +504,8 @@ operation_stage_projection:
   - ABORTED
   fields_required_on_input:
   - new_authoritative_time
+  - authoritative_time
+  - evaluation_deadline
   - prior_transcript_head
   fields_required_none: []
   fields_prohibited_on_input:
@@ -545,5 +551,5 @@ operation_stage_projection:
   - normalized_failure_category
   - cleanup_completed
   result_classification: terminal-mutation
-  query_budget_effect: release-if-not-started
+  query_budget_effect: phase-dependent-abort
   transcript_mutated: true

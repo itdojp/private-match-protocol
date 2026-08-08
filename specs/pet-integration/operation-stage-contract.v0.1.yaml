@@ -2,8 +2,8 @@ $schema: https://json-schema.org/draft/2020-12/schema
 schema_version: '0.1'
 record_type: pet-operation-stage-contract
 artifact_status: experimental
-state_machine_digest: sha256:32e514a61a83aeb1593623eb1144f323d1115dc8c812b5fd72af93a3ae06ba16
-message_registry_digest: sha256:df3eea26ad07b477912b124c96c9325676e9d1a89744e672f26c00538377a7ea
+state_machine_digest: sha256:7d710270b4fae68dfb2596fe2dd8158b7d5b02f3235be43d0ed8e21f232c8b94
+message_registry_digest: sha256:cd41e5fe0b932f720b005ded2c535e4e5264dd9ff2893e77add00d64da9bf950
 operations:
 - operation_id: register-component
   lifecycle_stage: registry-registration
@@ -135,7 +135,7 @@ operations:
 - operation_id: start-evaluation
   lifecycle_stage: evaluation-start
   message_type: evaluation_start
-  message_version: '0.1'
+  message_version: '0.2'
   events:
   - start_evaluation
   transition_ids:
@@ -254,6 +254,7 @@ operations:
   - policy_binding
   - commitment_pair_id
   - evaluation_attempt_id
+  - both_party_contributions
   fields_introduced:
   - party_slot_receipt_ack
   - opaque_receipt_ref
@@ -291,7 +292,7 @@ operations:
 - operation_id: accept-profile-callback
   lifecycle_stage: symmetric-result-acceptance
   message_type: result_acceptance_notice
-  message_version: '0.1'
+  message_version: '0.2'
   events:
   - accept_symmetric_result
   transition_ids:
@@ -317,6 +318,8 @@ operations:
   - acknowledgment_status
   - profile_evidence_ref
   - verification_material
+  - resource_policy_binding
+  - execution_authorization_digest
   fields_required_none: []
   fields_prohibited_on_input:
   - party_local_result
@@ -328,6 +331,8 @@ operations:
   - commitment_pair_id
   - evaluation_attempt_id
   - query_budget_state=CONSUMED
+  - resource_policy_binding
+  - execution_authorization_digest
   fields_invalidated: []
   party_local_only_fields:
   - party_local_result
@@ -335,6 +340,8 @@ operations:
   - opaque_receipt_ref
   - acknowledgment_status
   - profile_evidence_ref
+  - resource_policy_binding
+  - execution_authorization_digest
   selected_profile_visible_fields:
   - synthetic_result_comparison
   transcript_participation: accepted-mutating-event
@@ -358,11 +365,15 @@ operations:
   - phase=EVALUATING
   - evaluation_attempt_id
   - query_budget_state=CONSUMED
+  - authoritative_time
+  - evaluation_deadline
   fields_introduced:
   - terminal_failure_code=EVALUATION_TIMEOUT
   - phase=ABORTED
   fields_required_on_input:
   - new_authoritative_time
+  - authoritative_time
+  - evaluation_deadline
   - prior_transcript_head
   fields_required_none: []
   fields_prohibited_on_input:
@@ -372,6 +383,7 @@ operations:
   fields_retained_unchanged:
   - evaluation_attempt_id
   - query_budget_state=CONSUMED
+  - evaluation_deadline
   fields_invalidated:
   - disclosure_state
   party_local_only_fields: []
@@ -431,9 +443,170 @@ operations:
   transcript_participation: accepted-mutating-event
   replay_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
   result_classification: terminal-mutation
+  query_budget_effect: phase-dependent-abort
+  transcript_mutated: true
+abort_phase_authority:
+- source_phase: CREATED
+  transition_id: TR-ABORT
+  resulting_phase: ABORTED
+  participant_binding: none
+  commitment_pair: none
+  evaluation_attempt: none
+  evaluation_deadline: none
+  resource_policy_binding: none
+  execution_authorization_digest: none
+  contribution_slots: empty
+  acknowledgment_slots: empty
+  receipt_state: none
+  result_state: none
+  consent_state: none
+  disclosure_state: none
+  query_budget_state: NONE
   query_budget_effect: release-if-not-started
   transcript_mutated: true
-stage_contract_digest: sha256:64e35de4d6b067ec2c06b64990bfccafe244e8524dd0a5422282236f8ad6506b
+  cleanup_state_before: NOT_STARTED
+  cleanup_requirement: required
+- source_phase: PARTICIPANTS_BOUND
+  transition_id: TR-ABORT
+  resulting_phase: ABORTED
+  participant_binding: required
+  commitment_pair: none
+  evaluation_attempt: none
+  evaluation_deadline: none
+  resource_policy_binding: none
+  execution_authorization_digest: none
+  contribution_slots: empty
+  acknowledgment_slots: empty
+  receipt_state: none
+  result_state: none
+  consent_state: none
+  disclosure_state: none
+  query_budget_state: NONE
+  query_budget_effect: release-if-not-started
+  transcript_mutated: true
+  cleanup_state_before: NOT_STARTED
+  cleanup_requirement: required
+- source_phase: COMMITMENTS_PENDING
+  transition_id: TR-ABORT
+  resulting_phase: ABORTED
+  participant_binding: required
+  commitment_pair: none
+  evaluation_attempt: none
+  evaluation_deadline: none
+  resource_policy_binding: none
+  execution_authorization_digest: none
+  contribution_slots: empty
+  acknowledgment_slots: empty
+  receipt_state: none
+  result_state: none
+  consent_state: none
+  disclosure_state: none
+  query_budget_state: RESERVED
+  query_budget_effect: release-if-not-started
+  transcript_mutated: true
+  cleanup_state_before: NOT_STARTED
+  cleanup_requirement: required
+- source_phase: COMMITTED
+  transition_id: TR-ABORT
+  resulting_phase: ABORTED
+  participant_binding: required
+  commitment_pair: required
+  evaluation_attempt: none
+  evaluation_deadline: none
+  resource_policy_binding: none
+  execution_authorization_digest: none
+  contribution_slots: empty
+  acknowledgment_slots: empty
+  receipt_state: none
+  result_state: none
+  consent_state: none
+  disclosure_state: none
+  query_budget_state: RESERVED
+  query_budget_effect: release-if-not-started
+  transcript_mutated: true
+  cleanup_state_before: NOT_STARTED
+  cleanup_requirement: required
+- source_phase: EVALUATING
+  transition_id: TR-ABORT
+  resulting_phase: ABORTED
+  participant_binding: required
+  commitment_pair: required
+  evaluation_attempt: required
+  evaluation_deadline: required
+  resource_policy_binding: required
+  execution_authorization_digest: required
+  contribution_slots: any-subset
+  acknowledgment_slots: empty-or-any-subset-after-both-contributions
+  receipt_state: none
+  result_state: none
+  consent_state: none
+  disclosure_state: none
+  query_budget_state: CONSUMED
+  query_budget_effect: preserve-consumed
+  transcript_mutated: true
+  cleanup_state_before: NOT_STARTED
+  cleanup_requirement: required
+- source_phase: RESULT_ACCEPTED
+  transition_id: TR-ABORT
+  resulting_phase: ABORTED
+  participant_binding: required
+  commitment_pair: required
+  evaluation_attempt: required
+  evaluation_deadline: required
+  resource_policy_binding: required
+  execution_authorization_digest: required
+  contribution_slots: both
+  acknowledgment_slots: both
+  receipt_state: accepted
+  result_state: accepted
+  consent_state: none
+  disclosure_state: none
+  query_budget_state: CONSUMED
+  query_budget_effect: preserve-consumed
+  transcript_mutated: true
+  cleanup_state_before: NOT_STARTED
+  cleanup_requirement: required
+- source_phase: CONSENT_PENDING
+  transition_id: TR-ABORT
+  resulting_phase: ABORTED
+  participant_binding: required
+  commitment_pair: required
+  evaluation_attempt: required
+  evaluation_deadline: required
+  resource_policy_binding: required
+  execution_authorization_digest: required
+  contribution_slots: both
+  acknowledgment_slots: both
+  receipt_state: accepted
+  result_state: accepted
+  consent_state: pending
+  disclosure_state: none
+  query_budget_state: CONSUMED
+  query_budget_effect: preserve-consumed
+  transcript_mutated: true
+  cleanup_state_before: NOT_STARTED
+  cleanup_requirement: required
+- source_phase: DISCLOSURE_AUTHORIZED
+  transition_id: TR-ABORT
+  resulting_phase: ABORTED
+  participant_binding: required
+  commitment_pair: required
+  evaluation_attempt: required
+  evaluation_deadline: required
+  resource_policy_binding: required
+  execution_authorization_digest: required
+  contribution_slots: both
+  acknowledgment_slots: both
+  receipt_state: accepted
+  result_state: accepted
+  consent_state: complete
+  disclosure_state: authorized
+  query_budget_state: CONSUMED
+  query_budget_effect: preserve-consumed
+  transcript_mutated: true
+  cleanup_state_before: NOT_STARTED
+  cleanup_requirement: required
+stage_contract_digest: sha256:f14ce77c1f5ad266bf3983243f384ef7df1ce4f8029fc0bfd77856a6433d7588
 limitations:
 - This contract is a deterministic projection of the reviewed State Machine and Message Registry, not an independent State Machine.
 - Synthetic global-observer data is test-only and is not a Product or Coordinator input.

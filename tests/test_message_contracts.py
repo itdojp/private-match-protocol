@@ -227,7 +227,18 @@ class MessageContractTests(unittest.TestCase):
         self.assertEqual(18, len(names))
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual("fail-closed", self.registry["unknown_type_behavior"])
-        self.assertTrue(all(entry["message_version"] == "0.1" for entry in entries))
+        versions = {
+            entry["message_type"]: entry["message_version"] for entry in entries
+        }
+        self.assertEqual("0.2", versions["evaluation_start"])
+        self.assertEqual("0.2", versions["result_acceptance_notice"])
+        self.assertTrue(
+            all(
+                version == "0.1"
+                for message_type, version in versions.items()
+                if message_type not in {"evaluation_start", "result_acceptance_notice"}
+            )
+        )
 
     def test_required_message_types_are_registered(self) -> None:
         expected = {
@@ -818,6 +829,8 @@ class MessageContractTests(unittest.TestCase):
         for field, value in (
             ("opaque_receipt_ref", "urn:test:receipt:other"),
             ("acknowledgment_status", "ACKNOWLEDGED"),
+            ("resource_policy_binding", "sha256:" + "e" * 64),
+            ("execution_authorization_digest", "sha256:" + "f" * 64),
         ):
             with self.subTest(field=field):
                 changed = copy.deepcopy(callback)
@@ -1028,6 +1041,41 @@ class MessageContractTests(unittest.TestCase):
         changed = canonical.populate_digests(changed)
         self.assertNotEqual(message["payload_digest"], changed["payload_digest"])
         self.assertNotEqual(message["message_digest"], changed["message_digest"])
+
+    def test_callback_authority_changes_every_canonical_digest_surface(self) -> None:
+        callback = next(
+            copy.deepcopy(item)
+            for item in self.trace_messages
+            if item["message_type"] == "result_acceptance_notice"
+        )
+        prior = callback["prior_transcript_digest"]
+        base_authentication_input = canonical.canonicalize(
+            canonical.authentication_input(callback)
+        )
+        base_wire = canonical.wire_message_digest(callback)
+        base_transcript = canonical.append_transcript(
+            prior, 1, callback["message_digest"]
+        )
+        for field in ("resource_policy_binding", "execution_authorization_digest"):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(callback)
+                changed["payload"][field] = "sha256:" + "e" * 64
+                changed = canonical.populate_digests(changed)
+                self.assertNotEqual(
+                    callback["payload_digest"], changed["payload_digest"]
+                )
+                self.assertNotEqual(
+                    callback["message_digest"], changed["message_digest"]
+                )
+                self.assertNotEqual(
+                    base_authentication_input,
+                    canonical.canonicalize(canonical.authentication_input(changed)),
+                )
+                self.assertNotEqual(base_wire, canonical.wire_message_digest(changed))
+                self.assertNotEqual(
+                    base_transcript,
+                    canonical.append_transcript(prior, 1, changed["message_digest"]),
+                )
 
     def test_every_authenticated_routing_field_changes_message_digest(self) -> None:
         base = self.messages["session-acceptance-a"]
@@ -1260,6 +1308,13 @@ class MessageContractTests(unittest.TestCase):
         changed_callback = copy.deepcopy(callback)
         changed_callback["payload"]["profile_evidence_ref"] += ":changed"
         cases.append(canonical.populate_digests(changed_callback))
+        for field, value in (
+            ("resource_policy_binding", "sha256:" + "e" * 64),
+            ("execution_authorization_digest", "sha256:" + "f" * 64),
+        ):
+            changed_authority = copy.deepcopy(callback)
+            changed_authority["payload"][field] = value
+            cases.append(canonical.populate_digests(changed_authority))
         for message in cases:
             before = (
                 copy.deepcopy(runner.__dict__),

@@ -13,8 +13,8 @@ synthetic fixtures. No private Product repository or private Evidence is a runti
 
 The suite is pinned to Protocol source revision
 `af09252fd1d36f75292119752a6ef5dfe08acecb`, State Machine digest
-`sha256:32e514a61a83aeb1593623eb1144f323d1115dc8c812b5fd72af93a3ae06ba16`, and message
-registry digest `sha256:df3eea26ad07b477912b124c96c9325676e9d1a89744e672f26c00538377a7ea`.
+`sha256:7d710270b4fae68dfb2596fe2dd8158b7d5b02f3235be43d0ed8e21f232c8b94`, and message
+registry digest `sha256:cd41e5fe0b932f720b005ded2c535e4e5264dd9ff2893e77add00d64da9bf950`.
 These bindings identify reviewed inputs; they do not prove correctness or privacy.
 
 ## Artifact structure and authority
