@@ -38,6 +38,8 @@ EXPECTED_PATH = Path("conformance/messages/expected-digests/vectors.v0.1.json")
 
 ISSUED_AT = "2026-07-21T00:00:00Z"
 EXPIRES_AT = "2026-07-21T00:10:00Z"
+RESOURCE_POLICY_BINDING = "sha256:" + "65" * 32
+EXECUTION_AUTHORIZATION_DIGEST = "sha256:" + "66" * 32
 POSITIVE_TRACE_SEQUENCE = [
     ("session_proposal", None),
     ("session_acceptance", "a"),
@@ -125,6 +127,8 @@ def _payload(
         "evaluation_start": {
             "evaluation_attempt_id": "urn:private-match:test:evaluation:0001",
             "evaluation_deadline": None,
+            "resource_policy_binding": RESOURCE_POLICY_BINDING,
+            "execution_authorization_digest": EXECUTION_AUTHORIZATION_DIGEST,
         },
         "evaluation_contribution": {
             "contribution_ref": f"urn:private-match:test:opaque-contribution:{slot}"
@@ -138,6 +142,8 @@ def _payload(
             "opaque_receipt_ref": "urn:private-match:test:opaque-receipt:9f2c7d8a",
             "acknowledgment_status": "BOTH_ACKNOWLEDGED",
             "profile_evidence_ref": "urn:private-match:test:profile-evidence:both",
+            "resource_policy_binding": RESOURCE_POLICY_BINDING,
+            "execution_authorization_digest": EXECUTION_AUTHORIZATION_DIGEST,
         },
         "consent_grant": {
             "opaque_receipt_ref": "urn:private-match:test:opaque-receipt:9f2c7d8a",
@@ -282,7 +288,7 @@ def build_message(
         "protocol_profile": "private-match-core",
         "protocol_version": "0.1",
         "message_type": message_type,
-        "message_version": "0.1",
+        "message_version": entry["message_version"],
         "delivery_class": delivery,
         "session_context": copy.deepcopy(context["session_context"]),
         "sender": sender,
@@ -364,7 +370,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         )
         if stage_findings or stage_outcome != "ACCEPTED":
             raise ValueError(
-                "invalid standalone vector stage: "
+                f"invalid standalone vector stage {message_type}: "
                 + "; ".join(map(str, stage_findings))
             )
     full_context["session_context"]["commitment_pair_id"] = (

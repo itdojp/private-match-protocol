@@ -62,11 +62,11 @@ port_fields:
   - plaintext Coordinator result
   - secret material
 - field: deterministic-error-categories
-  public_semantic_meaning: Closed Protocol failure mapping without secret detail.
+  public_semantic_meaning: Closed normalized failure categories and bounded PET validator codes from config/pet-profile-error-codes.v0.1.json; runtime, Schema, mutation, and generated-result vocabularies must match exactly.
   requirement: required
   source_profile_field: protocol_contract.failure_mappings
-  expected_product_port_behavior: map adapter failures to reviewed categories
-  fail_closed_rule: reject unknown mapping and redact raw failure detail
+  expected_product_port_behavior: map only catalogued codes and normalized profile categories without raw vendor, secret, or local-path detail
+  fail_closed_rule: reject unknown, misspelled, out-of-vocabulary, or semantically combined error codes
   prohibited_content:
   - private input
   - raw identifier
@@ -150,11 +150,11 @@ port_fields:
   - synthetic observer data
   - Coordinator plaintext result
 - field: pre-post-state-contract
-  public_semantic_meaning: Exact authoritative pre-phase, transition set, post-phase or effect, transcript mutation, query-budget disposition, and operation-specific outcome.
+  public_semantic_meaning: Exact authoritative pre-phase, phase-specific TR-ABORT state shape, transition set, post-phase or effect, transcript mutation, query-budget disposition, cleanup state, and operation-specific outcome.
   requirement: required
   source_profile_field: operation_stage_contract.operations.expected_pre_phases
-  expected_product_port_behavior: validate the operation against the existing State Machine projection before and after invocation without implementing a second State Machine
-  fail_closed_rule: reject impossible pre-phase, unrelated transition, incorrect post-phase, budget effect, transcript mutation, visibility, or flattened terminal outcome
+  expected_product_port_behavior: validate the operation and every abort source phase against the existing State Machine and operation-stage projection before and after invocation without implementing a second State Machine
+  fail_closed_rule: reject impossible pre-phase or phase field, unrelated transition, incorrect post-phase, budget effect, transcript mutation, cleanup state, visibility, or flattened terminal outcome
   prohibited_content:
   - independent State Machine
   - generic accepted terminal outcome
@@ -186,7 +186,7 @@ port_fields:
   - plaintext Coordinator result
   - secret material
 - field: result-and-verification-receipt
-  public_semantic_meaning: Symmetric Party-local result and high-entropy opaque receipt.
+  public_semantic_meaning: Symmetric Party-local result and high-entropy opaque receipt. Canonical result_acceptance_notice version 0.2 carries the evaluation-start resource-policy and execution-authorization digests inside its signed/digested payload.
   requirement: required
   source_profile_field: protocol_contract.result_symmetry/callback/opaque_receipt
   expected_product_port_behavior: verify exact bindings before accepting each local result
@@ -297,9 +297,9 @@ limitations:
 - The handoff defines public semantics, not private Product implementation structure.
 - Registration and contract-fixture validation are not candidate execution permission.
 - No match predicate, production adapter, authentication, cloud, or KMS selection is made.
-handoff_digest: sha256:b42bade97f7ac2ea64e11bf541eb09686d8543af71779c8c9b4a96773af49fa0
+handoff_digest: sha256:78ec09f6ac288e12ef3708ad36e0fe9b43c4217a441562507d720bae17fce303
 operation_stage_contract_path: specs/pet-integration/operation-stage-contract.v0.1.yaml
-operation_stage_contract_digest: sha256:323e81aa8de6cd2db26ba9085492b4d4328ab13be37049bb0414cc46787e791c
+operation_stage_contract_digest: sha256:f14ce77c1f5ad266bf3983243f384ef7df1ce4f8029fc0bfd77856a6433d7588
 operation_stage_projection:
 - operation: register-component
   lifecycle_stage: registry-registration

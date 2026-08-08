@@ -121,6 +121,12 @@ RUNNER_SECURITY_PARAMETER_READS = {
         "policy_acceptance_parameter.acceptance_digest",
     },
     "commitment_registration": {"commitment_parameter.opaque_commitment"},
+    "evaluation_start": {
+        "evaluation_attempt_parameter.evaluation_attempt_id",
+        "evaluation_attempt_parameter.supplied_evaluation_deadline",
+        "evaluation_attempt_parameter.resource_policy_binding",
+        "evaluation_attempt_parameter.execution_authorization_digest",
+    },
     "evaluation_contribution": {"evaluation_contribution_parameter.contribution_ref"},
     "opaque_receipt_ack": {
         "opaque_receipt_parameter.opaque_receipt_ref",
@@ -131,6 +137,9 @@ RUNNER_SECURITY_PARAMETER_READS = {
         "opaque_receipt_parameter.opaque_receipt_ref",
         "opaque_receipt_parameter.acknowledgment_status",
         "opaque_receipt_parameter.profile_evidence_ref",
+        "profile_callback_envelope.message_version",
+        "profile_callback_envelope.resource_policy_binding",
+        "profile_callback_envelope.execution_authorization_digest",
     },
     "consent_grant": {
         f"consent_binding_parameter.{field}"
@@ -278,7 +287,18 @@ def _registry_index(registry: dict[str, Any]) -> dict[str, dict[str, Any]]:
     composite = _unique_index(
         registry.get("messages", []), ("message_type", "message_version")
     )
-    return {str(key[0]): value for key, value in composite.items() if key[1] == "0.1"}
+    result: dict[str, dict[str, Any]] = {}
+    ambiguous: set[str] = set()
+    for key, value in composite.items():
+        message_type = str(key[0])
+        if message_type in result or message_type in ambiguous:
+            # Draft v0.1 publishes exactly one accepted version for each type;
+            # an ambiguous multi-version registry fails closed.
+            result.pop(message_type, None)
+            ambiguous.add(message_type)
+            continue
+        result[message_type] = value
+    return result
 
 
 def _material_index(materials: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1261,6 +1281,8 @@ class AbstractStateRunner:
     session_expires_at: str | None = None
     evaluation_timeout_seconds: int | None = None
     evaluation_deadline: str | None = None
+    resource_policy_binding: str | None = None
+    execution_authorization_digest: str | None = None
     maximum_time_jump_seconds: int | None = None
     evaluation_started: bool = False
     query_budget_state: str = "NONE"
@@ -1530,6 +1552,10 @@ class AbstractStateRunner:
             if not findings:
                 self.evaluation_attempt_id = payload.get("evaluation_attempt_id")
                 self.evaluation_deadline = derived_deadline
+                self.resource_policy_binding = payload.get("resource_policy_binding")
+                self.execution_authorization_digest = payload.get(
+                    "execution_authorization_digest"
+                )
                 self.evaluation_started = True
                 self.query_budget_state = "CONSUMED"
                 self.phase = "EVALUATING"
@@ -1614,6 +1640,15 @@ class AbstractStateRunner:
                 bool(payload.get("profile_evidence_ref")),
                 "result callback requires an opaque profile evidence reference",
             )
+            require(
+                payload.get("resource_policy_binding") == self.resource_policy_binding,
+                "result callback resource policy must equal evaluation start",
+            )
+            require(
+                payload.get("execution_authorization_digest")
+                == self.execution_authorization_digest,
+                "result callback execution authority must equal evaluation start",
+            )
             if any(self.proposed_result_state.values()):
                 require(
                     self.proposed_result_state["a"] in PLAINTEXT_RESULTS
@@ -1645,6 +1680,8 @@ class AbstractStateRunner:
                         "opaque_receipt_ref",
                         "acknowledgment_status",
                         "profile_evidence_ref",
+                        "resource_policy_binding",
+                        "execution_authorization_digest",
                     )
                 }
                 if any(self.proposed_result_state.values()):
@@ -2294,6 +2331,7 @@ def registry_findings(
         }
         common_message_sources = {
             "message.protocol_profile",
+            "message.message_version",
             "message.issued_at",
             "message.session_context.session_id",
             "message.session_context.policy",

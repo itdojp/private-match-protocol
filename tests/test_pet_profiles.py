@@ -21,6 +21,7 @@ if str(SCRIPTS) not in sys.path:
 from generate_pet_profiles import main as generate_main  # noqa: E402
 from pet_profiles import (  # noqa: E402
     AUTHORITY_PATH,
+    ABORT_PHASE_ORDER,
     BINDING_PATH,
     CANONICAL_CALLBACK_PATH,
     CALLBACK_BINDINGS,
@@ -29,6 +30,7 @@ from pet_profiles import (  # noqa: E402
     COMPONENT_PROFILE_IDS,
     GENERATED_PATHS,
     HANDOFF_PATH,
+    ERROR_CODE_CATALOG_PATH,
     INVALID_CASE_CODES,
     MESSAGE_REGISTRY_DIGEST,
     NITRO_RECEIPT_BINDINGS,
@@ -54,6 +56,7 @@ from pet_profiles import (  # noqa: E402
     validate_conformance_input,
     validate_operation_input,
     validate_repository,
+    validate_error_code_authority,
     validate_semantics,
     _execution_authorization_digest,
     _execute_invalid_case,
@@ -252,7 +255,7 @@ class PetProfileTests(unittest.TestCase):
         self.assertEqual("prohibited", cases["network_execution"])
         self.assertFalse(cases["candidate_execution"])
         self.assertFalse(cases["paid_resource_use"])
-        self.assertEqual(12, len(cases["valid_cases"]))
+        self.assertEqual(19, len(cases["valid_cases"]))
         self.assertEqual(
             {"accepted", "no-op", "terminal"},
             {item["expected_protocol_outcome"] for item in cases["valid_cases"]},
@@ -260,7 +263,7 @@ class PetProfileTests(unittest.TestCase):
 
     def test_every_valid_case_executes_through_shared_operation_validator(self) -> None:
         results = validate_case_catalog(self.values)
-        self.assertEqual(12, len(results))
+        self.assertEqual(19, len(results))
         self.assertEqual({"pass"}, {item["runner_status"] for item in results})
         self.assertEqual(
             {"accepted", "no-op", "terminal"},
@@ -269,8 +272,8 @@ class PetProfileTests(unittest.TestCase):
         manifest = json.loads(
             (ROOT / GENERATED_PATHS["case_results"]).read_text(encoding="utf-8")
         )
-        self.assertEqual(12, manifest["status_counts"]["pass"])
-        self.assertEqual(2, manifest["status_counts"]["terminal"])
+        self.assertEqual(19, manifest["status_counts"]["pass"])
+        self.assertEqual(9, manifest["status_counts"]["terminal"])
         self.assertEqual(1, manifest["status_counts"]["no_op"])
         self.assertEqual(
             {item["case_id"] for item in self.values["cases"]["valid_cases"]},
@@ -501,6 +504,75 @@ class PetProfileTests(unittest.TestCase):
                     )
                 self.assertEqual(code, caught.exception.code)
 
+    def test_canonical_callback_carries_evaluation_start_authority(self) -> None:
+        item = next(
+            entry
+            for entry in self.values["cases"]["valid_cases"]
+            if entry["operation"] == "accept-profile-callback"
+        )
+        record = operation_input_for_case(self.values, item)
+        message = strict_loads((ROOT / CANONICAL_CALLBACK_PATH).read_bytes())
+        self.assertEqual("0.2", message["message_version"])
+        for field in (
+            "resource_policy_binding",
+            "execution_authorization_digest",
+        ):
+            self.assertEqual(
+                record["authoritative_context"]["initial_state"][field],
+                message["payload"][field],
+            )
+            self.assertEqual(
+                record["presented_operation"][field], message["payload"][field]
+            )
+
+        substituted = copy.deepcopy(record)
+        replacement = "sha256:" + "ee" * 32
+        substituted["authoritative_context"]["initial_state"][
+            "resource_policy_binding"
+        ] = replacement
+        substituted["authoritative_context"]["expected_presented_operation"][
+            "resource_policy_binding"
+        ] = replacement
+        substituted["presented_operation"]["resource_policy_binding"] = replacement
+        with self.assertRaises(PetProfileError) as caught:
+            validate_operation_input(self.values, substituted)
+        self.assertEqual("PET-RESOURCE-POLICY", caught.exception.code)
+
+        for field, code in (
+            ("resource_policy_binding", "PET-RESOURCE-POLICY"),
+            (
+                "execution_authorization_digest",
+                "PET-EXECUTION-AUTHORIZATION-BINDING",
+            ),
+        ):
+            with self.subTest(field=field):
+                mutated = copy.deepcopy(message)
+                mutated["payload"][field] = "sha256:" + "ef" * 32
+                mutated = populate_digests(mutated)
+                with self.assertRaises(PetProfileError) as caught:
+                    validate_operation_input(
+                        self.values,
+                        record,
+                        canonical_message_bytes=canonicalize(mutated),
+                    )
+                self.assertEqual(code, caught.exception.code)
+
+    def test_pet_error_code_catalog_has_exact_runtime_and_mutation_parity(self) -> None:
+        validate_error_code_authority(self.values)
+        catalog = json.loads((ROOT / ERROR_CODE_CATALOG_PATH).read_text())
+        codes = [item["code"] for item in catalog["codes"]]
+        semantics = {item["code"]: item["semantics"] for item in catalog["codes"]}
+        self.assertEqual(len(codes), len(set(codes)))
+        self.assertIn("PET-EVALUATION-TIME-AUTHORITY", codes)
+        self.assertIn("PET-ABORT-PHASE-AUTHORITY", codes)
+        self.assertIn(
+            "state and presented timer time", semantics["PET-EVALUATION-TIME-AUTHORITY"]
+        )
+        self.assertIn(
+            "noncanonical, nonmonotonic", semantics["PET-AUTHORITATIVE-TIME-ORDER"]
+        )
+        self.assertIn("has not reached", semantics["PET-EVALUATION-DEADLINE"])
+
     def test_timeout_requires_monotonic_time_at_or_after_deadline(self) -> None:
         item = next(
             entry
@@ -519,6 +591,11 @@ class PetProfileTests(unittest.TestCase):
         for mutation, code in (
             ("timeout-before-deadline", "PET-EVALUATION-DEADLINE"),
             ("timeout-nonincreasing-time", "PET-AUTHORITATIVE-TIME-ORDER"),
+            (
+                "timeout-state-message-time-mismatch",
+                "PET-EVALUATION-TIME-AUTHORITY",
+            ),
+            ("timeout-noncanonical-time", "PET-AUTHORITATIVE-TIME-ORDER"),
         ):
             with self.subTest(mutation=mutation):
                 with self.assertRaises(PetProfileError) as caught:
@@ -539,95 +616,64 @@ class PetProfileTests(unittest.TestCase):
     def test_abort_accepts_every_reviewed_source_phase_and_preserves_consumed_budget(
         self,
     ) -> None:
-        item = next(
+        cases = [
             entry
             for entry in self.values["cases"]["valid_cases"]
             if entry["operation"] == "abort-and-cleanup"
+        ]
+        self.assertEqual(8, len(cases))
+        self.assertEqual(
+            set(ABORT_PHASE_ORDER), {item["abort_source_phase"] for item in cases}
         )
-        source_phases = {
-            "CREATED": (False, False, False, None, "release-if-not-started"),
-            "PARTICIPANTS_BOUND": (
-                True,
-                False,
-                False,
-                "NONE",
-                "release-if-not-started",
-            ),
-            "COMMITMENTS_PENDING": (
-                True,
-                False,
-                False,
-                "RESERVED",
-                "release-if-not-started",
-            ),
-            "COMMITTED": (
-                True,
-                True,
-                False,
-                "RESERVED",
-                "release-if-not-started",
-            ),
-            "EVALUATING": (True, True, True, "CONSUMED", "preserve-consumed"),
-            "RESULT_ACCEPTED": (
-                True,
-                True,
-                True,
-                "CONSUMED",
-                "preserve-consumed",
-            ),
-            "CONSENT_PENDING": (
-                True,
-                True,
-                True,
-                "CONSUMED",
-                "preserve-consumed",
-            ),
-            "DISCLOSURE_AUTHORIZED": (
-                True,
-                True,
-                True,
-                "CONSUMED",
-                "preserve-consumed",
-            ),
-        }
-        for phase, (
-            has_participants,
-            has_commitment,
-            has_attempt,
-            budget,
-            effect,
-        ) in source_phases.items():
-            with self.subTest(phase=phase):
+        for item in cases:
+            with self.subTest(phase=item["abort_source_phase"]):
                 record = operation_input_for_case(self.values, item)
-                state = record["authoritative_context"]["initial_state"]
-                presented = record["presented_operation"]
-                expected_presented = record["authoritative_context"][
-                    "expected_presented_operation"
-                ]
-                state["phase"] = phase
-                if not has_participants:
-                    state["participant_binding_digest"] = None
-                    state["completed_contribution_slots"] = []
-                if not has_commitment:
-                    state["commitment_pair_id"] = None
-                if not has_attempt:
-                    state["evaluation_attempt_id"] = None
-                    state["evaluation_deadline"] = None
-                    state["resource_policy_binding"] = None
-                    state["execution_authorization_digest"] = None
-                state["query_budget_state"] = budget
-                for field in (
-                    "participant_binding_digest",
-                    "commitment_pair_id",
-                    "evaluation_attempt_id",
-                ):
-                    presented[field] = state[field]
-                    expected_presented[field] = state[field]
-                record["expected_transition"]["initial_phase"] = phase
-                record["expected_transition"]["query_budget_effect"] = effect
                 result = validate_operation_input(self.values, record)
                 self.assertEqual("terminal", result["protocol_outcome"])
-                self.assertEqual(effect, result["query_budget_effect"])
+                expected_effect = (
+                    "preserve-consumed"
+                    if item["abort_source_phase"]
+                    in {
+                        "EVALUATING",
+                        "RESULT_ACCEPTED",
+                        "CONSENT_PENDING",
+                        "DISCLOSURE_AUTHORIZED",
+                    }
+                    else "release-if-not-started"
+                )
+                self.assertEqual(expected_effect, result["query_budget_effect"])
+        evaluating = next(
+            item for item in cases if item["abort_source_phase"] == "EVALUATING"
+        )
+        for contributions, acknowledgments in (
+            ([], []),
+            (["party_a"], []),
+            (["party_b"], []),
+            (["party_a", "party_b"], []),
+            (["party_a", "party_b"], ["party_a"]),
+            (["party_a", "party_b"], ["party_b"]),
+            (["party_a", "party_b"], ["party_a", "party_b"]),
+        ):
+            record = operation_input_for_case(self.values, evaluating)
+            record["authoritative_context"]["initial_state"][
+                "completed_contribution_slots"
+            ] = contributions
+            record["authoritative_context"]["initial_state"][
+                "receipt_acknowledgment_slots"
+            ] = acknowledgments
+            self.assertEqual(
+                "terminal",
+                validate_operation_input(self.values, record)["protocol_outcome"],
+            )
+        invalid = operation_input_for_case(self.values, evaluating)
+        invalid["authoritative_context"]["initial_state"][
+            "completed_contribution_slots"
+        ] = ["party_a"]
+        invalid["authoritative_context"]["initial_state"][
+            "receipt_acknowledgment_slots"
+        ] = ["party_a"]
+        with self.assertRaisesRegex(PetProfileError, "PET-ABORT-PHASE-AUTHORITY"):
+            validate_operation_input(self.values, invalid)
         with self.assertRaises(PetProfileError) as caught:
             validate_operation_input(
                 self.values,
@@ -868,7 +914,7 @@ class PetProfileTests(unittest.TestCase):
                 )
                 self.assertEqual(INVALID_CASE_CODES[mutation], item["expected_error"])
         # validate_case_catalog executes all invalid paths through the shared validator.
-        self.assertEqual(12, len(validate_case_catalog(self.values)))
+        self.assertEqual(19, len(validate_case_catalog(self.values)))
 
     def test_cross_profile_instance_attempt_receipt_and_transcript_fail_closed(
         self,
@@ -955,7 +1001,7 @@ class PetProfileTests(unittest.TestCase):
         first = generated_files(ROOT)
         second = generated_files(ROOT)
         self.assertEqual(first, second)
-        self.assertEqual(17, len(first))
+        self.assertEqual(24, len(first))
         self.assertTrue(set(GENERATED_PATHS.values()) <= set(first))
         for relative, content in first.items():
             self.assertEqual(content, (ROOT / relative).read_bytes(), relative)
@@ -979,7 +1025,14 @@ class PetProfileTests(unittest.TestCase):
             "specs/state-machines/private-match-core-session-v0.1.yaml", input_paths
         )
         self.assertIn("registry/message-types.v0.1.yaml", input_paths)
-        self.assertEqual(16, len(manifest["generated_outputs"]))
+        self.assertIn("schemas/messages/envelope.v0.1.schema.json", input_paths)
+        self.assertIn("scripts/validate_messages.py", input_paths)
+        self.assertIn("scripts/generate_message_vectors.py", input_paths)
+        self.assertIn("tests/test_message_contracts.py", input_paths)
+        self.assertIn(
+            "conformance/source/message-conformance-inputs.v0.1.json", input_paths
+        )
+        self.assertEqual(23, len(manifest["generated_outputs"]))
 
     def _repository_copy(self):
         scratch = ROOT / "artifacts"

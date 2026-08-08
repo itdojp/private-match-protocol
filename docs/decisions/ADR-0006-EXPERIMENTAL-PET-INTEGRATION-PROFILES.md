@@ -134,3 +134,20 @@ These are new experimental Draft v0.1 artifacts and do not modify existing
 State Machine or Message schemas. Consumers must reject unknown versions and
 component-only engine selection. Rollback removes the new registry/profiles and
 handoff as a unit; it must not silently fall back to an unregistered adapter.
+
+## Corrective Draft compatibility and authority closure
+
+Because Product Issue #6 has not started and these contracts remain Draft,
+`evaluation_start` and `result_acceptance_notice` advance to exact message
+version `0.2` without changing the Protocol profile version. Version `0.1` of
+those two message types is no longer accepted. The change is necessary to bind
+the resource-policy and execution-authorization digests into canonical message
+bytes rather than an unsigned reconstructed operation surface. Rolling back
+would reopen the reviewed substitution gap.
+
+All `TR-ABORT` source phases are now governed by one derived closed phase
+matrix. The matrix is projected from the existing State Machine, not a second
+lifecycle model. A closed PET error-code catalog also requires exact parity
+among runtime, Schema, mutation, generated-result, test, and documentation
+surfaces. These corrections do not authorize candidate or production
+execution and do not change the experimental profile classification.

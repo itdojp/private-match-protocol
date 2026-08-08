@@ -1850,7 +1850,7 @@ messages:
       - transition: TR-RESERVE-BUDGET
         operation: E-ACCEPT-OPERATION
 - message_type: evaluation_start
-  message_version: '0.1'
+  message_version: '0.2'
   delivery_class: coordinator_command
   direction: accepted-input
   allowed_senders:
@@ -1862,6 +1862,8 @@ messages:
     required_fields:
     - evaluation_attempt_id
     - evaluation_deadline
+    - resource_policy_binding
+    - execution_authorization_digest
     prohibited_fields:
     - raw_identifiers
     - normalized_identifiers
@@ -1906,6 +1908,22 @@ messages:
         operation: G-EVALUATION-DEADLINE-BINDING
       - transition: TR-START-EVALUATION
         operation: E-SET-EVALUATION-DEADLINE
+  - source: payload.execution_authorization_digest
+    destination:
+      kind: event-parameter
+      parameter: evaluation_attempt_parameter
+      field: execution_authorization_digest
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: E-START-EVALUATION
+  - source: payload.resource_policy_binding
+    destination:
+      kind: event-parameter
+      parameter: evaluation_attempt_parameter
+      field: resource_policy_binding
+      consumed_by:
+      - transition: TR-START-EVALUATION
+        operation: E-START-EVALUATION
   - source: message.message_digest
     destination:
       kind: event-parameter
@@ -2570,7 +2588,7 @@ messages:
       - transition: TR-ACK-RECEIPT-B
         operation: E-ACCEPT-MESSAGE
 - message_type: result_acceptance_notice
-  message_version: '0.1'
+  message_version: '0.2'
   delivery_class: profile_callback
   direction: accepted-input
   allowed_senders:
@@ -2583,6 +2601,8 @@ messages:
     - opaque_receipt_ref
     - acknowledgment_status
     - profile_evidence_ref
+    - resource_policy_binding
+    - execution_authorization_digest
     prohibited_fields:
     - raw_identifiers
     - normalized_identifiers
@@ -2610,6 +2630,48 @@ messages:
   authentication_requirement: external messages require selected non-none authentication; this draft selects
     no algorithm
   parameter_sources:
+  - source: message.message_version
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: message_version
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+      - transition: TR-RESULT-CONFLICT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RESULT-CONFLICT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: payload.resource_policy_binding
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: resource_policy_binding
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+      - transition: TR-RESULT-CONFLICT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RESULT-CONFLICT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+  - source: payload.execution_authorization_digest
+    destination:
+      kind: event-parameter
+      parameter: profile_callback_envelope
+      field: execution_authorization_digest
+      consumed_by:
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-ACCEPT-SYMMETRIC-RESULT
+        operation: E-ACCEPT-PROFILE-CALLBACK
+      - transition: TR-RESULT-CONFLICT
+        operation: G-PROFILE-CALLBACK-DEDUP
+      - transition: TR-RESULT-CONFLICT
+        operation: E-ACCEPT-PROFILE-CALLBACK
   - source: payload.opaque_receipt_ref
     destination:
       kind: event-parameter

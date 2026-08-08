@@ -237,9 +237,14 @@ Party-local result remains in a recipient-specific protected artifact defined
 by a later integration profile. The coordinator cannot parse that artifact as
 core JSON. The profile's protection properties are unestablished in this draft.
 
-`result_acceptance_notice` is a profile callback with the common opaque receipt,
-`BOTH_ACKNOWLEDGED`, and an opaque profile-evidence reference. It does not carry
-or hash a plaintext decision. A public receipt must not contain a secret input.
+`result_acceptance_notice` message version `0.2` is a profile callback with the
+common opaque receipt, `BOTH_ACKNOWLEDGED`, an opaque profile-evidence reference,
+and the exact resource-policy and execution-authorization digests established
+by `evaluation_start` message version `0.2`. These authorities participate in
+the strict payload digest, authentication input, semantic message digest, wire
+fingerprint, replay/conflict equality, and transcript input. The callback does
+not carry or hash a plaintext decision or raw execution grant. A public receipt
+must not contain a secret input.
 The evolving conformance runner requires both contribution slots, two separate
 `ACKNOWLEDGED` Party records with the same receipt, and a callback bound to the
 current profile/session/attempt before accepting the result. These checks are

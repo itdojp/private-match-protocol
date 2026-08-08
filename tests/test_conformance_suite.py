@@ -87,18 +87,25 @@ class ConformanceSuiteTests(unittest.TestCase):
         self.assertEqual(0, generate_main(["--root", str(ROOT), "--check"]))
         self.assertEqual(before, (oracle.read_bytes(), oracle.stat().st_mtime_ns))
 
-    def test_issue_11_oracle_review_is_closed_and_binds_only_causal_fields(
+    def test_oracle_reviews_are_closed_and_latest_binds_only_causal_fields(
         self,
     ) -> None:
-        review = json.loads(
+        deadline_review = json.loads(
             (
                 ROOT / "conformance/source/evaluation-deadline-oracle-review.v0.1.json"
+            ).read_text()
+        )
+        review = json.loads(
+            (
+                ROOT / "conformance/source/callback-authority-oracle-review.v0.1.json"
             ).read_text()
         )
         oracle = {
             item["case_id"]: item
             for item in json.loads((ROOT / NORMATIVE_ORACLE).read_text())["results"]
         }
+        self.assertEqual(22, deadline_review["review_boundary"]["changed_case_count"])
+        self.assertEqual(44, deadline_review["review_boundary"]["changed_field_count"])
         boundary = review["review_boundary"]
         self.assertEqual(22, boundary["changed_case_count"])
         self.assertEqual(44, boundary["changed_field_count"])
@@ -107,9 +114,9 @@ class ConformanceSuiteTests(unittest.TestCase):
         )
         self.assertTrue(boundary["reference_output_not_oracle_authority"])
         self.assertEqual(
-            "2026-07-21T00:10:30Z",
-            review["semantic_decision"]["derived_evaluation_deadline"],
+            "result_acceptance_notice", review["semantic_decision"]["message_type"]
         )
+        self.assertEqual("0.2", review["semantic_decision"]["message_version"])
         identities = [(item["case_id"], item["field"]) for item in review["changes"]]
         self.assertEqual(len(identities), len(set(identities)))
         self.assertEqual(44, len(identities))
@@ -125,9 +132,13 @@ class ConformanceSuiteTests(unittest.TestCase):
                     "conformance/messages/valid/evaluation-start.json",
                     item["source_fixtures"],
                 )
+                self.assertIn(
+                    "conformance/messages/valid/result-acceptance-notice.json",
+                    item["source_fixtures"],
+                )
                 self.assertEqual(
-                    "min(2026-07-21T00:00:30Z + 600 seconds, 2026-07-21T01:00:00Z) = 2026-07-21T00:10:30Z",
-                    item["causal_derivation"]["deadline_formula"],
+                    ["execution_authorization_digest", "resource_policy_binding"],
+                    item["causal_derivation"]["added_callback_authority_fields"],
                 )
 
     def test_reference_implementation_manifest_is_closed_and_deterministic(

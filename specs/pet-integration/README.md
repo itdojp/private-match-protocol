@@ -108,3 +108,39 @@ Every catalogued valid case is converted into a complete authoritative context
 and presented operation, executed through the same semantic validator used by
 negative cases, and bound by input/observer/result digests. This proves contract handling
 only; it does not prove PET security, policy correctness, or candidate behavior.
+
+## Corrective callback, abort, and error authority
+
+Draft message compatibility is exact-version-only. `evaluation_start` and
+`result_acceptance_notice` use message version `0.2`; all other Draft message
+types remain at `0.1`. The callback's strict canonical payload repeats the
+resource-policy binding and execution-authorization digest introduced at
+evaluation start. Those values therefore participate in the payload digest,
+message authentication input, semantic digest, wire fingerprint, replay and
+conflict equality, and canonical transcript input. No unsigned side channel is
+accepted.
+
+The operation-stage contract contains a closed matrix for all eight
+`TR-ABORT` source phases. Participant, commitment, attempt, deadline,
+resource-policy, authorization, contribution, acknowledgment, receipt, result,
+consent, disclosure, query-budget, transcript, and cleanup state are checked as
+one phase-specific authority. Future state, omitted prior state, and arbitrary
+nullable combinations fail closed.
+
+`config/pet-profile-error-codes.v0.1.json` is the closed bounded error-code
+authority. Automated parity checks cover runtime emissions, mutation
+expectations, Schemas, and generated results. In particular, resource-policy
+and execution-authorization callback mismatches remain distinct, while timeout
+state/time authority, canonical monotonic time, and deadline crossing retain
+separate codes.
+
+The published distinctions are:
+
+- `PET-RESOURCE-POLICY` for a callback resource-policy mismatch;
+- `PET-EXECUTION-AUTHORIZATION-BINDING` for a callback execution-authority
+  digest mismatch;
+- `PET-EVALUATION-TIME-AUTHORITY` when stored and presented timer authorities
+  disagree;
+- `PET-AUTHORITATIVE-TIME-ORDER` for noncanonical or nonmonotonic time; and
+- `PET-EVALUATION-DEADLINE` when the authoritative time has not reached the
+  immutable deadline.

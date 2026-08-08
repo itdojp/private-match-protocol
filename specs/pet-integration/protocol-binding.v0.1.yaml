@@ -4,9 +4,9 @@ artifact_status: experimental
 protocol_profile: private-match-core
 protocol_version: '0.1'
 state_machine_path: specs/state-machines/private-match-core-session-v0.1.yaml
-state_machine_digest: sha256:32e514a61a83aeb1593623eb1144f323d1115dc8c812b5fd72af93a3ae06ba16
+state_machine_digest: sha256:7d710270b4fae68dfb2596fe2dd8158b7d5b02f3235be43d0ed8e21f232c8b94
 message_registry_path: registry/message-types.v0.1.yaml
-message_registry_digest: sha256:df3eea26ad07b477912b124c96c9325676e9d1a89744e672f26c00538377a7ea
+message_registry_digest: sha256:cd41e5fe0b932f720b005ded2c535e4e5264dd9ff2893e77add00d64da9bf950
 operations:
 - operation: select-profile
   allowed_profile_classes:
@@ -57,7 +57,7 @@ operations:
   events:
   - start_evaluation
   message_type: evaluation_start
-  message_version: '0.1'
+  message_version: '0.2'
   delivery_class: coordinator_command
   direction: accepted-input
   allowed_senders:
@@ -125,7 +125,7 @@ operations:
   events:
   - accept_symmetric_result
   message_type: result_acceptance_notice
-  message_version: '0.1'
+  message_version: '0.2'
   delivery_class: profile_callback
   direction: accepted-input
   allowed_senders:
@@ -219,6 +219,6 @@ limitations:
 - This mapping references, rather than duplicates, the complete Protocol state machine.
 - result_acceptance_notice is the single external profile-callback operation; accept_symmetric_result is its State Machine effect.
 - Authentication algorithm and candidate execution authority remain outside this experimental contract.
-binding_digest: sha256:d995d9c1db23dc0a72620fa6f93dadb59ab59fd96c8b930efaf81d24affd7fa1
+binding_digest: sha256:ab27c67d19ceb72dc534173c9b4f00ec956a8d97aeb3fe9a149b88d1cdb180a1
 operation_stage_contract_path: specs/pet-integration/operation-stage-contract.v0.1.yaml
-operation_stage_contract_digest: sha256:323e81aa8de6cd2db26ba9085492b4d4328ab13be37049bb0414cc46787e791c
+operation_stage_contract_digest: sha256:f14ce77c1f5ad266bf3983243f384ef7df1ce4f8029fc0bfd77856a6433d7588
