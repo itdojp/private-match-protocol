@@ -47,6 +47,14 @@ normal accepted mutations remain distinct. The validator projects these
 outcomes from the existing State Machine; it does not implement a second State
 Machine.
 
+Receipt acknowledgment is accepted only after both Party contribution slots are
+complete. The profile callback must repeat the exact resource-policy and
+execution-authorization digests introduced at evaluation start. Evaluation
+timeout compares an explicit new authoritative time with both the prior
+authoritative time and the stored evaluation deadline. Generic abort accepts
+every source phase listed by `TR-ABORT`; a consumed query budget remains
+consumed, while a reservation is released only when evaluation has not started.
+
 ## Minimum result and private boundary
 
 Every complete profile exposes only `MATCH`, `NO_MATCH`, or `INDETERMINATE` as

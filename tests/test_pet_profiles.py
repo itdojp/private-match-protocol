@@ -472,6 +472,171 @@ class PetProfileTests(unittest.TestCase):
                     validate_operation_input(self.values, record)
                 self.assertEqual(code, caught.exception.code)
 
+    def test_callback_binds_start_authority_without_reconstruction(self) -> None:
+        item = next(
+            entry
+            for entry in self.values["cases"]["valid_cases"]
+            if entry["operation"] == "accept-profile-callback"
+        )
+        record = operation_input_for_case(self.values, item)
+        operation = record["presented_operation"]
+        state = record["authoritative_context"]["initial_state"]
+        for field in (
+            "resource_policy_binding",
+            "execution_authorization_digest",
+        ):
+            self.assertEqual(state[field], operation[field])
+        for mutation, code in (
+            ("callback-resource-policy-substitution", "PET-RESOURCE-POLICY"),
+            (
+                "callback-execution-authority-substitution",
+                "PET-EXECUTION-AUTHORIZATION-BINDING",
+            ),
+        ):
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(PetProfileError) as caught:
+                    validate_operation_input(
+                        self.values,
+                        conformance_input_for_mutation(self.values, mutation),
+                    )
+                self.assertEqual(code, caught.exception.code)
+
+    def test_timeout_requires_monotonic_time_at_or_after_deadline(self) -> None:
+        item = next(
+            entry
+            for entry in self.values["cases"]["valid_cases"]
+            if entry["operation"] == "evaluation-timeout"
+        )
+        accepted = operation_input_for_case(self.values, item)
+        state = accepted["authoritative_context"]["initial_state"]
+        operation = accepted["presented_operation"]
+        self.assertEqual(state["authoritative_time"], operation["authoritative_time"])
+        self.assertEqual(state["evaluation_deadline"], operation["evaluation_deadline"])
+        self.assertEqual(
+            "terminal",
+            validate_operation_input(self.values, accepted)["protocol_outcome"],
+        )
+        for mutation, code in (
+            ("timeout-before-deadline", "PET-EVALUATION-DEADLINE"),
+            ("timeout-nonincreasing-time", "PET-AUTHORITATIVE-TIME-ORDER"),
+        ):
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(PetProfileError) as caught:
+                    validate_operation_input(
+                        self.values,
+                        conformance_input_for_mutation(self.values, mutation),
+                    )
+                self.assertEqual(code, caught.exception.code)
+
+    def test_receipt_acknowledgment_requires_both_contributions(self) -> None:
+        record = conformance_input_for_mutation(
+            self.values, "receipt-ack-before-contributions"
+        )
+        with self.assertRaises(PetProfileError) as caught:
+            validate_operation_input(self.values, record)
+        self.assertEqual("PET-CONTRIBUTIONS-INCOMPLETE", caught.exception.code)
+
+    def test_abort_accepts_every_reviewed_source_phase_and_preserves_consumed_budget(
+        self,
+    ) -> None:
+        item = next(
+            entry
+            for entry in self.values["cases"]["valid_cases"]
+            if entry["operation"] == "abort-and-cleanup"
+        )
+        source_phases = {
+            "CREATED": (False, False, False, None, "release-if-not-started"),
+            "PARTICIPANTS_BOUND": (
+                True,
+                False,
+                False,
+                "NONE",
+                "release-if-not-started",
+            ),
+            "COMMITMENTS_PENDING": (
+                True,
+                False,
+                False,
+                "RESERVED",
+                "release-if-not-started",
+            ),
+            "COMMITTED": (
+                True,
+                True,
+                False,
+                "RESERVED",
+                "release-if-not-started",
+            ),
+            "EVALUATING": (True, True, True, "CONSUMED", "preserve-consumed"),
+            "RESULT_ACCEPTED": (
+                True,
+                True,
+                True,
+                "CONSUMED",
+                "preserve-consumed",
+            ),
+            "CONSENT_PENDING": (
+                True,
+                True,
+                True,
+                "CONSUMED",
+                "preserve-consumed",
+            ),
+            "DISCLOSURE_AUTHORIZED": (
+                True,
+                True,
+                True,
+                "CONSUMED",
+                "preserve-consumed",
+            ),
+        }
+        for phase, (
+            has_participants,
+            has_commitment,
+            has_attempt,
+            budget,
+            effect,
+        ) in source_phases.items():
+            with self.subTest(phase=phase):
+                record = operation_input_for_case(self.values, item)
+                state = record["authoritative_context"]["initial_state"]
+                presented = record["presented_operation"]
+                expected_presented = record["authoritative_context"][
+                    "expected_presented_operation"
+                ]
+                state["phase"] = phase
+                if not has_participants:
+                    state["participant_binding_digest"] = None
+                    state["completed_contribution_slots"] = []
+                if not has_commitment:
+                    state["commitment_pair_id"] = None
+                if not has_attempt:
+                    state["evaluation_attempt_id"] = None
+                    state["evaluation_deadline"] = None
+                    state["resource_policy_binding"] = None
+                    state["execution_authorization_digest"] = None
+                state["query_budget_state"] = budget
+                for field in (
+                    "participant_binding_digest",
+                    "commitment_pair_id",
+                    "evaluation_attempt_id",
+                ):
+                    presented[field] = state[field]
+                    expected_presented[field] = state[field]
+                record["expected_transition"]["initial_phase"] = phase
+                record["expected_transition"]["query_budget_effect"] = effect
+                result = validate_operation_input(self.values, record)
+                self.assertEqual("terminal", result["protocol_outcome"])
+                self.assertEqual(effect, result["query_budget_effect"])
+        with self.assertRaises(PetProfileError) as caught:
+            validate_operation_input(
+                self.values,
+                conformance_input_for_mutation(
+                    self.values, "abort-evaluating-unconsumed"
+                ),
+            )
+        self.assertEqual("PET-QUERY-BUDGET", caught.exception.code)
+
     def test_party_decision_vocabulary_is_closed_before_symmetry(self) -> None:
         record = conformance_input_for_mutation(
             self.values, "unknown-symmetric-decision"
@@ -906,6 +1071,19 @@ class PetProfileTests(unittest.TestCase):
             "fail-closed",
             registry["compatibility"]["component_selection_behavior"],
         )
+
+    def test_registry_schema_closes_complete_and_component_profile_classes(
+        self,
+    ) -> None:
+        schema = self.values["schemas"]["registry"]
+        for collection, wrong_class in (
+            ("complete_profiles", "component-only"),
+            ("component_profiles", "complete-decision-profile"),
+        ):
+            with self.subTest(collection=collection):
+                mutated = copy.deepcopy(self.values["registry"])
+                mutated[collection][0]["profile_class"] = wrong_class
+                self.assertTrue(list(Draft202012Validator(schema).iter_errors(mutated)))
 
 
 if __name__ == "__main__":

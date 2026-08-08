@@ -38,6 +38,14 @@ operation shape: fields not yet available are prohibited or explicitly
 pre-state, transition, post-state/effect, transcript behavior, budget effect,
 and result visibility.
 
+Treat contribution completion, receipt acknowledgments, evaluation-start
+resource and authorization bindings, authoritative time, and evaluation
+deadline as explicit State Machine authority. A callback cannot reconstruct or
+omit the resource-policy or execution-authorization digest. Timeout requires a
+monotonic authoritative-time advance that reaches the stored deadline. Generic
+abort uses every reviewed `TR-ABORT` source phase and preserves a consumed
+budget after evaluation starts.
+
 Keep Party-local plaintext results outside the public presented operation.
 Synthetic conformance may use a separate domain-separated global observer to
 compare both Party-local decisions and their common receipt. The observer is

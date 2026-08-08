@@ -297,9 +297,9 @@ limitations:
 - The handoff defines public semantics, not private Product implementation structure.
 - Registration and contract-fixture validation are not candidate execution permission.
 - No match predicate, production adapter, authentication, cloud, or KMS selection is made.
-handoff_digest: sha256:067e24e3bfd9ebc325e376fc0e6dfcc1f3b73cfb67250a108673b7289f891cc3
+handoff_digest: sha256:b42bade97f7ac2ea64e11bf541eb09686d8543af71779c8c9b4a96773af49fa0
 operation_stage_contract_path: specs/pet-integration/operation-stage-contract.v0.1.yaml
-operation_stage_contract_digest: sha256:64e35de4d6b067ec2c06b64990bfccafe244e8524dd0a5422282236f8ad6506b
+operation_stage_contract_digest: sha256:323e81aa8de6cd2db26ba9085492b4d4328ab13be37049bb0414cc46787e791c
 operation_stage_projection:
 - operation: register-component
   lifecycle_stage: registry-registration
@@ -475,6 +475,8 @@ operation_stage_projection:
   - acknowledgment_status
   - profile_evidence_ref
   - verification_material
+  - resource_policy_binding
+  - execution_authorization_digest
   fields_required_none: []
   fields_prohibited_on_input:
   - party_local_result
@@ -489,6 +491,8 @@ operation_stage_projection:
   - opaque_receipt_ref
   - acknowledgment_status
   - profile_evidence_ref
+  - resource_policy_binding
+  - execution_authorization_digest
   result_classification: accepted-mutation
   query_budget_effect: unchanged
   transcript_mutated: true
@@ -500,6 +504,8 @@ operation_stage_projection:
   - ABORTED
   fields_required_on_input:
   - new_authoritative_time
+  - authoritative_time
+  - evaluation_deadline
   - prior_transcript_head
   fields_required_none: []
   fields_prohibited_on_input:
@@ -545,5 +551,5 @@ operation_stage_projection:
   - normalized_failure_category
   - cleanup_completed
   result_classification: terminal-mutation
-  query_budget_effect: release-if-not-started
+  query_budget_effect: phase-dependent-abort
   transcript_mutated: true

@@ -19,6 +19,7 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
 from canonicalize_message import canonicalize, strict_loads
+from protocol_time import ProtocolTimeError, parse_canonical_utc_timestamp
 from strict_yaml import strict_yaml_load
 from validate_messages import validate_message_bytes
 
@@ -997,6 +998,13 @@ INVALID_CASE_CODES = {
     "wrong-policy-version": "PET-POLICY-BINDING",
     "receipt-policy-substitution": "PET-RECEIPT-POLICY",
     "execution-authorization-digest-substitution": "PET-EXECUTION-AUTHORIZATION-BINDING",
+    "callback-resource-policy-substitution": "PET-RESOURCE-POLICY",
+    "callback-execution-authority-substitution": "PET-EXECUTION-AUTHORIZATION-BINDING",
+    "timeout-before-deadline": "PET-EVALUATION-DEADLINE",
+    "timeout-nonincreasing-time": "PET-AUTHORITATIVE-TIME-ORDER",
+    "receipt-ack-before-contributions": "PET-CONTRIBUTIONS-INCOMPLETE",
+    "abort-consumed-budget-refund": "PET-STATE-TRANSITION-PARITY",
+    "abort-evaluating-unconsumed": "PET-QUERY-BUDGET",
 }
 
 OPERATION_MESSAGE_TYPES = {
@@ -1170,6 +1178,7 @@ STAGE_FIELD_POLICY = {
             "policy_binding",
             "commitment_pair_id",
             "evaluation_attempt_id",
+            "both_party_contributions",
         ],
         "introduced": ["party_slot_receipt_ack", "opaque_receipt_ref"],
         "required": [
@@ -1219,6 +1228,8 @@ STAGE_FIELD_POLICY = {
             "acknowledgment_status",
             "profile_evidence_ref",
             "verification_material",
+            "resource_policy_binding",
+            "execution_authorization_digest",
         ],
         "none": [],
         "prohibited": ["party_local_result", "bilateral_result", "plaintext_result"],
@@ -1228,6 +1239,8 @@ STAGE_FIELD_POLICY = {
             "commitment_pair_id",
             "evaluation_attempt_id",
             "query_budget_state=CONSUMED",
+            "resource_policy_binding",
+            "execution_authorization_digest",
         ],
         "invalidated": [],
         "party_local": ["party_local_result"],
@@ -1235,6 +1248,8 @@ STAGE_FIELD_POLICY = {
             "opaque_receipt_ref",
             "acknowledgment_status",
             "profile_evidence_ref",
+            "resource_policy_binding",
+            "execution_authorization_digest",
         ],
         "selected_profile": ["synthetic_result_comparison"],
         "classification": "accepted-mutation",
@@ -1247,12 +1262,23 @@ STAGE_FIELD_POLICY = {
             "phase=EVALUATING",
             "evaluation_attempt_id",
             "query_budget_state=CONSUMED",
+            "authoritative_time",
+            "evaluation_deadline",
         ],
         "introduced": ["terminal_failure_code=EVALUATION_TIMEOUT", "phase=ABORTED"],
-        "required": ["new_authoritative_time", "prior_transcript_head"],
+        "required": [
+            "new_authoritative_time",
+            "authoritative_time",
+            "evaluation_deadline",
+            "prior_transcript_head",
+        ],
         "none": [],
         "prohibited": ["party_local_result", "new_receipt", "profile_callback"],
-        "retained": ["evaluation_attempt_id", "query_budget_state=CONSUMED"],
+        "retained": [
+            "evaluation_attempt_id",
+            "query_budget_state=CONSUMED",
+            "evaluation_deadline",
+        ],
         "invalidated": ["disclosure_state"],
         "party_local": [],
         "coordinator": ["normalized_timeout_status"],
@@ -1274,7 +1300,7 @@ STAGE_FIELD_POLICY = {
         "coordinator": ["normalized_failure_category", "cleanup_completed"],
         "selected_profile": ["cleanup_required"],
         "classification": "terminal-mutation",
-        "budget": "release-if-not-started",
+        "budget": "phase-dependent-abort",
         "transcript": True,
     },
 }
@@ -1600,7 +1626,12 @@ def _state(
     receipt: str | None,
     result_state: str | None,
     budget: str | None,
-    slots: list[str] | None = None,
+    contributions: list[str] | None = None,
+    acknowledgments: list[str] | None = None,
+    authoritative_time: str = "2026-07-21T00:00:00Z",
+    evaluation_deadline: str | None = None,
+    resource_policy_binding: str | None = None,
+    execution_authorization_digest: str | None = None,
 ) -> dict[str, Any]:
     return {
         "phase": phase,
@@ -1614,12 +1645,20 @@ def _state(
         "result_state": result_state,
         "query_budget_state": budget,
         "transcript_head": "sha256:" + "42" * 32,
-        "existing_party_slots": slots or [],
+        "completed_contribution_slots": contributions or [],
+        "receipt_acknowledgment_slots": acknowledgments or [],
+        "authoritative_time": authoritative_time,
+        "evaluation_deadline": evaluation_deadline,
+        "resource_policy_binding": resource_policy_binding,
+        "execution_authorization_digest": execution_authorization_digest,
     }
 
 
 def _expected_transition(
-    values: dict[str, Any], operation: str, party_slot: str | None
+    values: dict[str, Any],
+    operation: str,
+    party_slot: str | None,
+    initial_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     stage = _stage_entry(values, operation)
     transition_ids = stage["transition_ids"]
@@ -1635,7 +1674,7 @@ def _expected_transition(
         ]
     elif operation == "accept-profile-callback":
         transition_ids = ["TR-ACCEPT-SYMMETRIC-RESULT"]
-    initial = {
+    default_initial = {
         "register-component": None,
         "select-profile": "UNINITIALIZED",
         "reserve-query-budget": "PARTICIPANTS_BOUND",
@@ -1644,8 +1683,13 @@ def _expected_transition(
         "acknowledge-receipt": "EVALUATING",
         "accept-profile-callback": "EVALUATING",
         "evaluation-timeout": "EVALUATING",
-        "abort-and-cleanup": "CREATED",
+        "abort-and-cleanup": None,
     }[operation]
+    initial = (
+        initial_state["phase"]
+        if operation == "abort-and-cleanup" and initial_state is not None
+        else default_initial
+    )
     resulting = {
         "register-component": None,
         "select-profile": "CREATED",
@@ -1679,6 +1723,36 @@ def _expected_transition(
         if operation == "acknowledge-receipt"
         else "none"
     )
+    query_budget_effect = stage["query_budget_effect"]
+    if operation == "abort-and-cleanup":
+        _require(initial_state is not None, "PET-STAGE-PRESTATE")
+        transitions_by_id = {
+            item["id"]: item for item in values["state_machine"]["transitions"]
+        }
+        abort_sources = set(transitions_by_id["TR-ABORT"]["from_phase"])
+        start_phase = transitions_by_id["TR-START-EVALUATION"]["to_phase"]
+        reachable = {start_phase}
+        while True:
+            expanded = set(reachable)
+            for transition in values["state_machine"]["transitions"]:
+                if not (set(transition["from_phase"]) & reachable):
+                    continue
+                if transition["to_phase"] == "SAME":
+                    expanded.update(set(transition["from_phase"]) & reachable)
+                else:
+                    expanded.add(transition["to_phase"])
+            if expanded == reachable:
+                break
+            reachable = expanded
+        post_start_abort_sources = reachable & abort_sources
+        consumed = initial_state["query_budget_state"] == "CONSUMED"
+        _require(
+            consumed == (initial_state["phase"] in post_start_abort_sources),
+            "PET-QUERY-BUDGET",
+        )
+        query_budget_effect = (
+            "preserve-consumed" if consumed else "release-if-not-started"
+        )
     return {
         "initial_phase": initial,
         "accepted_transition_ids": transition_ids,
@@ -1686,7 +1760,7 @@ def _expected_transition(
         "fields_introduced": stage["fields_introduced"],
         "fields_retained_unchanged": stage["fields_retained_unchanged"],
         "fields_invalidated": stage["fields_invalidated"],
-        "query_budget_effect": stage["query_budget_effect"],
+        "query_budget_effect": query_budget_effect,
         "transcript_mutated": stage["transcript_mutated"],
         "runner_status": "pass",
         "protocol_outcome": outcome,
@@ -1716,6 +1790,7 @@ def operation_input_for_case(
     commitment = "sha256:" + "31" * 32
     attempt = "urn:private-match:test:evaluation:pet-profile:0001"
     receipt = "sha256:" + "76" * 32
+    resource_policy_binding = "sha256:" + "65" * 32
     authorization = _execution_authorization(profile, instance)
     context: dict[str, Any] = {
         "protocol_authority": _protocol_authority(values),
@@ -1814,7 +1889,7 @@ def operation_input_for_case(
             "evaluation_deadline": "2026-07-21T00:05:00Z",
             "verification_material_reference": "urn:private-match:test:material:profile:v0.1",
             "verification_material_digest": "sha256:" + "54" * 32,
-            "resource_policy_binding": "sha256:" + "65" * 32,
+            "resource_policy_binding": resource_policy_binding,
             "query_budget_before": "RESERVED",
             "query_budget_after": "CONSUMED",
             "execution_mode": "contract-fixture",
@@ -1826,17 +1901,21 @@ def operation_input_for_case(
         "accept-profile-callback",
         "evaluation-timeout",
     }:
-        prior_slots = []
+        contribution_slots: list[str] = []
+        acknowledgment_slots: list[str] = []
         state_receipt = None
         result_state = None
         if operation == "submit-contribution" and party_slot == "b":
-            prior_slots = ["party_a"]
+            contribution_slots = ["party_a"]
+        if operation == "acknowledge-receipt":
+            contribution_slots = ["party_a", "party_b"]
         if operation == "acknowledge-receipt" and party_slot == "b":
-            prior_slots = ["party_a"]
+            acknowledgment_slots = ["party_a"]
             state_receipt = receipt
             result_state = "PROPOSED"
         if operation == "accept-profile-callback":
-            prior_slots = ["party_a", "party_b"]
+            contribution_slots = ["party_a", "party_b"]
+            acknowledgment_slots = ["party_a", "party_b"]
             state_receipt = receipt
             result_state = "PROPOSED"
         context["initial_state"] = _state(
@@ -1849,12 +1928,23 @@ def operation_input_for_case(
             receipt=state_receipt,
             result_state=result_state,
             budget="CONSUMED",
-            slots=prior_slots,
+            contributions=contribution_slots,
+            acknowledgments=acknowledgment_slots,
+            authoritative_time=(
+                "2026-07-21T00:04:59Z"
+                if operation == "evaluation-timeout"
+                else "2026-07-21T00:00:30Z"
+            ),
+            evaluation_deadline="2026-07-21T00:05:00Z",
+            resource_policy_binding=resource_policy_binding,
+            execution_authorization_digest=authorization["authority_digest"],
         )
         if operation == "evaluation-timeout":
             presented = {
                 "operation": operation,
                 **_message_projection(values, operation),
+                "authoritative_time": "2026-07-21T00:04:59Z",
+                "evaluation_deadline": "2026-07-21T00:05:00Z",
                 "new_authoritative_time": "2026-07-21T00:05:00Z",
                 "normalized_failure_category": "EVALUATION_TIMEOUT",
             }
@@ -1906,19 +1996,26 @@ def operation_input_for_case(
                 "profile_evidence_ref": "urn:private-match:test:profile-evidence:both",
                 "verification_material_reference": "urn:private-match:test:material:profile:v0.1",
                 "verification_material_digest": "sha256:" + "54" * 32,
+                "resource_policy_binding": resource_policy_binding,
+                "execution_authorization_digest": authorization["authority_digest"],
                 "canonical_message_path": item["canonical_message_path"],
             }
     else:
         context["initial_state"] = _state(
-            "CREATED",
+            "EVALUATING",
             session=session,
             policy=(policy_id, policy_version),
-            participants=None,
-            commitment=None,
-            attempt=None,
+            participants=participant_digest,
+            commitment=commitment,
+            attempt=attempt,
             receipt=None,
             result_state=None,
-            budget=None,
+            budget="CONSUMED",
+            contributions=["party_a", "party_b"],
+            authoritative_time="2026-07-21T00:00:30Z",
+            evaluation_deadline="2026-07-21T00:05:00Z",
+            resource_policy_binding=resource_policy_binding,
+            execution_authorization_digest=authorization["authority_digest"],
         )
         presented = {
             "operation": operation,
@@ -1927,6 +2024,9 @@ def operation_input_for_case(
             "session_id": session,
             "policy_id": policy_id,
             "policy_version": policy_version,
+            "participant_binding_digest": participant_digest,
+            "commitment_pair_id": commitment,
+            "evaluation_attempt_id": attempt,
             "normalized_failure_category": "PARTIAL_PARTY_FAILURE",
             "cancellation_requested": True,
             "cleanup_completed": True,
@@ -1946,7 +2046,9 @@ def operation_input_for_case(
         "authoritative_context": context,
         "presented_operation": presented,
         "synthetic_conformance_observer": observer,
-        "expected_transition": _expected_transition(values, operation, party_slot),
+        "expected_transition": _expected_transition(
+            values, operation, party_slot, context["initial_state"]
+        ),
     }
 
 
@@ -2029,7 +2131,12 @@ def _expected_for_record(
     party_slot = record["presented_operation"].get("party_slot")
     if party_slot in {"party_a", "party_b"}:
         party_slot = party_slot.removeprefix("party_")
-    return _expected_transition(values, operation, party_slot)
+    return _expected_transition(
+        values,
+        operation,
+        party_slot,
+        record["authoritative_context"]["initial_state"],
+    )
 
 
 def validate_operation_input(
@@ -2120,6 +2227,10 @@ def validate_operation_input(
             or state_candidate.get("phase") not in expected_pre_phases
         ):
             raise PetProfileError("PET-STAGE-PRESTATE")
+        if operation == "acknowledge-receipt" and state_candidate.get(
+            "completed_contribution_slots"
+        ) != ["party_a", "party_b"]:
+            raise PetProfileError("PET-CONTRIBUTIONS-INCOMPLETE")
     _schema_validate(record, values["schemas"]["operation"], "operation-input")
     context = record["authoritative_context"]
     protocol = context["protocol_authority"]
@@ -2195,13 +2306,20 @@ def validate_operation_input(
             "PET-STAGE-POSTSTATE",
         )
         party_slot = presented.get("party_slot")
-        if operation in {"submit-contribution", "acknowledge-receipt"}:
+        if operation == "submit-contribution":
             required_prior_slots = [] if party_slot == "party_a" else ["party_a"]
             _require(
-                state["existing_party_slots"] == required_prior_slots,
+                state["completed_contribution_slots"] == required_prior_slots
+                and state["receipt_acknowledgment_slots"] == [],
                 "PET-STAGE-STATE-BINDING",
             )
         if operation == "acknowledge-receipt":
+            required_acknowledgments = [] if party_slot == "party_a" else ["party_a"]
+            _require(
+                state["completed_contribution_slots"] == ["party_a", "party_b"]
+                and state["receipt_acknowledgment_slots"] == required_acknowledgments,
+                "PET-CONTRIBUTIONS-INCOMPLETE",
+            )
             if party_slot == "party_a":
                 _require(
                     state["opaque_receipt_ref"] is None
@@ -2216,11 +2334,34 @@ def validate_operation_input(
                 )
         if operation == "accept-profile-callback":
             _require(
-                state["existing_party_slots"] == ["party_a", "party_b"]
+                state["completed_contribution_slots"] == ["party_a", "party_b"]
+                and state["receipt_acknowledgment_slots"] == ["party_a", "party_b"]
                 and state["opaque_receipt_ref"] == presented["opaque_receipt_ref"]
                 and state["result_state"] == "PROPOSED",
                 "PET-STAGE-STATE-BINDING",
             )
+            _require(
+                state["resource_policy_binding"] == presented["resource_policy_binding"]
+                and state["execution_authorization_digest"]
+                == presented["execution_authorization_digest"],
+                "PET-CALLBACK-AUTHORITY-BINDING",
+            )
+        if operation == "evaluation-timeout":
+            _require(
+                state["authoritative_time"] == presented["authoritative_time"]
+                and state["evaluation_deadline"] == presented["evaluation_deadline"],
+                "PET-EVALUATION-TIME-AUTHORITY",
+            )
+            try:
+                prior_time = parse_canonical_utc_timestamp(state["authoritative_time"])
+                deadline = parse_canonical_utc_timestamp(state["evaluation_deadline"])
+                new_time = parse_canonical_utc_timestamp(
+                    presented["new_authoritative_time"]
+                )
+            except ProtocolTimeError as error:
+                raise PetProfileError("PET-EVALUATION-TIME-AUTHORITY") from error
+            _require(new_time > prior_time, "PET-AUTHORITATIVE-TIME-ORDER")
+            _require(new_time >= deadline, "PET-EVALUATION-DEADLINE")
         for key in (
             "session_id",
             "policy_id",
@@ -2228,6 +2369,8 @@ def validate_operation_input(
             "participant_binding_digest",
             "commitment_pair_id",
             "evaluation_attempt_id",
+            "resource_policy_binding",
+            "execution_authorization_digest",
         ):
             if (
                 key in presented
@@ -2412,6 +2555,8 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
         "low-entropy-receipt",
         "wrong-callback-sender",
         "wrong-callback-verifier",
+        "callback-resource-policy-substitution",
+        "callback-execution-authority-substitution",
     }:
         record = callback
     elif mutation.startswith("tee-") or mutation.startswith("nitro-"):
@@ -2466,12 +2611,17 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
         record = operation_input_for_case(
             values, _case_for(values, "submit-contribution", party="a")
         )
-    elif mutation in {"other-party-result-in-ack"}:
+    elif mutation in {
+        "other-party-result-in-ack",
+        "receipt-ack-before-contributions",
+    }:
         record = operation_input_for_case(
             values, _case_for(values, "acknowledge-receipt", party="a")
         )
     elif mutation in {
         "timeout-with-new-result",
+        "timeout-before-deadline",
+        "timeout-nonincreasing-time",
         "incorrect-pre-phase",
         "incorrect-transition",
         "incorrect-post-phase",
@@ -2485,6 +2635,8 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
     elif mutation in {
         "abort-with-fabricated-result",
         "abort-ordinary-accepted",
+        "abort-consumed-budget-refund",
+        "abort-evaluating-unconsumed",
         "cancellation-without-cleanup",
         "unknown-error-category",
     }:
@@ -2562,6 +2714,11 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
         e["transcript_mutated"] = False
     elif mutation == "query-budget-effect-mismatch":
         e["query_budget_effect"] = "reserve"
+    elif mutation == "abort-consumed-budget-refund":
+        e["query_budget_effect"] = "release-if-not-started"
+    elif mutation == "abort-evaluating-unconsumed":
+        c["initial_state"]["query_budget_state"] = "RESERVED"
+        e["query_budget_effect"] = "release-if-not-started"
     elif mutation == "callback-session-mismatch":
         p["session_id"] = "other-session"
     elif mutation in {
@@ -2594,6 +2751,27 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
         p["profile_digest"] = "sha256:" + "9c" * 32
     elif mutation == "resource-policy-mismatch":
         p["resource_policy_binding"] = "sha256:" + "9d" * 32
+    elif mutation == "callback-resource-policy-substitution":
+        p["resource_policy_binding"] = "sha256:" + "a1" * 32
+    elif mutation == "callback-execution-authority-substitution":
+        p["execution_authorization_digest"] = "sha256:" + "a2" * 32
+    elif mutation == "timeout-before-deadline":
+        c["initial_state"]["authoritative_time"] = "2026-07-21T00:04:58Z"
+        p["authoritative_time"] = "2026-07-21T00:04:58Z"
+        c["expected_presented_operation"]["authoritative_time"] = p[
+            "authoritative_time"
+        ]
+        p["new_authoritative_time"] = "2026-07-21T00:04:59Z"
+        c["expected_presented_operation"]["new_authoritative_time"] = p[
+            "new_authoritative_time"
+        ]
+    elif mutation == "timeout-nonincreasing-time":
+        p["new_authoritative_time"] = p["authoritative_time"]
+        c["expected_presented_operation"]["new_authoritative_time"] = p[
+            "new_authoritative_time"
+        ]
+    elif mutation == "receipt-ack-before-contributions":
+        c["initial_state"]["completed_contribution_slots"] = ["party_a"]
     elif mutation == "missing-authoritative-context-field":
         c.pop("expected_presented_operation")
     elif mutation == "unknown-execution-mode":
@@ -2989,6 +3167,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         Path("scripts/generate_pet_profiles.py"),
         Path("scripts/validate_pet_profiles.py"),
         Path("scripts/canonicalize_message.py"),
+        Path("scripts/protocol_time.py"),
         Path("scripts/strict_yaml.py"),
         Path("tests/test_pet_profiles.py"),
         Path("requirements-build.txt"),

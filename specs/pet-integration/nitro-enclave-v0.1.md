@@ -23,6 +23,9 @@ matching rows, and the Coordinator cannot receive the plaintext result.
 The public callback likewise contains no Party plaintext decision. Offline
 contract conformance compares synthetic Party-local observations in a separate
 global-observer record that is prohibited from Product ports and Evidence.
+The callback repeats the resource-policy and execution-authorization digests
+fixed at evaluation start; an acknowledgment is unavailable until both Party
+contributions are complete.
 
 ## Limitations and approval
 

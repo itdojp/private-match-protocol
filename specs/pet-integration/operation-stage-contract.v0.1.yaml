@@ -254,6 +254,7 @@ operations:
   - policy_binding
   - commitment_pair_id
   - evaluation_attempt_id
+  - both_party_contributions
   fields_introduced:
   - party_slot_receipt_ack
   - opaque_receipt_ref
@@ -317,6 +318,8 @@ operations:
   - acknowledgment_status
   - profile_evidence_ref
   - verification_material
+  - resource_policy_binding
+  - execution_authorization_digest
   fields_required_none: []
   fields_prohibited_on_input:
   - party_local_result
@@ -328,6 +331,8 @@ operations:
   - commitment_pair_id
   - evaluation_attempt_id
   - query_budget_state=CONSUMED
+  - resource_policy_binding
+  - execution_authorization_digest
   fields_invalidated: []
   party_local_only_fields:
   - party_local_result
@@ -335,6 +340,8 @@ operations:
   - opaque_receipt_ref
   - acknowledgment_status
   - profile_evidence_ref
+  - resource_policy_binding
+  - execution_authorization_digest
   selected_profile_visible_fields:
   - synthetic_result_comparison
   transcript_participation: accepted-mutating-event
@@ -358,11 +365,15 @@ operations:
   - phase=EVALUATING
   - evaluation_attempt_id
   - query_budget_state=CONSUMED
+  - authoritative_time
+  - evaluation_deadline
   fields_introduced:
   - terminal_failure_code=EVALUATION_TIMEOUT
   - phase=ABORTED
   fields_required_on_input:
   - new_authoritative_time
+  - authoritative_time
+  - evaluation_deadline
   - prior_transcript_head
   fields_required_none: []
   fields_prohibited_on_input:
@@ -372,6 +383,7 @@ operations:
   fields_retained_unchanged:
   - evaluation_attempt_id
   - query_budget_state=CONSUMED
+  - evaluation_deadline
   fields_invalidated:
   - disclosure_state
   party_local_only_fields: []
@@ -431,9 +443,9 @@ operations:
   transcript_participation: accepted-mutating-event
   replay_idempotency_domain: (actor_id,operation_id) and independently (actor_id,idempotency_key)
   result_classification: terminal-mutation
-  query_budget_effect: release-if-not-started
+  query_budget_effect: phase-dependent-abort
   transcript_mutated: true
-stage_contract_digest: sha256:64e35de4d6b067ec2c06b64990bfccafe244e8524dd0a5422282236f8ad6506b
+stage_contract_digest: sha256:323e81aa8de6cd2db26ba9085492b4d4328ab13be37049bb0414cc46787e791c
 limitations:
 - This contract is a deterministic projection of the reviewed State Machine and Message Registry, not an independent State Machine.
 - Synthetic global-observer data is test-only and is not a Product or Coordinator input.
