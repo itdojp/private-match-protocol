@@ -46,6 +46,20 @@ monotonic authoritative-time advance that reaches the stored deadline. Generic
 abort uses every reviewed `TR-ABORT` source phase and preserves a consumed
 budget after evaluation starts.
 
+Because `TR-ACK-RECEIPT-A/B` are same-phase `EVALUATING` transitions, abort
+authority also derives an exact contribution and acknowledgment substate
+matrix. It distinguishes no acknowledgment, Party A only, Party B only, and
+both Parties rather than reducing acknowledgment state to a boolean. Empty
+acknowledgment slots bind to a null receipt and absent proposed-result state;
+each acknowledgment binds to both completed contributions, one common opaque
+receipt, a normalized per-Party acknowledgment authority, a domain-separated
+digest over the public profile-Evidence reference and exact
+session/profile/instance/attempt authority, and only a Party-local
+proposed-result presence marker. `TR-ABORT` retains those existing
+audit references because its reviewed effect does not write them. The validator
+rejects nullable or mixed-authority combinations that cannot be produced by the
+State Machine rather than treating the phase label as the complete state.
+
 Keep Party-local plaintext results outside the public presented operation.
 Synthetic conformance may use a separate domain-separated global observer to
 compare both Party-local decisions and their common receipt. The observer is

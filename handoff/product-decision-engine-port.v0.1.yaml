@@ -150,11 +150,11 @@ port_fields:
   - synthetic observer data
   - Coordinator plaintext result
 - field: pre-post-state-contract
-  public_semantic_meaning: Exact authoritative pre-phase, phase-specific TR-ABORT state shape, transition set, post-phase or effect, transcript mutation, query-budget disposition, cleanup state, and operation-specific outcome.
+  public_semantic_meaning: Exact authoritative pre-phase, phase- and acknowledgment-substate-specific TR-ABORT state shape, transition set, post-phase or effect, transcript mutation, query-budget disposition, cleanup state, and operation-specific outcome.
   requirement: required
   source_profile_field: operation_stage_contract.operations.expected_pre_phases
-  expected_product_port_behavior: validate the operation and every abort source phase against the existing State Machine and operation-stage projection before and after invocation without implementing a second State Machine
-  fail_closed_rule: reject impossible pre-phase or phase field, unrelated transition, incorrect post-phase, budget effect, transcript mutation, cleanup state, visibility, or flattened terminal outcome
+  expected_product_port_behavior: validate the operation, every abort source phase, and each EVALUATING contribution/Party-A/Party-B acknowledgment substate against the existing State Machine and operation-stage projection before and after invocation; bind each public profile-Evidence reference to the exact session/profile/instance/attempt authority with the reviewed domain-separated digest; preserve existing normalized acknowledgment, common opaque-receipt, and proposed-result-presence audit references across abort without implementing a second State Machine
+  fail_closed_rule: reject impossible pre-phase or phase field, boolean-collapsed or mixed acknowledgment authority, null or mismatched receipt, missing or cross-Party proposed-result presence, stale or unbound session/profile/instance/attempt/Evidence authority, early accepted result, unrelated transition, incorrect post-phase, budget effect, transcript mutation, cleanup state, visibility, or flattened terminal outcome
   prohibited_content:
   - independent State Machine
   - generic accepted terminal outcome
@@ -297,9 +297,9 @@ limitations:
 - The handoff defines public semantics, not private Product implementation structure.
 - Registration and contract-fixture validation are not candidate execution permission.
 - No match predicate, production adapter, authentication, cloud, or KMS selection is made.
-handoff_digest: sha256:78ec09f6ac288e12ef3708ad36e0fe9b43c4217a441562507d720bae17fce303
+handoff_digest: sha256:d9b649eb7198ee5165848c184c161b8dc84fe056757ace1a5aeb2e800fdf269a
 operation_stage_contract_path: specs/pet-integration/operation-stage-contract.v0.1.yaml
-operation_stage_contract_digest: sha256:f14ce77c1f5ad266bf3983243f384ef7df1ce4f8029fc0bfd77856a6433d7588
+operation_stage_contract_digest: sha256:730c6ad3584bcecef746185c6c1c032b0770058feeb2bc1737a61ebdb82a1ad4
 operation_stage_projection:
 - operation: register-component
   lifecycle_stage: registry-registration

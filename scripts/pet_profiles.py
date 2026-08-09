@@ -171,6 +171,9 @@ DOMAINS = {
     "case_results": b"private-match-pet-profile-executable-case-results/v0.1\x00",
     "stage": b"private-match-pet-operation-stage-contract/v0.1\x00",
     "observer": b"private-match-pet-synthetic-result-observer/v0.1\x00",
+    "acknowledgment_evidence": (
+        b"private-match-pet-acknowledgment-evidence-binding/v0.1\x00"
+    ),
     "execution_authorization": b"private-match-pet-execution-authorization/v0.1\x00",
     "index": b"private-match-pet-profile-index/v0.1\x00",
     "projection": b"private-match-product-handoff-projection/v0.1\x00",
@@ -1340,7 +1343,16 @@ STAGE_FIELD_POLICY = {
         "required": ["normalized_failure_category", "cleanup_completed"],
         "none": [],
         "prohibited": ["fabricated_result_state", "bilateral_result", "new_receipt"],
-        "retained": ["session_id", "policy_binding", "selected_profile"],
+        "retained": [
+            "session_id",
+            "policy_binding",
+            "selected_profile",
+            "evaluation_contribution",
+            "result_ack",
+            "opaque_receipt_ref",
+            "proposed_result_state",
+            "accepted_result_state",
+        ],
         "invalidated": ["disclosure_state"],
         "party_local": [],
         "coordinator": ["normalized_failure_category", "cleanup_completed"],
@@ -1519,6 +1531,9 @@ def expected_operation_stage_contract(values: dict[str, Any]) -> dict[str, Any]:
         "message_registry_digest": MESSAGE_REGISTRY_DIGEST,
         "operations": operations,
         "abort_phase_authority": _abort_phase_contract(values),
+        "evaluating_acknowledgment_substate_authority": (
+            _evaluating_acknowledgment_substate_contract(values)
+        ),
         "stage_contract_digest": "",
         "limitations": [
             "This contract is a deterministic projection of the reviewed State Machine and Message Registry, not an independent State Machine.",
@@ -1712,6 +1727,289 @@ ABORT_PHASE_ORDER = (
     "DISCLOSURE_AUTHORIZED",
 )
 
+EVALUATING_ACKNOWLEDGMENT_SUBSTATE_ORDER = (
+    "contributions-none",
+    "contribution-a-only",
+    "contribution-b-only",
+    "contributions-complete-no-ack",
+    "party-a-acknowledged",
+    "party-b-acknowledged",
+    "both-acknowledged",
+)
+
+
+def _transition_effect(transition: dict[str, Any], effect_id: str) -> dict[str, Any]:
+    effect = next(
+        (item for item in transition["effects"] if item["id"] == effect_id), None
+    )
+    _require(effect is not None, "PET-ABORT-PHASE-AUTHORITY")
+    return effect
+
+
+def _require_acknowledgment_substate_authority(
+    values: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Bind EVALUATING receipt/result substates to the reviewed ACK transitions."""
+
+    transitions = {item["id"]: item for item in values["state_machine"]["transitions"]}
+    authority: dict[str, dict[str, Any]] = {}
+    for transition_id, party in (
+        ("TR-SUBMIT-CONTRIBUTION-A", "A"),
+        ("TR-SUBMIT-CONTRIBUTION-B", "B"),
+    ):
+        transition = transitions.get(transition_id)
+        _require(
+            transition is not None
+            and transition["from_phase"] == ["EVALUATING"]
+            and transition["to_phase"] == "SAME"
+            and transition["actor"] == f"party_{party.lower()}_client",
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        contribution_effect = _transition_effect(transition, f"E-CONTRIBUTION-{party}")
+        _require(
+            contribution_effect["operation"] == "bind_once"
+            and contribution_effect["writes"] == ["evaluation_contribution"]
+            and f"G-CONTRIBUTION-{party}-EMPTY"
+            in {guard["id"] for guard in transition["guards"]},
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+    for transition_id, party in (
+        ("TR-ACK-RECEIPT-A", "A"),
+        ("TR-ACK-RECEIPT-B", "B"),
+    ):
+        transition = transitions.get(transition_id)
+        _require(
+            transition is not None
+            and transition["from_phase"] == ["EVALUATING"]
+            and transition["to_phase"] == "SAME",
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        _require(
+            "G-CONTRIBUTIONS-COMPLETE"
+            in {guard["id"] for guard in transition["guards"]},
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        guards = {guard["id"]: guard for guard in transition["guards"]}
+        opaque_guard = guards.get("G-OPAQUE-RECEIPT")
+        local_result_guard = guards.get(f"G-LOCAL-RESULT-{party}")
+        effect = _transition_effect(transition, f"E-ACK-RECEIPT-{party}")
+        _require(
+            effect["operation"] == "set_if_unset_or_equal"
+            and effect["writes"]
+            == ["result_ack", "opaque_receipt_ref", "proposed_result_state"],
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        _require(
+            opaque_guard is not None
+            and opaque_guard["predicate"] == "profile_opaque_reference"
+            and set(opaque_guard["parameter_reads"])
+            == {
+                "opaque_receipt_parameter.opaque_receipt_ref",
+                "opaque_receipt_parameter.acknowledgment_status",
+                "opaque_receipt_parameter.profile_evidence_ref",
+            }
+            and any(
+                "peer" in argument and "equals" in argument
+                for argument in opaque_guard["arguments"]
+            ),
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        _require(
+            local_result_guard is not None
+            and local_result_guard["predicate"] == "event_parameter_one_of"
+            and local_result_guard["reads"] == ["proposed_result_state"]
+            and local_result_guard["parameter_reads"]
+            == ["local_result_parameter.local_result"],
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        coordinator_visibility = next(
+            (
+                item["data"]
+                for item in transition["visibility"]
+                if item["actor"] == "coordinator"
+            ),
+            None,
+        )
+        _require(
+            coordinator_visibility
+            == [
+                "opaque_receipt_ref",
+                "normalized_ack_status",
+            ]
+            and all(
+                "local result" not in field and "local-result" not in field
+                for field in coordinator_visibility
+            ),
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        authority[f"party_{party.lower()}"] = transition
+
+    accept = transitions.get("TR-ACCEPT-SYMMETRIC-RESULT")
+    start = transitions.get("TR-START-EVALUATION")
+    abort = transitions.get("TR-ABORT")
+    _require(
+        accept is not None
+        and accept["from_phase"] == ["EVALUATING"]
+        and accept["to_phase"] == "RESULT_ACCEPTED"
+        and "accepted_result_state"
+        in _transition_effect(accept, "E-ACCEPT-RESULT")["writes"],
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    _require(
+        start is not None
+        and start["to_phase"] == "EVALUATING"
+        and "query_budget_state"
+        in {field for effect in start["effects"] for field in effect.get("writes", [])},
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    _require(abort is not None, "PET-ABORT-PHASE-AUTHORITY")
+    abort_writes = {
+        field for effect in abort["effects"] for field in effect.get("writes", [])
+    }
+    _require(
+        not abort_writes
+        & {
+            "evaluation_contribution",
+            "result_ack",
+            "opaque_receipt_ref",
+            "proposed_result_state",
+            "accepted_result_state",
+        },
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    return authority
+
+
+def _evaluating_acknowledgment_substate_contract(
+    values: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Derive all reachable EVALUATING contribution/acknowledgment substates."""
+
+    _require_acknowledgment_substate_authority(values)
+    rows = (
+        ("contributions-none", [], []),
+        ("contribution-a-only", ["party_a"], []),
+        ("contribution-b-only", ["party_b"], []),
+        ("contributions-complete-no-ack", ["party_a", "party_b"], []),
+        ("party-a-acknowledged", ["party_a", "party_b"], ["party_a"]),
+        ("party-b-acknowledged", ["party_a", "party_b"], ["party_b"]),
+        (
+            "both-acknowledged",
+            ["party_a", "party_b"],
+            ["party_a", "party_b"],
+        ),
+    )
+    result = []
+    for substate_id, contributions, acknowledgments in rows:
+        presence = {
+            party: "present" if party in acknowledgments else "none"
+            for party in ("party_a", "party_b")
+        }
+        result.append(
+            {
+                "substate_id": substate_id,
+                "completed_contribution_slots": contributions,
+                "receipt_acknowledgment_slots": acknowledgments,
+                "result_acknowledgment_presence": presence,
+                "opaque_receipt_state": (
+                    "common-present" if acknowledgments else "none"
+                ),
+                "proposed_result_presence": presence,
+                "accepted_result_presence": {
+                    "party_a": "none",
+                    "party_b": "none",
+                },
+                "profile_evidence_presence": presence,
+                "binding_context_fields": [
+                    "session_id",
+                    "profile_id",
+                    "profile_version",
+                    "profile_instance_id",
+                    "evaluation_attempt_id",
+                    "profile_evidence_ref",
+                    "profile_evidence_binding_digest",
+                ],
+                "query_budget_state": "CONSUMED",
+                "transcript_state": "retained-then-abort-appended",
+                "abort_cleanup_effect": "required",
+                "fields_retained_for_audit": [
+                    "evaluation_contribution",
+                    "result_ack",
+                    "opaque_receipt_ref",
+                    "proposed_result_state",
+                    "accepted_result_state",
+                ],
+                "fields_invalidated_for_future_mutation": [
+                    "disclosure_state",
+                    "live_session_mutation",
+                ],
+                "coordinator_visible_fields": [
+                    "opaque_receipt_ref",
+                    "normalized_ack_status",
+                ],
+                "party_local_only_fields": [
+                    "proposed_result_state",
+                    "local_result_binding",
+                ],
+            }
+        )
+    _require(
+        tuple(item["substate_id"] for item in result)
+        == EVALUATING_ACKNOWLEDGMENT_SUBSTATE_ORDER,
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    return result
+
+
+def _fixture_acknowledgment_binding(
+    party: str,
+    *,
+    receipt: str,
+    session: str,
+    attempt: str,
+    profile_authority: dict[str, Any],
+) -> dict[str, Any]:
+    """Return only Coordinator-visible normalized ACK authority.
+
+    The Party-local proposed result value is deliberately represented by a
+    separate presence bit in the synthetic abort-state projection.  It never
+    crosses this public authority boundary.
+    """
+    suffix = party.removeprefix("party_")
+    binding = {
+        "normalized_acknowledgment_status": "ACKNOWLEDGED",
+        "opaque_receipt_ref": receipt,
+        "profile_evidence_ref": f"urn:private-match:test:profile-evidence:{suffix}",
+        "session_id": session,
+        "profile_id": profile_authority["profile_id"],
+        "profile_version": profile_authority["profile_version"],
+        "profile_instance_id": profile_authority["profile_instance_id"],
+        "evaluation_attempt_id": attempt,
+    }
+    binding["profile_evidence_binding_digest"] = _acknowledgment_evidence_digest(
+        binding
+    )
+    return binding
+
+
+def _acknowledgment_evidence_digest(binding: dict[str, Any]) -> str:
+    """Bind a public Evidence reference to its exact ACK authority context."""
+
+    projection = {
+        key: binding[key]
+        for key in (
+            "profile_evidence_ref",
+            "session_id",
+            "profile_id",
+            "profile_version",
+            "profile_instance_id",
+            "evaluation_attempt_id",
+        )
+    }
+    return sha256_bytes(
+        DOMAINS["acknowledgment_evidence"] + _canonical_json(projection)
+    )
+
 
 def _abort_phase_projection(
     values: dict[str, Any],
@@ -1725,9 +2023,12 @@ def _abort_phase_projection(
     receipt: str,
     resource_policy_binding: str,
     execution_authorization_digest: str,
+    profile_authority: dict[str, Any],
+    acknowledgment_substate: str | None,
 ) -> dict[str, Any]:
     """Project the exact pre-abort state from the reviewed TR-ABORT phases."""
 
+    _require_acknowledgment_substate_authority(values)
     abort = next(
         item
         for item in values["state_machine"]["transitions"]
@@ -1742,6 +2043,56 @@ def _abort_phase_projection(
     commitment_value = commitment if rank >= 3 else None
     evaluation_available = rank >= 4
     result_available = rank >= 5
+    substate_rows = {
+        item["substate_id"]: item
+        for item in _evaluating_acknowledgment_substate_contract(values)
+    }
+    if phase == "EVALUATING":
+        _require(
+            acknowledgment_substate in substate_rows,
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        substate = substate_rows[acknowledgment_substate]
+        evaluating_contributions = substate["completed_contribution_slots"]
+        evaluating_acknowledgments = substate["receipt_acknowledgment_slots"]
+    else:
+        _require(acknowledgment_substate is None, "PET-ABORT-PHASE-AUTHORITY")
+        substate = None
+        evaluating_contributions = []
+        evaluating_acknowledgments = []
+    receipt_available = result_available or bool(evaluating_acknowledgments)
+    acknowledgment_slots = (
+        ["party_a", "party_b"] if result_available else evaluating_acknowledgments
+    )
+    contribution_slots = (
+        ["party_a", "party_b"]
+        if result_available
+        else evaluating_contributions
+        if phase == "EVALUATING"
+        else []
+    )
+    acknowledgment_bindings = {
+        party: (
+            _fixture_acknowledgment_binding(
+                party,
+                receipt=receipt,
+                session=session,
+                attempt=attempt,
+                profile_authority=profile_authority,
+            )
+            if party in acknowledgment_slots
+            else None
+        )
+        for party in ("party_a", "party_b")
+    }
+    proposed_presence = {
+        party: "PRESENT" if party in acknowledgment_slots else "NONE"
+        for party in ("party_a", "party_b")
+    }
+    accepted_presence = {
+        party: "PRESENT" if result_available else "NONE"
+        for party in ("party_a", "party_b")
+    }
     state = _state(
         phase,
         session=session,
@@ -1749,11 +2100,17 @@ def _abort_phase_projection(
         participants=participant_value,
         commitment=commitment_value,
         attempt=attempt if evaluation_available else None,
-        receipt=receipt if result_available else None,
-        result_state="ACCEPTED" if result_available else None,
+        receipt=receipt if receipt_available else None,
+        result_state=(
+            "ACCEPTED"
+            if result_available
+            else "PROPOSED"
+            if evaluating_acknowledgments
+            else None
+        ),
         budget=("NONE" if rank <= 1 else "RESERVED" if rank < 4 else "CONSUMED"),
-        contributions=["party_a", "party_b"] if evaluation_available else [],
-        acknowledgments=["party_a", "party_b"] if result_available else [],
+        contributions=contribution_slots,
+        acknowledgments=acknowledgment_slots,
         authoritative_time=(
             "2026-07-21T00:00:30Z" if evaluation_available else "2026-07-21T00:00:00Z"
         ),
@@ -1778,6 +2135,12 @@ def _abort_phase_projection(
                 "AUTHORIZED" if phase == "DISCLOSURE_AUTHORIZED" else "NONE"
             ),
             "cleanup_state": "NOT_STARTED",
+            "acknowledgment_substate_id": (
+                acknowledgment_substate if phase == "EVALUATING" else "not-applicable"
+            ),
+            "result_acknowledgment_bindings": acknowledgment_bindings,
+            "proposed_result_presence": proposed_presence,
+            "accepted_result_presence": accepted_presence,
         }
     )
     return state
@@ -1786,6 +2149,7 @@ def _abort_phase_projection(
 def _abort_phase_contract(values: dict[str, Any]) -> list[dict[str, Any]]:
     """Machine-readable phase matrix derived from the reviewed abort transition."""
 
+    _require_acknowledgment_substate_authority(values)
     abort = next(
         item
         for item in values["state_machine"]["transitions"]
@@ -1821,8 +2185,20 @@ def _abort_phase_contract(values: dict[str, Any]) -> list[dict[str, Any]]:
                     if rank >= 5
                     else "empty"
                 ),
-                "receipt_state": "accepted" if rank >= 5 else "none",
-                "result_state": "accepted" if rank >= 5 else "none",
+                "receipt_state": (
+                    "accepted"
+                    if rank >= 5
+                    else "present-iff-acknowledgment"
+                    if phase == "EVALUATING"
+                    else "none"
+                ),
+                "result_state": (
+                    "accepted"
+                    if rank >= 5
+                    else "proposed-iff-acknowledgment"
+                    if phase == "EVALUATING"
+                    else "none"
+                ),
                 "consent_state": (
                     "pending"
                     if phase == "CONSENT_PENDING"
@@ -1847,9 +2223,42 @@ def _abort_phase_contract(values: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
+def _require_abort_confidentiality(observed: dict[str, Any]) -> None:
+    forbidden_keys = {
+        "local_result",
+        "party_local_result",
+        "plaintext_result",
+        "result_value",
+        "exact_count",
+        "matching_element",
+        "private_input",
+        "raw_grant",
+        "credential",
+    }
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            _require(
+                not (set(value) & forbidden_keys),
+                "PET-PUBLIC-RESULT-EXPOSURE",
+            )
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+        elif isinstance(value, str):
+            _require(value not in PROTOCOL_OUTPUTS, "PET-PUBLIC-RESULT-EXPOSURE")
+
+    walk(observed)
+
+
 def _validate_abort_phase_state(
-    values: dict[str, Any], observed: dict[str, Any]
+    values: dict[str, Any],
+    observed: dict[str, Any],
+    profile_authority: dict[str, Any],
 ) -> None:
+    _require_abort_confidentiality(observed)
     phase = observed.get("phase", "")
     _require(phase in ABORT_PHASE_ORDER, "PET-ABORT-PHASE-AUTHORITY")
     authority = next(
@@ -1889,17 +2298,121 @@ def _validate_abort_phase_state(
             "party_a",
             "party_b",
         ]
+    substate = None
+    if phase == "EVALUATING":
+        substate = next(
+            (
+                item
+                for item in _evaluating_acknowledgment_substate_contract(values)
+                if item["substate_id"] == observed.get("acknowledgment_substate_id")
+            ),
+            None,
+        )
+        _require(
+            substate is not None
+            and contributions == substate["completed_contribution_slots"]
+            and acknowledgments == substate["receipt_acknowledgment_slots"],
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+    else:
+        _require(
+            observed.get("acknowledgment_substate_id") == "not-applicable",
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+    receipt_expected = authority["receipt_state"] == "accepted" or bool(acknowledgments)
+    result_expected = (
+        "ACCEPTED"
+        if authority["result_state"] == "accepted"
+        else "PROPOSED"
+        if authority["result_state"] == "proposed-iff-acknowledgment"
+        and bool(acknowledgments)
+        else None
+    )
+    _require(slots_valid, "PET-ABORT-PHASE-AUTHORITY")
     _require(
-        slots_valid
-        and (observed.get("opaque_receipt_ref") is not None)
-        == (authority["receipt_state"] == "accepted")
-        and observed.get("result_state")
-        == ("ACCEPTED" if authority["result_state"] == "accepted" else None)
+        (observed.get("opaque_receipt_ref") is not None) == receipt_expected,
+        (
+            "PET-RECEIPT-BINDING"
+            if phase == "EVALUATING"
+            else "PET-ABORT-PHASE-AUTHORITY"
+        ),
+    )
+    _require(
+        observed.get("result_state") == result_expected
         and observed.get("consent_state") == authority["consent_state"].upper()
         and observed.get("disclosure_state") == authority["disclosure_state"].upper()
         and observed.get("cleanup_state") == authority["cleanup_state_before"],
         "PET-ABORT-PHASE-AUTHORITY",
     )
+    expected_proposed = {
+        party: "PRESENT" if party in acknowledgments else "NONE"
+        for party in ("party_a", "party_b")
+    }
+    expected_accepted = {
+        party: "PRESENT" if authority["result_state"] == "accepted" else "NONE"
+        for party in ("party_a", "party_b")
+    }
+    _require(
+        observed.get("proposed_result_presence") == expected_proposed
+        and observed.get("accepted_result_presence") == expected_accepted,
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    bindings = observed.get("result_acknowledgment_bindings")
+    _require(
+        isinstance(bindings, dict) and set(bindings) == {"party_a", "party_b"},
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    for party in ("party_a", "party_b"):
+        binding = bindings[party]
+        if party not in acknowledgments:
+            _require(binding is None, "PET-ABORT-PHASE-AUTHORITY")
+            continue
+        _require(isinstance(binding, dict), "PET-ABORT-PHASE-AUTHORITY")
+        _require(
+            binding.get("opaque_receipt_ref") == observed.get("opaque_receipt_ref"),
+            "PET-RECEIPT-BINDING",
+        )
+        _require(
+            binding.get("normalized_acknowledgment_status") == "ACKNOWLEDGED",
+            "PET-CALLBACK-BINDING",
+        )
+        _require(
+            binding.get("session_id") == observed["session_id"],
+            "PET-SESSION-BINDING",
+        )
+        _require(
+            binding.get("profile_id") == profile_authority["profile_id"],
+            "PET-CROSS-PROFILE",
+        )
+        _require(
+            binding.get("profile_version") == profile_authority["profile_version"],
+            "PET-PROFILE-VERSION",
+        )
+        _require(
+            binding.get("profile_instance_id")
+            == profile_authority["profile_instance_id"],
+            "PET-PROFILE-INSTANCE",
+        )
+        _require(
+            binding.get("evaluation_attempt_id") == observed["evaluation_attempt_id"],
+            "PET-EVALUATION-ATTEMPT",
+        )
+        _require(
+            isinstance(binding.get("profile_evidence_ref"), str)
+            and bool(binding["profile_evidence_ref"])
+            and binding.get("profile_evidence_binding_digest")
+            == _acknowledgment_evidence_digest(binding),
+            "PET-CALLBACK-BINDING",
+        )
+    if substate is not None:
+        _require(
+            {
+                party: "present" if bindings[party] is not None else "none"
+                for party in ("party_a", "party_b")
+            }
+            == substate["result_acknowledgment_presence"],
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
 
 
 def _expected_transition(
@@ -2005,9 +2518,11 @@ def _expected_transition(
         "initial_phase": initial,
         "accepted_transition_ids": transition_ids,
         "resulting_phase": resulting,
-        "fields_introduced": stage["fields_introduced"],
-        "fields_retained_unchanged": stage["fields_retained_unchanged"],
-        "fields_invalidated": stage["fields_invalidated"],
+        # Copy list-valued authority so a synthetic mutation cannot rewrite
+        # the loaded stage contract through a shared reference.
+        "fields_introduced": list(stage["fields_introduced"]),
+        "fields_retained_unchanged": list(stage["fields_retained_unchanged"]),
+        "fields_invalidated": list(stage["fields_invalidated"]),
         "query_budget_effect": query_budget_effect,
         "transcript_mutated": stage["transcript_mutated"],
         "runner_status": "pass",
@@ -2260,6 +2775,8 @@ def operation_input_for_case(
             receipt=receipt,
             resource_policy_binding=resource_policy_binding,
             execution_authorization_digest=authorization["authority_digest"],
+            profile_authority=pa,
+            acknowledgment_substate=item.get("abort_acknowledgment_substate"),
         )
         presented = {
             "operation": operation,
@@ -2488,7 +3005,11 @@ def validate_operation_input(
         ) != ["party_a", "party_b"]:
             raise PetProfileError("PET-CONTRIBUTIONS-INCOMPLETE")
         if operation == "abort-and-cleanup":
-            _validate_abort_phase_state(values, state_candidate)
+            _validate_abort_phase_state(
+                values,
+                state_candidate,
+                context_candidate.get("profile_authority", {}),
+            )
     _schema_validate(record, values["schemas"]["operation"], "operation-input")
     context = record["authoritative_context"]
     protocol = context["protocol_authority"]
@@ -2609,7 +3130,7 @@ def validate_operation_input(
                 "PET-EXECUTION-AUTHORIZATION-BINDING",
             )
         if operation == "abort-and-cleanup":
-            _validate_abort_phase_state(values, state)
+            _validate_abort_phase_state(values, state, context["profile_authority"])
         if operation == "evaluation-timeout":
             _require(
                 state["authoritative_time"] == presented["authoritative_time"]
@@ -2802,6 +3323,29 @@ STAGE_INVALID_CASE_CODES = {
     "abort-created-consumed-budget": "PET-QUERY-BUDGET",
     "abort-wrong-terminal-phase": "PET-STATE-TRANSITION-PARITY",
     "abort-redigested-impossible-state": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-ack-missing-receipt": "PET-RECEIPT-BINDING",
+    "abort-evaluating-ack-missing-proposed-result": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-unacknowledged-future-receipt": "PET-RECEIPT-BINDING",
+    "abort-evaluating-ack-a-null-receipt": "PET-RECEIPT-BINDING",
+    "abort-evaluating-ack-b-null-receipt": "PET-RECEIPT-BINDING",
+    "abort-evaluating-ack-a-missing-proposed-result": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-ack-b-missing-proposed-result": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-proposed-without-ack": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-party-receipt-mismatch": "PET-RECEIPT-BINDING",
+    "abort-evaluating-ack-status-mismatch": "PET-CALLBACK-BINDING",
+    "abort-evaluating-profile-evidence-mismatch": "PET-CALLBACK-BINDING",
+    "abort-evaluating-ack-before-bilateral-contribution": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-accepted-result-before-transition": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-accepted-result-conflict": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-receipt-authority-mismatch": "PET-RECEIPT-BINDING",
+    "abort-evaluating-clears-acknowledged-receipt": "PET-STATE-TRANSITION-PARITY",
+    "abort-evaluating-rewrites-proposed-result": "PET-STATE-TRANSITION-PARITY",
+    "abort-evaluating-exposes-party-result": "PET-PUBLIC-RESULT-EXPOSURE",
+    "abort-evaluating-redigested-impossible-ack-substate": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-other-party-proposed-result": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-stale-ack-session": "PET-SESSION-BINDING",
+    "abort-evaluating-stale-ack-profile": "PET-CROSS-PROFILE",
+    "abort-evaluating-stale-ack-attempt": "PET-EVALUATION-ATTEMPT",
 }
 INVALID_CASE_CODES = {**INVALID_CASE_CODES, **STAGE_INVALID_CASE_CODES}
 
@@ -2811,6 +3355,7 @@ def _case_for(
     operation: str,
     profile: str | None = None,
     party: str | None = None,
+    abort_substate: str | None = None,
 ) -> dict[str, Any]:
     return next(
         item
@@ -2818,6 +3363,10 @@ def _case_for(
         if item["operation"] == operation
         and (profile is None or item["profile_id"] == profile)
         and (party is None or item.get("party_slot") == party)
+        and (
+            abort_substate is None
+            or item.get("abort_acknowledgment_substate") == abort_substate
+        )
     )
 
 
@@ -2844,10 +3393,57 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
         "abort-created-result-inconsistent": "CREATED",
         "abort-created-consumed-budget": "CREATED",
         "abort-redigested-impossible-state": "CREATED",
+        "abort-evaluating-ack-missing-receipt": "EVALUATING",
+        "abort-evaluating-ack-missing-proposed-result": "EVALUATING",
+        "abort-evaluating-unacknowledged-future-receipt": "EVALUATING",
+        "abort-evaluating-ack-a-null-receipt": "EVALUATING",
+        "abort-evaluating-ack-b-null-receipt": "EVALUATING",
+        "abort-evaluating-ack-a-missing-proposed-result": "EVALUATING",
+        "abort-evaluating-ack-b-missing-proposed-result": "EVALUATING",
+        "abort-evaluating-proposed-without-ack": "EVALUATING",
+        "abort-evaluating-party-receipt-mismatch": "EVALUATING",
+        "abort-evaluating-ack-status-mismatch": "EVALUATING",
+        "abort-evaluating-profile-evidence-mismatch": "EVALUATING",
+        "abort-evaluating-ack-before-bilateral-contribution": "EVALUATING",
+        "abort-evaluating-accepted-result-before-transition": "EVALUATING",
+        "abort-evaluating-accepted-result-conflict": "EVALUATING",
+        "abort-evaluating-receipt-authority-mismatch": "EVALUATING",
+        "abort-evaluating-clears-acknowledged-receipt": "EVALUATING",
+        "abort-evaluating-rewrites-proposed-result": "EVALUATING",
+        "abort-evaluating-exposes-party-result": "EVALUATING",
+        "abort-evaluating-redigested-impossible-ack-substate": "EVALUATING",
+        "abort-evaluating-other-party-proposed-result": "EVALUATING",
+        "abort-evaluating-stale-ack-session": "EVALUATING",
+        "abort-evaluating-stale-ack-profile": "EVALUATING",
+        "abort-evaluating-stale-ack-attempt": "EVALUATING",
     }
     if mutation in abort_phase_mutations:
-        abort_case = copy.deepcopy(_case_for(values, "abort-and-cleanup"))
+        substate_by_mutation = {
+            "abort-evaluating-unacknowledged-future-receipt": "contributions-complete-no-ack",
+            "abort-evaluating-proposed-without-ack": "contributions-complete-no-ack",
+            "abort-evaluating-ack-before-bilateral-contribution": "party-a-acknowledged",
+            "abort-evaluating-ack-a-null-receipt": "party-a-acknowledged",
+            "abort-evaluating-ack-a-missing-proposed-result": "party-a-acknowledged",
+            "abort-evaluating-other-party-proposed-result": "party-a-acknowledged",
+            "abort-evaluating-ack-b-null-receipt": "party-b-acknowledged",
+            "abort-evaluating-ack-b-missing-proposed-result": "party-b-acknowledged",
+        }
+        substate = substate_by_mutation.get(mutation, "both-acknowledged")
+        abort_case = copy.deepcopy(
+            _case_for(
+                values,
+                "abort-and-cleanup",
+                abort_substate=(
+                    substate
+                    if abort_phase_mutations[mutation] == "EVALUATING"
+                    else None
+                ),
+            )
+        )
         abort_case["abort_source_phase"] = abort_phase_mutations[mutation]
+        abort_case["abort_acknowledgment_substate"] = (
+            substate if abort_phase_mutations[mutation] == "EVALUATING" else None
+        )
         record = operation_input_for_case(values, abort_case)
     elif mutation in {
         "unknown-symmetric-decision",
@@ -3076,6 +3672,74 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
     elif mutation == "abort-redigested-impossible-state":
         c["initial_state"]["evaluation_attempt_id"] = "redigested-future-attempt"
         c["expected_presented_operation"] = copy.deepcopy(p)
+    elif mutation == "abort-evaluating-ack-missing-receipt":
+        c["initial_state"]["opaque_receipt_ref"] = None
+    elif mutation == "abort-evaluating-ack-missing-proposed-result":
+        c["initial_state"]["result_state"] = None
+    elif mutation == "abort-evaluating-unacknowledged-future-receipt":
+        c["initial_state"]["opaque_receipt_ref"] = "sha256:" + "a8" * 32
+    elif mutation in {
+        "abort-evaluating-ack-a-null-receipt",
+        "abort-evaluating-ack-b-null-receipt",
+    }:
+        c["initial_state"]["opaque_receipt_ref"] = None
+    elif mutation == "abort-evaluating-ack-a-missing-proposed-result":
+        c["initial_state"]["proposed_result_presence"]["party_a"] = "NONE"
+    elif mutation == "abort-evaluating-ack-b-missing-proposed-result":
+        c["initial_state"]["proposed_result_presence"]["party_b"] = "NONE"
+    elif mutation == "abort-evaluating-proposed-without-ack":
+        c["initial_state"]["proposed_result_presence"]["party_a"] = "PRESENT"
+    elif mutation == "abort-evaluating-party-receipt-mismatch":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_b"][
+            "opaque_receipt_ref"
+        ] = "sha256:" + "a9" * 32
+    elif mutation == "abort-evaluating-ack-status-mismatch":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "normalized_acknowledgment_status"
+        ] = "REJECTED"
+    elif mutation == "abort-evaluating-profile-evidence-mismatch":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "profile_evidence_ref"
+        ] = "urn:private-match:test:profile-evidence:other"
+    elif mutation == "abort-evaluating-ack-before-bilateral-contribution":
+        c["initial_state"]["completed_contribution_slots"] = ["party_a"]
+    elif mutation == "abort-evaluating-accepted-result-before-transition":
+        c["initial_state"]["accepted_result_presence"]["party_a"] = "PRESENT"
+    elif mutation == "abort-evaluating-accepted-result-conflict":
+        c["initial_state"]["result_state"] = "ACCEPTED"
+        c["initial_state"]["accepted_result_presence"] = {
+            "party_a": "PRESENT",
+            "party_b": "PRESENT",
+        }
+    elif mutation == "abort-evaluating-receipt-authority-mismatch":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "opaque_receipt_ref"
+        ] = "sha256:" + "aa" * 32
+    elif mutation == "abort-evaluating-clears-acknowledged-receipt":
+        e["fields_retained_unchanged"].remove("opaque_receipt_ref")
+    elif mutation == "abort-evaluating-rewrites-proposed-result":
+        e["fields_retained_unchanged"].remove("proposed_result_state")
+    elif mutation == "abort-evaluating-exposes-party-result":
+        c["initial_state"]["party_local_result"] = "MATCH"
+    elif mutation == "abort-evaluating-redigested-impossible-ack-substate":
+        c["initial_state"]["acknowledgment_substate_id"] = (
+            "contributions-complete-no-ack"
+        )
+        c["expected_presented_operation"] = copy.deepcopy(p)
+    elif mutation == "abort-evaluating-other-party-proposed-result":
+        c["initial_state"]["proposed_result_presence"]["party_b"] = "PRESENT"
+    elif mutation == "abort-evaluating-stale-ack-session":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "session_id"
+        ] = "urn:private-match:test:session:stale"
+    elif mutation == "abort-evaluating-stale-ack-profile":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "profile_id"
+        ] = "private-match-experimental-nitro-enclave"
+    elif mutation == "abort-evaluating-stale-ack-attempt":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "evaluation_attempt_id"
+        ] = "urn:private-match:test:evaluation:stale"
     elif mutation == "abort-wrong-terminal-phase":
         e["resulting_phase"] = "CLOSED"
     elif mutation == "callback-session-mismatch":

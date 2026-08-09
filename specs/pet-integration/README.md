@@ -54,6 +54,19 @@ timeout compares an explicit new authoritative time with both the prior
 authoritative time and the stored evaluation deadline. Generic abort accepts
 every source phase listed by `TR-ABORT`; a consumed query budget remains
 consumed, while a reservation is released only when evaluation has not started.
+Within `EVALUATING`, the abort authority also follows a closed seven-row
+contribution/receipt-acknowledgment matrix. Its acknowledgment-complete rows
+distinguish no acknowledgment, Party A only, Party B only, and both Parties;
+they do not collapse those states into a boolean. No acknowledgment requires a
+null receipt and no proposed-result presence. Each acknowledgment requires both
+completed contributions, the common opaque receipt, the corresponding
+normalized acknowledgment binding, a domain-separated digest binding its
+public profile-Evidence reference to the exact session/profile/instance/attempt
+authority, and only a Party-local proposed-result **presence** marker. This
+preserves state introduced atomically by
+`TR-ACK-RECEIPT-A/B` even though those transitions keep the phase unchanged.
+`TR-ABORT` retains those receipt and proposed-result audit references because
+its reviewed effects do not write or clear them.
 
 ## Minimum result and private boundary
 
@@ -125,7 +138,15 @@ The operation-stage contract contains a closed matrix for all eight
 resource-policy, authorization, contribution, acknowledgment, receipt, result,
 consent, disclosure, query-budget, transcript, and cleanup state are checked as
 one phase-specific authority. Future state, omitted prior state, and arbitrary
-nullable combinations fail closed.
+nullable combinations fail closed. In particular, the `EVALUATING` substate
+rows bind per-Party normalized acknowledgment authority, a common receipt, and
+per-Party proposed-result presence to the exact acknowledgment-slot set. An
+acknowledgment with a null receipt or missing corresponding proposed-result
+presence, an unacknowledged state with future receipt/result state, mixed
+receipts, stale session/profile/attempt authority, or result acceptance before
+`TR-ACCEPT-SYMMETRIC-RESULT` is rejected. Party-local plaintext values are not
+included in the abort projection, Product handoff, Coordinator state, or
+Evidence hooks.
 
 `config/pet-profile-error-codes.v0.1.json` is the closed bounded error-code
 authority. Automated parity checks cover runtime emissions, mutation

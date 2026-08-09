@@ -1,1 +1,443 @@
-{"$id":"https://github.com/itdojp/private-match-protocol/raw/main/schema/pet-profile-conformance-cases.v0.1.schema.json","$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"$schema":{"const":"https://json-schema.org/draft/2020-12/schema"},"artifact_status":{"const":"experimental"},"candidate_execution":{"const":false},"catalog_digest":{"pattern":"^sha256:[0-9a-f]{64}$","type":"string"},"catalog_id":{"const":"private-match-pet-profile-conformance-cases"},"invalid_cases":{"items":{"additionalProperties":false,"properties":{"case_id":{"maxLength":2048,"minLength":1,"type":"string"},"expected_error":{"enum":["PET-ABORT-PHASE-AUTHORITY","PET-AUTHORITATIVE-CONTEXT-MISSING","PET-AUTHORITATIVE-TIME-ORDER","PET-BINDING-DUPLICATE-ALIAS","PET-CANCELLATION-CLEANUP","PET-CANDIDATE-EXECUTION-UNAUTHORIZED","PET-CANONICAL-MESSAGE-INVALID","PET-CASE-NOT-EXECUTED","PET-COMMITMENT-BINDING","PET-COMPONENT-AS-COMPLETE","PET-CONTRIBUTIONS-INCOMPLETE","PET-COORDINATOR-PLAINTEXT","PET-CROSS-PROFILE","PET-DECISION-POLICY","PET-DECISION-UNKNOWN","PET-EVALUATION-ATTEMPT","PET-EVALUATION-DEADLINE","PET-EVALUATION-TIME-AUTHORITY","PET-EVIDENCE-SECRET","PET-EXECUTION-AUTHORIZATION-BINDING","PET-EXECUTION-MODE","PET-FAILURE-MAPPING","PET-HANDOFF-EXECUTION-SEMANTICS","PET-LOW-ENTROPY-RECEIPT","PET-MESSAGE-DELIVERY-CLASS","PET-MESSAGE-DIRECTION","PET-MESSAGE-SENDER","PET-MESSAGE-VERIFIER","PET-OBSERVER-RECEIPT","PET-OBSERVER-STAGE","PET-OBSERVER-VISIBILITY","PET-PARTICIPANT-BINDING","PET-POLICY-BINDING","PET-PRODUCTION-EXECUTION-UNSUPPORTED","PET-PROFILE-DIGEST-BINDING","PET-PROFILE-INSTANCE","PET-PROFILE-UNKNOWN","PET-PROFILE-VERSION","PET-PROHIBITED-OUTPUT","PET-PSI-SECURITY-ESCALATION","PET-PUBLIC-RESULT-EXPOSURE","PET-QUERY-BUDGET","PET-RECEIPT-BINDING","PET-RECEIPT-POLICY","PET-RESOURCE-POLICY","PET-RESULT-SYMMETRY","PET-SCHEMA-INVALID","PET-SESSION-BINDING","PET-STAGE-PRESTATE","PET-STATE-TRANSITION-PARITY","PET-TEE-DEBUG-MODE","PET-TEE-FRESH-NONCE","PET-TEE-PCR-POLICY","PET-TRANSCRIPT-MISMATCH","PET-VERIFICATION-MATERIAL","PET-VOPRF-COMPLETE-CLAIM"],"maxLength":2048,"minLength":1,"type":"string"},"mutation":{"enum":["unknown-profile","wrong-version","component-selected","cross-profile-callback","wrong-profile-instance","wrong-evaluation-attempt","wrong-receipt","wrong-transcript-head","result-asymmetry","exact-count","matching-element","coordinator-plaintext-result","low-entropy-receipt","missing-verification-material","psi-security-escalation","tee-debug-mode","tee-stale-nonce","tee-wrong-pcr-policy","tee-unapproved-execution","voprf-complete-engine","secret-evidence-hook","query-budget-bypass","cancellation-without-cleanup","unknown-error-category","unknown-symmetric-decision","callback-session-mismatch","callback-policy-mismatch","participant-binding-mismatch","commitment-pair-mismatch","profile-digest-mismatch","verification-material-reference-mismatch","verification-material-digest-mismatch","resource-policy-mismatch","missing-authoritative-context-field","secretflow-unapproved-candidate-execution","nitro-unapproved-candidate-execution","production-execution","fixture-with-candidate-flag","unknown-execution-mode","message-delivery-class-mismatch","message-direction-mismatch","wrong-callback-sender","wrong-callback-verifier","duplicate-callback-operation-alias","unexecuted-valid-case","decision-policy-default","decision-policy-changed-after-start","wrong-handoff-execution-semantics","missing-policy-binding","wrong-policy-id","wrong-policy-version","receipt-policy-substitution","execution-authorization-digest-substitution","callback-resource-policy-substitution","callback-execution-authority-substitution","timeout-before-deadline","timeout-nonincreasing-time","timeout-state-message-time-mismatch","timeout-noncanonical-time","receipt-ack-before-contributions","abort-consumed-budget-refund","abort-evaluating-unconsumed","select-commitment-before-stage","attempt-before-evaluation-start","receipt-at-profile-selection","results-at-profile-selection","results-at-budget-reservation","results-at-evaluation-start","receipt-before-callback","bilateral-results-in-contribution","other-party-result-in-ack","plaintext-result-in-callback-payload","results-in-public-callback","observer-on-non-result-case","observer-coordinator-visible","observer-unknown-decision","observer-receipt-mismatch","timeout-with-new-result","abort-with-fabricated-result","component-registration-with-session","redigested-future-field","incorrect-pre-phase","incorrect-transition","incorrect-post-phase","timeout-ordinary-accepted","abort-ordinary-accepted","transcript-mutation-mismatch","query-budget-effect-mismatch","callback-missing-raw-resource-policy","callback-missing-raw-execution-authorization","callback-raw-resource-state-mismatch","callback-raw-execution-state-mismatch","callback-state-presented-resource-substitution","callback-stale-payload-digest","callback-stale-semantic-digest","callback-redigested-resource-authority","abort-created-future-participant","abort-participants-missing-participant","abort-pending-future-commitment","abort-committed-missing-commitment","abort-committed-future-attempt","abort-evaluating-missing-attempt","abort-committed-future-deadline","abort-evaluating-missing-deadline","abort-committed-future-resource-policy","abort-evaluating-missing-resource-policy","abort-committed-future-execution-authorization","abort-evaluating-missing-execution-authorization","abort-created-impossible-contributions","abort-created-impossible-acknowledgments","abort-created-receipt-inconsistent","abort-created-result-inconsistent","abort-created-consumed-budget","abort-wrong-terminal-phase","abort-redigested-impossible-state"]}},"required":["case_id","mutation","expected_error"],"type":"object"},"maxItems":256,"minItems":115,"type":"array"},"limitations":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":128,"minItems":1,"type":"array","uniqueItems":true},"network_execution":{"const":"prohibited"},"operation_stage_digest":{"pattern":"^sha256:[0-9a-f]{64}$","type":"string"},"paid_resource_use":{"const":false},"schema_version":{"const":"0.1"},"synthetic":{"const":true},"valid_cases":{"items":{"additionalProperties":false,"properties":{"abort_source_phase":{"enum":[null,"CREATED","PARTICIPANTS_BOUND","COMMITMENTS_PENDING","COMMITTED","EVALUATING","RESULT_ACCEPTED","CONSENT_PENDING","DISCLOSURE_AUTHORIZED"]},"canonical_message_path":{"anyOf":[{"maxLength":512,"minLength":1,"pattern":"^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))[A-Za-z0-9._/-]+$","type":"string"},{"type":"null"}]},"case_id":{"maxLength":2048,"minLength":1,"type":"string"},"expected_protocol_outcome":{"enum":["accepted","no-op","terminal"]},"expected_runner_status":{"const":"pass"},"input_digest":{"pattern":"^sha256:[0-9a-f]{64}$","type":"string"},"input_path":{"maxLength":512,"minLength":1,"pattern":"^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))[A-Za-z0-9._/-]+$","type":"string"},"observer_digest":{"anyOf":[{"pattern":"^sha256:[0-9a-f]{64}$","type":"string"},{"type":"null"}]},"operation":{"enum":["register-component","select-profile","reserve-query-budget","start-evaluation","submit-contribution","acknowledge-receipt","accept-profile-callback","evaluation-timeout","abort-and-cleanup"]},"party_slot":{"enum":["a","b",null]},"profile_id":{"maxLength":2048,"minLength":1,"type":"string"},"profile_version":{"const":"0.1"},"prohibited_observations":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":128,"minItems":1,"type":"array","uniqueItems":true},"result_digest":{"pattern":"^sha256:[0-9a-f]{64}$","type":"string"}},"required":["case_id","profile_id","profile_version","operation","party_slot","canonical_message_path","input_path","input_digest","result_digest","prohibited_observations","expected_runner_status","expected_protocol_outcome","observer_digest","abort_source_phase"],"type":"object"},"maxItems":64,"minItems":12,"type":"array"}},"required":["$schema","schema_version","catalog_id","artifact_status","synthetic","network_execution","candidate_execution","paid_resource_use","valid_cases","invalid_cases","limitations","catalog_digest","operation_stage_digest"],"title":"Executable synthetic PET profile conformance cases","type":"object"}
+{
+  "$id": "https://github.com/itdojp/private-match-protocol/raw/main/schema/pet-profile-conformance-cases.v0.1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "const": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "artifact_status": {
+      "const": "experimental"
+    },
+    "candidate_execution": {
+      "const": false
+    },
+    "catalog_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "catalog_id": {
+      "const": "private-match-pet-profile-conformance-cases"
+    },
+    "invalid_cases": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expected_error": {
+            "enum": [
+              "PET-ABORT-PHASE-AUTHORITY",
+              "PET-AUTHORITATIVE-CONTEXT-MISSING",
+              "PET-AUTHORITATIVE-TIME-ORDER",
+              "PET-BINDING-DUPLICATE-ALIAS",
+              "PET-CALLBACK-BINDING",
+              "PET-CANCELLATION-CLEANUP",
+              "PET-CANDIDATE-EXECUTION-UNAUTHORIZED",
+              "PET-CANONICAL-MESSAGE-INVALID",
+              "PET-CASE-NOT-EXECUTED",
+              "PET-COMMITMENT-BINDING",
+              "PET-COMPONENT-AS-COMPLETE",
+              "PET-CONTRIBUTIONS-INCOMPLETE",
+              "PET-COORDINATOR-PLAINTEXT",
+              "PET-CROSS-PROFILE",
+              "PET-DECISION-POLICY",
+              "PET-DECISION-UNKNOWN",
+              "PET-EVALUATION-ATTEMPT",
+              "PET-EVALUATION-DEADLINE",
+              "PET-EVALUATION-TIME-AUTHORITY",
+              "PET-EVIDENCE-SECRET",
+              "PET-EXECUTION-AUTHORIZATION-BINDING",
+              "PET-EXECUTION-MODE",
+              "PET-FAILURE-MAPPING",
+              "PET-HANDOFF-EXECUTION-SEMANTICS",
+              "PET-LOW-ENTROPY-RECEIPT",
+              "PET-MESSAGE-DELIVERY-CLASS",
+              "PET-MESSAGE-DIRECTION",
+              "PET-MESSAGE-SENDER",
+              "PET-MESSAGE-VERIFIER",
+              "PET-OBSERVER-RECEIPT",
+              "PET-OBSERVER-STAGE",
+              "PET-OBSERVER-VISIBILITY",
+              "PET-PARTICIPANT-BINDING",
+              "PET-POLICY-BINDING",
+              "PET-PRODUCTION-EXECUTION-UNSUPPORTED",
+              "PET-PROFILE-DIGEST-BINDING",
+              "PET-PROFILE-INSTANCE",
+              "PET-PROFILE-UNKNOWN",
+              "PET-PROFILE-VERSION",
+              "PET-PROHIBITED-OUTPUT",
+              "PET-PSI-SECURITY-ESCALATION",
+              "PET-PUBLIC-RESULT-EXPOSURE",
+              "PET-QUERY-BUDGET",
+              "PET-RECEIPT-BINDING",
+              "PET-RECEIPT-POLICY",
+              "PET-RESOURCE-POLICY",
+              "PET-RESULT-SYMMETRY",
+              "PET-SCHEMA-INVALID",
+              "PET-SESSION-BINDING",
+              "PET-STAGE-PRESTATE",
+              "PET-STATE-TRANSITION-PARITY",
+              "PET-TEE-DEBUG-MODE",
+              "PET-TEE-FRESH-NONCE",
+              "PET-TEE-PCR-POLICY",
+              "PET-TRANSCRIPT-MISMATCH",
+              "PET-VERIFICATION-MATERIAL",
+              "PET-VOPRF-COMPLETE-CLAIM"
+            ],
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "mutation": {
+            "enum": [
+              "unknown-profile",
+              "wrong-version",
+              "component-selected",
+              "cross-profile-callback",
+              "wrong-profile-instance",
+              "wrong-evaluation-attempt",
+              "wrong-receipt",
+              "wrong-transcript-head",
+              "result-asymmetry",
+              "exact-count",
+              "matching-element",
+              "coordinator-plaintext-result",
+              "low-entropy-receipt",
+              "missing-verification-material",
+              "psi-security-escalation",
+              "tee-debug-mode",
+              "tee-stale-nonce",
+              "tee-wrong-pcr-policy",
+              "tee-unapproved-execution",
+              "voprf-complete-engine",
+              "secret-evidence-hook",
+              "query-budget-bypass",
+              "cancellation-without-cleanup",
+              "unknown-error-category",
+              "unknown-symmetric-decision",
+              "callback-session-mismatch",
+              "callback-policy-mismatch",
+              "participant-binding-mismatch",
+              "commitment-pair-mismatch",
+              "profile-digest-mismatch",
+              "verification-material-reference-mismatch",
+              "verification-material-digest-mismatch",
+              "resource-policy-mismatch",
+              "missing-authoritative-context-field",
+              "secretflow-unapproved-candidate-execution",
+              "nitro-unapproved-candidate-execution",
+              "production-execution",
+              "fixture-with-candidate-flag",
+              "unknown-execution-mode",
+              "message-delivery-class-mismatch",
+              "message-direction-mismatch",
+              "wrong-callback-sender",
+              "wrong-callback-verifier",
+              "duplicate-callback-operation-alias",
+              "unexecuted-valid-case",
+              "decision-policy-default",
+              "decision-policy-changed-after-start",
+              "wrong-handoff-execution-semantics",
+              "missing-policy-binding",
+              "wrong-policy-id",
+              "wrong-policy-version",
+              "receipt-policy-substitution",
+              "execution-authorization-digest-substitution",
+              "callback-resource-policy-substitution",
+              "callback-execution-authority-substitution",
+              "timeout-before-deadline",
+              "timeout-nonincreasing-time",
+              "timeout-state-message-time-mismatch",
+              "timeout-noncanonical-time",
+              "receipt-ack-before-contributions",
+              "abort-consumed-budget-refund",
+              "abort-evaluating-unconsumed",
+              "select-commitment-before-stage",
+              "attempt-before-evaluation-start",
+              "receipt-at-profile-selection",
+              "results-at-profile-selection",
+              "results-at-budget-reservation",
+              "results-at-evaluation-start",
+              "receipt-before-callback",
+              "bilateral-results-in-contribution",
+              "other-party-result-in-ack",
+              "plaintext-result-in-callback-payload",
+              "results-in-public-callback",
+              "observer-on-non-result-case",
+              "observer-coordinator-visible",
+              "observer-unknown-decision",
+              "observer-receipt-mismatch",
+              "timeout-with-new-result",
+              "abort-with-fabricated-result",
+              "component-registration-with-session",
+              "redigested-future-field",
+              "incorrect-pre-phase",
+              "incorrect-transition",
+              "incorrect-post-phase",
+              "timeout-ordinary-accepted",
+              "abort-ordinary-accepted",
+              "transcript-mutation-mismatch",
+              "query-budget-effect-mismatch",
+              "callback-missing-raw-resource-policy",
+              "callback-missing-raw-execution-authorization",
+              "callback-raw-resource-state-mismatch",
+              "callback-raw-execution-state-mismatch",
+              "callback-state-presented-resource-substitution",
+              "callback-stale-payload-digest",
+              "callback-stale-semantic-digest",
+              "callback-redigested-resource-authority",
+              "abort-created-future-participant",
+              "abort-participants-missing-participant",
+              "abort-pending-future-commitment",
+              "abort-committed-missing-commitment",
+              "abort-committed-future-attempt",
+              "abort-evaluating-missing-attempt",
+              "abort-committed-future-deadline",
+              "abort-evaluating-missing-deadline",
+              "abort-committed-future-resource-policy",
+              "abort-evaluating-missing-resource-policy",
+              "abort-committed-future-execution-authorization",
+              "abort-evaluating-missing-execution-authorization",
+              "abort-created-impossible-contributions",
+              "abort-created-impossible-acknowledgments",
+              "abort-created-receipt-inconsistent",
+              "abort-created-result-inconsistent",
+              "abort-created-consumed-budget",
+              "abort-wrong-terminal-phase",
+              "abort-redigested-impossible-state",
+              "abort-evaluating-ack-missing-receipt",
+              "abort-evaluating-ack-missing-proposed-result",
+              "abort-evaluating-unacknowledged-future-receipt",
+              "abort-evaluating-ack-a-null-receipt",
+              "abort-evaluating-ack-b-null-receipt",
+              "abort-evaluating-ack-a-missing-proposed-result",
+              "abort-evaluating-ack-b-missing-proposed-result",
+              "abort-evaluating-proposed-without-ack",
+              "abort-evaluating-party-receipt-mismatch",
+              "abort-evaluating-ack-status-mismatch",
+              "abort-evaluating-profile-evidence-mismatch",
+              "abort-evaluating-ack-before-bilateral-contribution",
+              "abort-evaluating-accepted-result-before-transition",
+              "abort-evaluating-accepted-result-conflict",
+              "abort-evaluating-receipt-authority-mismatch",
+              "abort-evaluating-clears-acknowledged-receipt",
+              "abort-evaluating-rewrites-proposed-result",
+              "abort-evaluating-exposes-party-result",
+              "abort-evaluating-redigested-impossible-ack-substate",
+              "abort-evaluating-other-party-proposed-result",
+              "abort-evaluating-stale-ack-session",
+              "abort-evaluating-stale-ack-profile",
+              "abort-evaluating-stale-ack-attempt"
+            ]
+          }
+        },
+        "required": [
+          "case_id",
+          "mutation",
+          "expected_error"
+        ],
+        "type": "object"
+      },
+      "maxItems": 256,
+      "minItems": 138,
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "maxLength": 2048,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "network_execution": {
+      "const": "prohibited"
+    },
+    "operation_stage_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "paid_resource_use": {
+      "const": false
+    },
+    "schema_version": {
+      "const": "0.1"
+    },
+    "synthetic": {
+      "const": true
+    },
+    "valid_cases": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "abort_acknowledgment_substate": {
+            "enum": [
+              "contributions-none",
+              "contribution-a-only",
+              "contribution-b-only",
+              "contributions-complete-no-ack",
+              "party-a-acknowledged",
+              "party-b-acknowledged",
+              "both-acknowledged",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "abort_source_phase": {
+            "enum": [
+              null,
+              "CREATED",
+              "PARTICIPANTS_BOUND",
+              "COMMITMENTS_PENDING",
+              "COMMITTED",
+              "EVALUATING",
+              "RESULT_ACCEPTED",
+              "CONSENT_PENDING",
+              "DISCLOSURE_AUTHORIZED"
+            ]
+          },
+          "canonical_message_path": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))[A-Za-z0-9._/-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "case_id": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expected_protocol_outcome": {
+            "enum": [
+              "accepted",
+              "no-op",
+              "terminal"
+            ]
+          },
+          "expected_runner_status": {
+            "const": "pass"
+          },
+          "input_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "input_path": {
+            "maxLength": 512,
+            "minLength": 1,
+            "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))[A-Za-z0-9._/-]+$",
+            "type": "string"
+          },
+          "observer_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operation": {
+            "enum": [
+              "register-component",
+              "select-profile",
+              "reserve-query-budget",
+              "start-evaluation",
+              "submit-contribution",
+              "acknowledge-receipt",
+              "accept-profile-callback",
+              "evaluation-timeout",
+              "abort-and-cleanup"
+            ]
+          },
+          "party_slot": {
+            "enum": [
+              "a",
+              "b",
+              null
+            ]
+          },
+          "profile_id": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "profile_version": {
+            "const": "0.1"
+          },
+          "prohibited_observations": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "result_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "profile_id",
+          "profile_version",
+          "operation",
+          "party_slot",
+          "canonical_message_path",
+          "input_path",
+          "input_digest",
+          "result_digest",
+          "prohibited_observations",
+          "expected_runner_status",
+          "expected_protocol_outcome",
+          "observer_digest",
+          "abort_source_phase",
+          "abort_acknowledgment_substate"
+        ],
+        "type": "object"
+      },
+      "maxItems": 64,
+      "minItems": 25,
+      "type": "array"
+    }
+  },
+  "required": [
+    "$schema",
+    "schema_version",
+    "catalog_id",
+    "artifact_status",
+    "synthetic",
+    "network_execution",
+    "candidate_execution",
+    "paid_resource_use",
+    "valid_cases",
+    "invalid_cases",
+    "limitations",
+    "catalog_digest",
+    "operation_stage_digest"
+  ],
+  "title": "Executable synthetic PET profile conformance cases",
+  "type": "object"
+}

@@ -31,6 +31,7 @@ from pet_profiles import (  # noqa: E402
     GENERATED_PATHS,
     HANDOFF_PATH,
     ERROR_CODE_CATALOG_PATH,
+    EVALUATING_ACKNOWLEDGMENT_SUBSTATE_ORDER,
     INVALID_CASE_CODES,
     MESSAGE_REGISTRY_DIGEST,
     NITRO_RECEIPT_BINDINGS,
@@ -58,6 +59,7 @@ from pet_profiles import (  # noqa: E402
     validate_repository,
     validate_error_code_authority,
     validate_semantics,
+    _acknowledgment_evidence_digest,
     _execution_authorization_digest,
     _execute_invalid_case,
 )
@@ -255,7 +257,7 @@ class PetProfileTests(unittest.TestCase):
         self.assertEqual("prohibited", cases["network_execution"])
         self.assertFalse(cases["candidate_execution"])
         self.assertFalse(cases["paid_resource_use"])
-        self.assertEqual(19, len(cases["valid_cases"]))
+        self.assertEqual(25, len(cases["valid_cases"]))
         self.assertEqual(
             {"accepted", "no-op", "terminal"},
             {item["expected_protocol_outcome"] for item in cases["valid_cases"]},
@@ -263,7 +265,7 @@ class PetProfileTests(unittest.TestCase):
 
     def test_every_valid_case_executes_through_shared_operation_validator(self) -> None:
         results = validate_case_catalog(self.values)
-        self.assertEqual(19, len(results))
+        self.assertEqual(25, len(results))
         self.assertEqual({"pass"}, {item["runner_status"] for item in results})
         self.assertEqual(
             {"accepted", "no-op", "terminal"},
@@ -272,8 +274,8 @@ class PetProfileTests(unittest.TestCase):
         manifest = json.loads(
             (ROOT / GENERATED_PATHS["case_results"]).read_text(encoding="utf-8")
         )
-        self.assertEqual(19, manifest["status_counts"]["pass"])
-        self.assertEqual(9, manifest["status_counts"]["terminal"])
+        self.assertEqual(25, manifest["status_counts"]["pass"])
+        self.assertEqual(15, manifest["status_counts"]["terminal"])
         self.assertEqual(1, manifest["status_counts"]["no_op"])
         self.assertEqual(
             {item["case_id"] for item in self.values["cases"]["valid_cases"]},
@@ -621,7 +623,7 @@ class PetProfileTests(unittest.TestCase):
             for entry in self.values["cases"]["valid_cases"]
             if entry["operation"] == "abort-and-cleanup"
         ]
-        self.assertEqual(8, len(cases))
+        self.assertEqual(14, len(cases))
         self.assertEqual(
             set(ABORT_PHASE_ORDER), {item["abort_source_phase"] for item in cases}
         )
@@ -642,38 +644,26 @@ class PetProfileTests(unittest.TestCase):
                     else "release-if-not-started"
                 )
                 self.assertEqual(expected_effect, result["query_budget_effect"])
-        evaluating = next(
+        evaluating = [
             item for item in cases if item["abort_source_phase"] == "EVALUATING"
+        ]
+        self.assertEqual(7, len(evaluating))
+        self.assertEqual(
+            set(EVALUATING_ACKNOWLEDGMENT_SUBSTATE_ORDER),
+            {item["abort_acknowledgment_substate"] for item in evaluating},
         )
-        for contributions, acknowledgments in (
-            ([], []),
-            (["party_a"], []),
-            (["party_b"], []),
-            (["party_a", "party_b"], []),
-            (["party_a", "party_b"], ["party_a"]),
-            (["party_a", "party_b"], ["party_b"]),
-            (["party_a", "party_b"], ["party_a", "party_b"]),
-        ):
-            record = operation_input_for_case(self.values, evaluating)
-            record["authoritative_context"]["initial_state"][
-                "completed_contribution_slots"
-            ] = contributions
-            record["authoritative_context"]["initial_state"][
-                "receipt_acknowledgment_slots"
-            ] = acknowledgments
-            self.assertEqual(
-                "terminal",
-                validate_operation_input(self.values, record)["protocol_outcome"],
-            )
-        invalid = operation_input_for_case(self.values, evaluating)
-        invalid["authoritative_context"]["initial_state"][
-            "completed_contribution_slots"
-        ] = ["party_a"]
-        invalid["authoritative_context"]["initial_state"][
-            "receipt_acknowledgment_slots"
-        ] = ["party_a"]
-        with self.assertRaisesRegex(PetProfileError, "PET-ABORT-PHASE-AUTHORITY"):
-            validate_operation_input(self.values, invalid)
+        for item in evaluating:
+            with self.subTest(substate=item["abort_acknowledgment_substate"]):
+                record = operation_input_for_case(self.values, item)
+                state = record["authoritative_context"]["initial_state"]
+                self.assertEqual(
+                    item["abort_acknowledgment_substate"],
+                    state["acknowledgment_substate_id"],
+                )
+                self.assertEqual(
+                    "terminal",
+                    validate_operation_input(self.values, record)["protocol_outcome"],
+                )
         with self.assertRaises(PetProfileError) as caught:
             validate_operation_input(
                 self.values,
@@ -682,6 +672,144 @@ class PetProfileTests(unittest.TestCase):
                 ),
             )
         self.assertEqual("PET-QUERY-BUDGET", caught.exception.code)
+
+    def test_abort_evaluating_acknowledgment_state_is_atomic_and_fail_closed(
+        self,
+    ) -> None:
+        evaluating = {
+            item["abort_acknowledgment_substate"]: item
+            for item in self.values["cases"]["valid_cases"]
+            if item["operation"] == "abort-and-cleanup"
+            and item["abort_source_phase"] == "EVALUATING"
+        }
+        expected_slots = {
+            "contributions-none": ([], []),
+            "contribution-a-only": (["party_a"], []),
+            "contribution-b-only": (["party_b"], []),
+            "contributions-complete-no-ack": (["party_a", "party_b"], []),
+            "party-a-acknowledged": (["party_a", "party_b"], ["party_a"]),
+            "party-b-acknowledged": (["party_a", "party_b"], ["party_b"]),
+            "both-acknowledged": (
+                ["party_a", "party_b"],
+                ["party_a", "party_b"],
+            ),
+        }
+        for substate, (contributions, acknowledgments) in expected_slots.items():
+            with self.subTest(substate=substate):
+                record = operation_input_for_case(self.values, evaluating[substate])
+                state = record["authoritative_context"]["initial_state"]
+                self.assertEqual(contributions, state["completed_contribution_slots"])
+                self.assertEqual(acknowledgments, state["receipt_acknowledgment_slots"])
+                self.assertEqual(
+                    "sha256:" + "76" * 32 if acknowledgments else None,
+                    state["opaque_receipt_ref"],
+                )
+                self.assertEqual(
+                    "PROPOSED" if acknowledgments else None,
+                    state["result_state"],
+                )
+                self.assertEqual(
+                    {"party_a": "NONE", "party_b": "NONE"},
+                    state["accepted_result_presence"],
+                )
+                for party in ("party_a", "party_b"):
+                    expected = "PRESENT" if party in acknowledgments else "NONE"
+                    self.assertEqual(expected, state["proposed_result_presence"][party])
+                    binding = state["result_acknowledgment_bindings"][party]
+                    self.assertEqual(party in acknowledgments, binding is not None)
+                    if binding:
+                        self.assertEqual(
+                            state["opaque_receipt_ref"], binding["opaque_receipt_ref"]
+                        )
+                        self.assertEqual(state["session_id"], binding["session_id"])
+                        self.assertEqual(
+                            state["evaluation_attempt_id"],
+                            binding["evaluation_attempt_id"],
+                        )
+                        self.assertEqual(
+                            _acknowledgment_evidence_digest(binding),
+                            binding["profile_evidence_binding_digest"],
+                        )
+                self.assertEqual(
+                    "terminal",
+                    validate_operation_input(self.values, record)["protocol_outcome"],
+                )
+
+        for mutation, expected in (
+            ("abort-evaluating-ack-missing-receipt", "PET-RECEIPT-BINDING"),
+            (
+                "abort-evaluating-ack-missing-proposed-result",
+                "PET-ABORT-PHASE-AUTHORITY",
+            ),
+            (
+                "abort-evaluating-unacknowledged-future-receipt",
+                "PET-RECEIPT-BINDING",
+            ),
+        ):
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(PetProfileError) as caught:
+                    validate_operation_input(
+                        self.values,
+                        conformance_input_for_mutation(self.values, mutation),
+                    )
+                self.assertEqual(expected, caught.exception.code)
+
+        changed = copy.deepcopy(self.values)
+        ack_a = next(
+            transition
+            for transition in changed["state_machine"]["transitions"]
+            if transition["id"] == "TR-ACK-RECEIPT-A"
+        )
+        effect = next(
+            item for item in ack_a["effects"] if item["id"] == "E-ACK-RECEIPT-A"
+        )
+        effect["writes"].remove("opaque_receipt_ref")
+        with self.assertRaisesRegex(PetProfileError, "PET-ABORT-PHASE-AUTHORITY"):
+            expected_operation_stage_contract(changed)
+
+        changed = copy.deepcopy(self.values)
+        contribution_a = next(
+            transition
+            for transition in changed["state_machine"]["transitions"]
+            if transition["id"] == "TR-SUBMIT-CONTRIBUTION-A"
+        )
+        contribution_effect = next(
+            item
+            for item in contribution_a["effects"]
+            if item["id"] == "E-CONTRIBUTION-A"
+        )
+        contribution_effect["writes"] = []
+        with self.assertRaisesRegex(PetProfileError, "PET-ABORT-PHASE-AUTHORITY"):
+            expected_operation_stage_contract(changed)
+
+        changed = copy.deepcopy(self.values)
+        abort = next(
+            transition
+            for transition in changed["state_machine"]["transitions"]
+            if transition["id"] == "TR-ABORT"
+        )
+        abort["effects"][0]["writes"].append("opaque_receipt_ref")
+        with self.assertRaisesRegex(PetProfileError, "PET-ABORT-PHASE-AUTHORITY"):
+            expected_operation_stage_contract(changed)
+
+    def test_acknowledged_abort_state_never_exposes_party_local_results(self) -> None:
+        cases = [
+            item
+            for item in self.values["cases"]["valid_cases"]
+            if item.get("abort_acknowledgment_substate")
+            in {
+                "party-a-acknowledged",
+                "party-b-acknowledged",
+                "both-acknowledged",
+            }
+        ]
+        self.assertEqual(3, len(cases))
+        for item in cases:
+            record = operation_input_for_case(self.values, item)
+            serialized = json.dumps(record["authoritative_context"]["initial_state"])
+            for prohibited in (*PROTOCOL_OUTPUTS, "party_local_result", "exact_count"):
+                self.assertNotIn(prohibited, serialized)
+            self.assertNotIn("synthetic_conformance_observer", serialized)
 
     def test_party_decision_vocabulary_is_closed_before_symmetry(self) -> None:
         record = conformance_input_for_mutation(
@@ -914,7 +1042,7 @@ class PetProfileTests(unittest.TestCase):
                 )
                 self.assertEqual(INVALID_CASE_CODES[mutation], item["expected_error"])
         # validate_case_catalog executes all invalid paths through the shared validator.
-        self.assertEqual(19, len(validate_case_catalog(self.values)))
+        self.assertEqual(25, len(validate_case_catalog(self.values)))
 
     def test_cross_profile_instance_attempt_receipt_and_transcript_fail_closed(
         self,
@@ -1001,7 +1129,7 @@ class PetProfileTests(unittest.TestCase):
         first = generated_files(ROOT)
         second = generated_files(ROOT)
         self.assertEqual(first, second)
-        self.assertEqual(24, len(first))
+        self.assertEqual(30, len(first))
         self.assertTrue(set(GENERATED_PATHS.values()) <= set(first))
         for relative, content in first.items():
             self.assertEqual(content, (ROOT / relative).read_bytes(), relative)
@@ -1032,7 +1160,7 @@ class PetProfileTests(unittest.TestCase):
         self.assertIn(
             "conformance/source/message-conformance-inputs.v0.1.json", input_paths
         )
-        self.assertEqual(23, len(manifest["generated_outputs"]))
+        self.assertEqual(29, len(manifest["generated_outputs"]))
 
     def _repository_copy(self):
         scratch = ROOT / "artifacts"

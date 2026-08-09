@@ -16,7 +16,7 @@ complete_profiles:
   profile_version: '0.1'
   profile_class: complete-decision-profile
   path: profiles/pet-integration/nitro-enclave.v0.1.json
-  digest: sha256:d7ca5dbd0372f06176e82ef0814776f2c6de8fbeb9b5d1516b3530deaa67d37d
+  digest: sha256:f21c37a9fcd22b7a08951a9475f022d3b85a1725b836c670c44c9255c0633685
   status: experimental
   allowed_protocol_profile: private-match-core/0.1
   review_deadline: '2027-01-31'
@@ -24,7 +24,7 @@ complete_profiles:
   profile_version: '0.1'
   profile_class: complete-decision-profile
   path: profiles/pet-integration/secretflow-kkrt.v0.1.json
-  digest: sha256:f463d3f4d249b9c0faa46ab8a3c29c458c71c8f63edb57843660818aca002959
+  digest: sha256:db6eed83df4fedee9be3a010cedc0673745ef7957d87280165fa3ead7dec81f3
   status: experimental
   allowed_protocol_profile: private-match-core/0.1
   review_deadline: '2027-01-31'
@@ -33,7 +33,7 @@ component_profiles:
   profile_version: '0.1'
   profile_class: component-only
   path: profiles/pet-integration/voprf-component.v0.1.json
-  digest: sha256:0c4cc990fbee4a9258b267cdafab1db213832fb7682967ccc7545187bb2c6cbc
+  digest: sha256:b6cc12810e5000d09e834a7f7ad8a9e0fa4e3d6668dddc358663aad0da25077a
   status: experimental
   allowed_protocol_profile: private-match-core/0.1
   review_deadline: '2027-01-31'
@@ -46,5 +46,5 @@ review_deadline: '2027-01-31'
 limitations:
 - Experimental profiles do not select a production PET engine.
 - Research candidate results are not-run and may supersede these contracts.
-registry_digest: sha256:8205d3dbac417cd8a2d937d59de3e3bd8df109101003d937ed39b28100790415
-operation_stage_contract_digest: sha256:f14ce77c1f5ad266bf3983243f384ef7df1ce4f8029fc0bfd77856a6433d7588
+registry_digest: sha256:3f078f0c038dfa3d3d117aa351c5569c66be6ae813e732fce2b5190967c1799e
+operation_stage_contract_digest: sha256:730c6ad3584bcecef746185c6c1c032b0770058feeb2bc1737a61ebdb82a1ad4
