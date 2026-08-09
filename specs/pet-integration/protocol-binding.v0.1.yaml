@@ -219,6 +219,6 @@ limitations:
 - This mapping references, rather than duplicates, the complete Protocol state machine.
 - result_acceptance_notice is the single external profile-callback operation; accept_symmetric_result is its State Machine effect.
 - Authentication algorithm and candidate execution authority remain outside this experimental contract.
-binding_digest: sha256:09088e27fae434b0bc292b00ab442ffab00449ec405cea5d56d59e8b06e796e6
-operation_stage_contract_path: specs/pet-integration/operation-stage-contract.v0.1.yaml
-operation_stage_contract_digest: sha256:730c6ad3584bcecef746185c6c1c032b0770058feeb2bc1737a61ebdb82a1ad4
+binding_digest: sha256:100cc944a4d02580f79ff1180fd80325be14df80a680224bd124b0f15c5e2797
+operation_stage_contract_path: specs/pet-integration/operation-stage-contract.v0.2.yaml
+operation_stage_contract_digest: sha256:e4af007a87443afb3a4a93cf477e3f968c151b66b7498e73e9b2c84b33593498

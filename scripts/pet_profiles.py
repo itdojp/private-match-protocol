@@ -128,8 +128,8 @@ AUTHORITY_PATH = Path("config/research-technology-authority.v0.1.json")
 REGISTRY_PATH = Path("registry/pet-integration-profiles.v0.1.yaml")
 HANDOFF_PATH = Path("handoff/product-decision-engine-port.v0.1.yaml")
 BINDING_PATH = Path("specs/pet-integration/protocol-binding.v0.1.yaml")
-STAGE_CONTRACT_PATH = Path("specs/pet-integration/operation-stage-contract.v0.1.yaml")
-CASE_CATALOG_PATH = Path("conformance/pet-profiles/case-catalog.v0.1.json")
+STAGE_CONTRACT_PATH = Path("specs/pet-integration/operation-stage-contract.v0.2.yaml")
+CASE_CATALOG_PATH = Path("conformance/pet-profiles/case-catalog.v0.2.json")
 ERROR_CODE_CATALOG_PATH = Path("config/pet-profile-error-codes.v0.1.json")
 CANONICAL_CALLBACK_PATH = Path(
     "conformance/pet-profiles/messages/result-acceptance-notice.v0.2.json"
@@ -145,10 +145,10 @@ SCHEMAS = {
     "registry": Path("schema/pet-integration-profile-registry.v0.1.schema.json"),
     "handoff": Path("schema/product-decision-engine-handoff.v0.1.schema.json"),
     "binding": Path("schema/pet-protocol-binding.v0.1.schema.json"),
-    "cases": Path("schema/pet-profile-conformance-cases.v0.1.schema.json"),
+    "cases": Path("schema/pet-profile-conformance-cases.v0.2.schema.json"),
     "operation": Path("schema/pet-profile-operation-input.v0.2.schema.json"),
     "case_results": Path("schema/pet-profile-case-results.v0.2.schema.json"),
-    "stage": Path("schema/pet-operation-stage-contract.v0.1.schema.json"),
+    "stage": Path("schema/pet-operation-stage-contract.v0.2.schema.json"),
     "error_codes": Path("schema/pet-profile-error-codes.v0.1.schema.json"),
 }
 GENERATED_PATHS = {
@@ -220,6 +220,20 @@ LEGACY_GENERATED_DIGESTS = {
         "generated/pet-integration/executable-case-results.v0.1.json"
     ): "sha256:096c3fbf23cc1822a764d2d66a03c17943d5c41cabbd6254656426b315c4dcf3",
 }
+LEGACY_BEHAVIOR_DIGESTS = {
+    Path(
+        "schema/pet-operation-stage-contract.v0.1.schema.json"
+    ): "sha256:7f645afeed764d3907f5cd2992a50a1caccf4fb2b92d53a7edddadc5b9e070ca",
+    Path(
+        "schema/pet-profile-conformance-cases.v0.1.schema.json"
+    ): "sha256:dd853a743c1ff3d467f162ba5d73a8d0744455daf6c093817811d48bc0a271b6",
+    Path(
+        "specs/pet-integration/operation-stage-contract.v0.1.yaml"
+    ): "sha256:aa65e4e5ac3cedd03ca99958fbea414232821d70de35f73f8c68c67f047d3df5",
+    Path(
+        "conformance/pet-profiles/case-catalog.v0.1.json"
+    ): "sha256:73d7398b85a29ebabd9771e63db7cd0febf9aa250aa8776d48fff83303890da4",
+}
 MAX_FILE_BYTES = 2 * 1024 * 1024
 
 DOMAINS = {
@@ -228,10 +242,10 @@ DOMAINS = {
     "registry": b"private-match-pet-profile-registry/v0.1\x00",
     "handoff": b"private-match-product-decision-engine-handoff/v0.1\x00",
     "binding": b"private-match-pet-protocol-binding/v0.1\x00",
-    "cases": b"private-match-pet-profile-conformance-cases/v0.1\x00",
+    "cases": b"private-match-pet-profile-conformance-cases/v0.2\x00",
     "operation": b"private-match-pet-profile-operation-input/v0.2\x00",
     "case_results": b"private-match-pet-profile-executable-case-results/v0.2\x00",
-    "stage": b"private-match-pet-operation-stage-contract/v0.1\x00",
+    "stage": b"private-match-pet-operation-stage-contract/v0.2\x00",
     "observer": b"private-match-pet-synthetic-result-observer/v0.1\x00",
     "acknowledgment_evidence": (
         b"private-match-pet-acknowledgment-evidence-binding/v0.1\x00"
@@ -1586,7 +1600,7 @@ def expected_operation_stage_contract(values: dict[str, Any]) -> dict[str, Any]:
         )
     result = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "record_type": "pet-operation-stage-contract",
         "artifact_status": "experimental",
         "state_machine_digest": STATE_MACHINE_DIGEST,
@@ -2320,6 +2334,7 @@ def _validate_abort_phase_state(
     observed: dict[str, Any],
     profile_authority: dict[str, Any],
 ) -> None:
+    _require(isinstance(profile_authority, dict), "PET-PROFILE-AUTHORITY")
     _require_abort_confidentiality(observed)
     phase = observed.get("phase", "")
     _require(phase in ABORT_PHASE_ORDER, "PET-ABORT-PHASE-AUTHORITY")
@@ -4237,6 +4252,9 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         content = _regular_file(root, relative).read_bytes()
         _require(sha256_bytes(content) == digest, "PET-LEGACY-VERSION-DIGEST")
         files[relative] = content
+    for relative, digest in LEGACY_BEHAVIOR_DIGESTS.items():
+        content = _regular_file(root, relative).read_bytes()
+        _require(sha256_bytes(content) == digest, "PET-LEGACY-VERSION-DIGEST")
     executed_results = []
     for item in values["cases"]["valid_cases"]:
         operation_input = operation_input_for_case(values, item)
@@ -4333,6 +4351,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         Path(".github/workflows/protocol-spec.yml"),
         Path("REUSE.toml"),
         Path("README.md"),
+        *LEGACY_BEHAVIOR_DIGESTS,
         Path("ROADMAP.md"),
         Path("GOVERNANCE.md"),
         Path("docs/decisions/ADR-0006-EXPERIMENTAL-PET-INTEGRATION-PROFILES.md"),

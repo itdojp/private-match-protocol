@@ -114,8 +114,8 @@ class PetProfileTests(unittest.TestCase):
         )
         record = operation_input_for_case(self.values, item)
         self.assertEqual("0.2", record["schema_version"])
-        self.assertEqual("0.1", self.values["stage"]["schema_version"])
-        self.assertEqual("0.1", self.values["cases"]["schema_version"])
+        self.assertEqual("0.2", self.values["stage"]["schema_version"])
+        self.assertEqual("0.2", self.values["cases"]["schema_version"])
         self.assertTrue(
             all(
                 case["input_path"].endswith(".v0.2.json")
@@ -129,6 +129,47 @@ class PetProfileTests(unittest.TestCase):
             list(Draft202012Validator(legacy).iter_errors(legacy_record)),
             "v0.1 readers must reject rather than infer v0.2 abort state",
         )
+        legacy_stage = json.loads(
+            (ROOT / "schema/pet-operation-stage-contract.v0.1.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        current_stage = self.values["schemas"]["stage"]
+        self.assertNotIn(
+            "evaluating_acknowledgment_substate_authority",
+            legacy_stage["required"],
+        )
+        self.assertIn(
+            "evaluating_acknowledgment_substate_authority",
+            current_stage["required"],
+        )
+        legacy_cases = json.loads(
+            (ROOT / "schema/pet-profile-conformance-cases.v0.1.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        current_cases = self.values["schemas"]["cases"]
+        self.assertNotIn(
+            "abort_acknowledgment_substate",
+            legacy_cases["properties"]["valid_cases"]["items"]["required"],
+        )
+        self.assertIn(
+            "abort_acknowledgment_substate",
+            current_cases["properties"]["valid_cases"]["items"]["required"],
+        )
+
+    def test_malformed_abort_profile_authority_fails_with_bounded_code(self) -> None:
+        item = next(
+            case
+            for case in self.values["cases"]["valid_cases"]
+            if case.get("abort_acknowledgment_substate") == "party-a-acknowledged"
+        )
+        for malformed in (None, []):
+            with self.subTest(profile_authority=malformed):
+                record = operation_input_for_case(self.values, item)
+                record["authoritative_context"]["profile_authority"] = malformed
+                with self.assertRaisesRegex(PetProfileError, "PET-PROFILE-AUTHORITY"):
+                    validate_operation_input(self.values, record)
 
     def test_research_authority_is_exact_offline_reviewed_snapshot(self) -> None:
         authority = self.values["authority"]

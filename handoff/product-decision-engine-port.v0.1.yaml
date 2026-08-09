@@ -297,9 +297,9 @@ limitations:
 - The handoff defines public semantics, not private Product implementation structure.
 - Registration and contract-fixture validation are not candidate execution permission.
 - No match predicate, production adapter, authentication, cloud, or KMS selection is made.
-handoff_digest: sha256:d9b649eb7198ee5165848c184c161b8dc84fe056757ace1a5aeb2e800fdf269a
-operation_stage_contract_path: specs/pet-integration/operation-stage-contract.v0.1.yaml
-operation_stage_contract_digest: sha256:730c6ad3584bcecef746185c6c1c032b0770058feeb2bc1737a61ebdb82a1ad4
+handoff_digest: sha256:512d22dfd9f1c245e78313f4a2f4624ac1eda0e10c2a9d03d91bfd8f70a3dc78
+operation_stage_contract_path: specs/pet-integration/operation-stage-contract.v0.2.yaml
+operation_stage_contract_digest: sha256:e4af007a87443afb3a4a93cf477e3f968c151b66b7498e73e9b2c84b33593498
 operation_stage_projection:
 - operation: register-component
   lifecycle_stage: registry-registration

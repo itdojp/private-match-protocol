@@ -1,5 +1,5 @@
 $schema: https://json-schema.org/draft/2020-12/schema
-schema_version: '0.1'
+schema_version: '0.2'
 record_type: pet-operation-stage-contract
 artifact_status: experimental
 state_machine_digest: sha256:7d710270b4fae68dfb2596fe2dd8158b7d5b02f3235be43d0ed8e21f232c8b94
@@ -432,6 +432,11 @@ operations:
   - session_id
   - policy_binding
   - selected_profile
+  - evaluation_contribution
+  - result_ack
+  - opaque_receipt_ref
+  - proposed_result_state
+  - accepted_result_state
   fields_invalidated:
   - disclosure_state
   party_local_only_fields: []
@@ -537,8 +542,8 @@ abort_phase_authority:
   execution_authorization_digest: required
   contribution_slots: any-subset
   acknowledgment_slots: empty-or-any-subset-after-both-contributions
-  receipt_state: none
-  result_state: none
+  receipt_state: present-iff-acknowledgment
+  result_state: proposed-iff-acknowledgment
   consent_state: none
   disclosure_state: none
   query_budget_state: CONSUMED
@@ -606,7 +611,288 @@ abort_phase_authority:
   transcript_mutated: true
   cleanup_state_before: NOT_STARTED
   cleanup_requirement: required
-stage_contract_digest: sha256:f14ce77c1f5ad266bf3983243f384ef7df1ce4f8029fc0bfd77856a6433d7588
+evaluating_acknowledgment_substate_authority:
+- substate_id: contributions-none
+  completed_contribution_slots: []
+  receipt_acknowledgment_slots: []
+  result_acknowledgment_presence: &id001
+    party_a: none
+    party_b: none
+  opaque_receipt_state: none
+  proposed_result_presence: *id001
+  accepted_result_presence:
+    party_a: none
+    party_b: none
+  profile_evidence_presence: *id001
+  binding_context_fields:
+  - session_id
+  - profile_id
+  - profile_version
+  - profile_instance_id
+  - evaluation_attempt_id
+  - profile_evidence_ref
+  - profile_evidence_binding_digest
+  query_budget_state: CONSUMED
+  transcript_state: retained-then-abort-appended
+  abort_cleanup_effect: required
+  fields_retained_for_audit:
+  - evaluation_contribution
+  - result_ack
+  - opaque_receipt_ref
+  - proposed_result_state
+  - accepted_result_state
+  fields_invalidated_for_future_mutation:
+  - disclosure_state
+  - live_session_mutation
+  coordinator_visible_fields:
+  - opaque_receipt_ref
+  - normalized_ack_status
+  party_local_only_fields:
+  - proposed_result_state
+  - local_result_binding
+- substate_id: contribution-a-only
+  completed_contribution_slots:
+  - party_a
+  receipt_acknowledgment_slots: []
+  result_acknowledgment_presence: &id002
+    party_a: none
+    party_b: none
+  opaque_receipt_state: none
+  proposed_result_presence: *id002
+  accepted_result_presence:
+    party_a: none
+    party_b: none
+  profile_evidence_presence: *id002
+  binding_context_fields:
+  - session_id
+  - profile_id
+  - profile_version
+  - profile_instance_id
+  - evaluation_attempt_id
+  - profile_evidence_ref
+  - profile_evidence_binding_digest
+  query_budget_state: CONSUMED
+  transcript_state: retained-then-abort-appended
+  abort_cleanup_effect: required
+  fields_retained_for_audit:
+  - evaluation_contribution
+  - result_ack
+  - opaque_receipt_ref
+  - proposed_result_state
+  - accepted_result_state
+  fields_invalidated_for_future_mutation:
+  - disclosure_state
+  - live_session_mutation
+  coordinator_visible_fields:
+  - opaque_receipt_ref
+  - normalized_ack_status
+  party_local_only_fields:
+  - proposed_result_state
+  - local_result_binding
+- substate_id: contribution-b-only
+  completed_contribution_slots:
+  - party_b
+  receipt_acknowledgment_slots: []
+  result_acknowledgment_presence: &id003
+    party_a: none
+    party_b: none
+  opaque_receipt_state: none
+  proposed_result_presence: *id003
+  accepted_result_presence:
+    party_a: none
+    party_b: none
+  profile_evidence_presence: *id003
+  binding_context_fields:
+  - session_id
+  - profile_id
+  - profile_version
+  - profile_instance_id
+  - evaluation_attempt_id
+  - profile_evidence_ref
+  - profile_evidence_binding_digest
+  query_budget_state: CONSUMED
+  transcript_state: retained-then-abort-appended
+  abort_cleanup_effect: required
+  fields_retained_for_audit:
+  - evaluation_contribution
+  - result_ack
+  - opaque_receipt_ref
+  - proposed_result_state
+  - accepted_result_state
+  fields_invalidated_for_future_mutation:
+  - disclosure_state
+  - live_session_mutation
+  coordinator_visible_fields:
+  - opaque_receipt_ref
+  - normalized_ack_status
+  party_local_only_fields:
+  - proposed_result_state
+  - local_result_binding
+- substate_id: contributions-complete-no-ack
+  completed_contribution_slots:
+  - party_a
+  - party_b
+  receipt_acknowledgment_slots: []
+  result_acknowledgment_presence: &id004
+    party_a: none
+    party_b: none
+  opaque_receipt_state: none
+  proposed_result_presence: *id004
+  accepted_result_presence:
+    party_a: none
+    party_b: none
+  profile_evidence_presence: *id004
+  binding_context_fields:
+  - session_id
+  - profile_id
+  - profile_version
+  - profile_instance_id
+  - evaluation_attempt_id
+  - profile_evidence_ref
+  - profile_evidence_binding_digest
+  query_budget_state: CONSUMED
+  transcript_state: retained-then-abort-appended
+  abort_cleanup_effect: required
+  fields_retained_for_audit:
+  - evaluation_contribution
+  - result_ack
+  - opaque_receipt_ref
+  - proposed_result_state
+  - accepted_result_state
+  fields_invalidated_for_future_mutation:
+  - disclosure_state
+  - live_session_mutation
+  coordinator_visible_fields:
+  - opaque_receipt_ref
+  - normalized_ack_status
+  party_local_only_fields:
+  - proposed_result_state
+  - local_result_binding
+- substate_id: party-a-acknowledged
+  completed_contribution_slots:
+  - party_a
+  - party_b
+  receipt_acknowledgment_slots:
+  - party_a
+  result_acknowledgment_presence: &id005
+    party_a: present
+    party_b: none
+  opaque_receipt_state: common-present
+  proposed_result_presence: *id005
+  accepted_result_presence:
+    party_a: none
+    party_b: none
+  profile_evidence_presence: *id005
+  binding_context_fields:
+  - session_id
+  - profile_id
+  - profile_version
+  - profile_instance_id
+  - evaluation_attempt_id
+  - profile_evidence_ref
+  - profile_evidence_binding_digest
+  query_budget_state: CONSUMED
+  transcript_state: retained-then-abort-appended
+  abort_cleanup_effect: required
+  fields_retained_for_audit:
+  - evaluation_contribution
+  - result_ack
+  - opaque_receipt_ref
+  - proposed_result_state
+  - accepted_result_state
+  fields_invalidated_for_future_mutation:
+  - disclosure_state
+  - live_session_mutation
+  coordinator_visible_fields:
+  - opaque_receipt_ref
+  - normalized_ack_status
+  party_local_only_fields:
+  - proposed_result_state
+  - local_result_binding
+- substate_id: party-b-acknowledged
+  completed_contribution_slots:
+  - party_a
+  - party_b
+  receipt_acknowledgment_slots:
+  - party_b
+  result_acknowledgment_presence: &id006
+    party_a: none
+    party_b: present
+  opaque_receipt_state: common-present
+  proposed_result_presence: *id006
+  accepted_result_presence:
+    party_a: none
+    party_b: none
+  profile_evidence_presence: *id006
+  binding_context_fields:
+  - session_id
+  - profile_id
+  - profile_version
+  - profile_instance_id
+  - evaluation_attempt_id
+  - profile_evidence_ref
+  - profile_evidence_binding_digest
+  query_budget_state: CONSUMED
+  transcript_state: retained-then-abort-appended
+  abort_cleanup_effect: required
+  fields_retained_for_audit:
+  - evaluation_contribution
+  - result_ack
+  - opaque_receipt_ref
+  - proposed_result_state
+  - accepted_result_state
+  fields_invalidated_for_future_mutation:
+  - disclosure_state
+  - live_session_mutation
+  coordinator_visible_fields:
+  - opaque_receipt_ref
+  - normalized_ack_status
+  party_local_only_fields:
+  - proposed_result_state
+  - local_result_binding
+- substate_id: both-acknowledged
+  completed_contribution_slots:
+  - party_a
+  - party_b
+  receipt_acknowledgment_slots:
+  - party_a
+  - party_b
+  result_acknowledgment_presence: &id007
+    party_a: present
+    party_b: present
+  opaque_receipt_state: common-present
+  proposed_result_presence: *id007
+  accepted_result_presence:
+    party_a: none
+    party_b: none
+  profile_evidence_presence: *id007
+  binding_context_fields:
+  - session_id
+  - profile_id
+  - profile_version
+  - profile_instance_id
+  - evaluation_attempt_id
+  - profile_evidence_ref
+  - profile_evidence_binding_digest
+  query_budget_state: CONSUMED
+  transcript_state: retained-then-abort-appended
+  abort_cleanup_effect: required
+  fields_retained_for_audit:
+  - evaluation_contribution
+  - result_ack
+  - opaque_receipt_ref
+  - proposed_result_state
+  - accepted_result_state
+  fields_invalidated_for_future_mutation:
+  - disclosure_state
+  - live_session_mutation
+  coordinator_visible_fields:
+  - opaque_receipt_ref
+  - normalized_ack_status
+  party_local_only_fields:
+  - proposed_result_state
+  - local_result_binding
+stage_contract_digest: sha256:e4af007a87443afb3a4a93cf477e3f968c151b66b7498e73e9b2c84b33593498
 limitations:
 - This contract is a deterministic projection of the reviewed State Machine and Message Registry, not an independent State Machine.
 - Synthetic global-observer data is test-only and is not a Product or Coordinator input.

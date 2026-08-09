@@ -33,7 +33,7 @@ Message Registry and State Machine.
 
 ## Lifecycle-stage authority
 
-`operation-stage-contract.v0.1.yaml` is a closed deterministic projection of
+`operation-stage-contract.v0.2.yaml` is a closed deterministic projection of
 the current State Machine and Message Registry. Each operation has its own
 pre-phase, transition set, post-phase/effect, field-availability rules,
 transcript behavior, query-budget effect, and result classification. Early
@@ -104,14 +104,14 @@ candidate requires a reviewed paid-AWS experiment grant. Missing authority is
 - Profile registry: `registry/pet-integration-profiles.v0.1.yaml`
 - Product handoff: `handoff/product-decision-engine-port.v0.1.yaml`
 - Operation-stage authority:
-  `specs/pet-integration/operation-stage-contract.v0.1.yaml`
-- Conformance cases: `conformance/pet-profiles/case-catalog.v0.1.json`
+  `specs/pet-integration/operation-stage-contract.v0.2.yaml`
+- Conformance cases: `conformance/pet-profiles/case-catalog.v0.2.json`
 - Closed operation input: `schema/pet-profile-operation-input.v0.2.schema.json`
 - Executed case results:
   `generated/pet-integration/executable-case-results.v0.2.json`
-- Preserved Draft v0.1 compatibility evidence: the prior operation-input
-  Schema, 19 generated operation inputs, and executable result set remain
-  byte-identical and digest-checked.
+- Preserved Draft v0.1 compatibility evidence: the prior operation-input,
+  operation-stage, and case-catalog Schemas and records, 19 generated operation
+  inputs, and executable result set remain byte-identical and digest-checked.
 - Generated comparison/index/handoff projection/digest manifest:
   `generated/pet-integration/`
 
@@ -138,13 +138,17 @@ accepted.
 
 The acknowledged-receipt abort correction adds required abort-state fields,
 so the closed operation-input and executable-result contracts advance to
-version `0.2`. The surrounding experimental profile, registry, stage,
-binding, handoff, and catalog authorities remain version `0.1`; their semantic
-digests are refreshed without broadening their closed shapes. Published v0.1
-operation inputs and results remain unchanged as compatibility evidence. A
+version `0.2`. The operation-stage contract and conformance case catalog also
+advance to version `0.2` because their closed shapes add required acknowledgment
+substate authority. The surrounding experimental profile, registry, binding,
+and handoff authorities remain version `0.1`; their semantic digests and stage
+references are refreshed without broadening their closed shapes. Published v0.1
+operation-input, stage-contract, case-catalog, and executable-result artifacts
+remain byte-identical and digest-checked as compatibility evidence. A
 v0.1 reader must reject the v0.2 input rather than infer the new substate
-semantics. Rollback selects the preserved v0.1 inputs and results and therefore
-does not claim support for acknowledged-receipt abort substates.
+semantics. Rollback selects the preserved v0.1 input, stage, catalog, and result
+artifacts and therefore does not claim support for acknowledged-receipt abort
+substates.
 
 The operation-stage contract contains a closed matrix for all eight
 `TR-ABORT` source phases. Participant, commitment, attempt, deadline,
