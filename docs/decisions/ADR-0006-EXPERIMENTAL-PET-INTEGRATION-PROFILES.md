@@ -144,10 +144,10 @@ input completeness, performance, or production eligibility.
 
 ## Compatibility and rollback
 
-These are new experimental Draft v0.1 artifacts and do not modify existing
-State Machine or Message schemas. Consumers must reject unknown versions and
-component-only engine selection. Rollback removes the new registry/profiles and
-handoff as a unit; it must not silently fall back to an unregistered adapter.
+The experimental PET authority is exact-version-only. Consumers must reject
+unknown versions and component-only engine selection. Rollback selects one
+complete reviewed graph; it must not silently fall back to an unregistered
+adapter or combine authority from different graph versions.
 
 ## Corrective Draft compatibility and authority closure
 
@@ -159,19 +159,24 @@ the resource-policy and execution-authorization digests into canonical message
 bytes rather than an unsigned reconstructed operation surface. Rolling back
 would reopen the reviewed substitution gap.
 
-The acknowledged-receipt abort correction advances the closed PET
-operation-input, operation-stage, conformance-case, and executable-result
-contracts to version `0.2`.
-Adding required acknowledgment-substate, binding, proposed-result-presence,
-and accepted-result-presence fields under operation-input version `0.1` would
-violate the repository compatibility policy. The v0.1 operation-input,
-operation-stage, and conformance-case Schemas and records, 19 generated
-operation inputs, and executable result set therefore remain byte-identical and
-digest-checked. The profile, registry, binding, and handoff versions remain
-`0.1`; they bind the v0.2 stage and input paths and semantic digests without
-changing their own closed field sets. Rollback uses the preserved v0.1
-input/stage/catalog/result artifacts and loses the new acknowledged-receipt
-abort coverage rather than silently inferring it.
+The acknowledged-receipt abort correction changes required state fields,
+accepted semantic authority, and the Product pre/post-state obligation. The
+complete profiles, registry, binding, handoff, operation-input, operation-stage,
+conformance-case, executable-result, index, comparison, projection, and digest
+manifest therefore advance together to version `0.2`. The corresponding v0.1
+artifacts remain byte-identical. `config/pet-contract-compatibility.v0.2.json`
+binds both complete graphs and rejects cross-version mixing, implicit fallback,
+forward inference, and partial authority. Rollback selects only the preserved
+v0.1 graph and loses acknowledged-receipt abort coverage rather than inferring
+v0.2 semantics.
+
+Acknowledgment Evidence digest inputs are structurally validated before any
+field projection or digest computation. The profile authority is a closed
+four-field mapping, must equal the selected profile/session/evaluation
+authority and each acknowledgment binding, and fails with the bounded
+`PET-PROFILE-AUTHORITY` code when malformed. Schema validation remains the
+normal first line of defense, while the semantic helper independently protects
+direct callers from raw `KeyError`, `TypeError`, or attribute failures.
 
 All `TR-ABORT` source phases are now governed by one derived closed phase
 matrix. The matrix is projected from the existing State Machine, not a second

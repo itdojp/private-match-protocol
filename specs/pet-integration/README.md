@@ -10,16 +10,16 @@ reviewed Research snapshot at commit
 
 The registry contains two materially different complete-decision contracts:
 
-- [SecretFlow KKRT PSI](secretflow-kkrt-v0.1.md), using a semi-honest PSI model;
-- [AWS Nitro Enclaves](nitro-enclave-v0.1.md), using hardware attestation and a
+- [SecretFlow KKRT PSI](secretflow-kkrt-v0.2.md), using a semi-honest PSI model;
+- [AWS Nitro Enclaves](nitro-enclave-v0.2.md), using hardware attestation and a
   reviewed enclave-artifact policy.
 
-The [RFC 9497/CIRCL VOPRF profile](voprf-component-v0.1.md) is component-only.
+The [RFC 9497/CIRCL VOPRF profile](voprf-component-v0.2.md) is component-only.
 It cannot be selected as `selected_integration_profile`, does not define set or
 session semantics, and cannot emit the Protocol result.
 
 The profiles do not duplicate the State Machine. The
-[machine-readable binding](protocol-binding.v0.1.yaml) references exact State
+[machine-readable binding](protocol-binding.v0.2.yaml) references exact State
 Machine and Message Registry semantic digests and maps profile operations to
 existing events, messages, transitions, guards, effects, transcript behavior,
 and replay/idempotency domains.
@@ -101,17 +101,20 @@ candidate requires a reviewed paid-AWS experiment grant. Missing authority is
 ## Artifacts
 
 - Research snapshot: `config/research-technology-authority.v0.1.json`
-- Profile registry: `registry/pet-integration-profiles.v0.1.yaml`
-- Product handoff: `handoff/product-decision-engine-port.v0.1.yaml`
+- Profile registry: `registry/pet-integration-profiles.v0.2.yaml`
+- Product handoff: `handoff/product-decision-engine-port.v0.2.yaml`
+- Protocol binding: `specs/pet-integration/protocol-binding.v0.2.yaml`
+- Closed version graph: `config/pet-contract-compatibility.v0.2.json`
 - Operation-stage authority:
   `specs/pet-integration/operation-stage-contract.v0.2.yaml`
 - Conformance cases: `conformance/pet-profiles/case-catalog.v0.2.json`
 - Closed operation input: `schema/pet-profile-operation-input.v0.2.schema.json`
 - Executed case results:
   `generated/pet-integration/executable-case-results.v0.2.json`
-- Preserved Draft v0.1 compatibility evidence: the prior operation-input,
-  operation-stage, and case-catalog Schemas and records, 19 generated operation
-  inputs, and executable result set remain byte-identical and digest-checked.
+- Preserved Draft v0.1 compatibility evidence: the prior profiles, registry,
+  binding, Product handoff, operation-input, operation-stage, and case-catalog
+  Schemas and records, generated operation inputs, comparison/index/projection,
+  and executable result set remain byte-identical and digest-checked.
 - Generated comparison/index/handoff projection/digest manifest:
   `generated/pet-integration/`
 
@@ -136,19 +139,21 @@ message authentication input, semantic digest, wire fingerprint, replay and
 conflict equality, and canonical transcript input. No unsigned side channel is
 accepted.
 
-The acknowledged-receipt abort correction adds required abort-state fields,
-so the closed operation-input and executable-result contracts advance to
-version `0.2`. The operation-stage contract and conformance case catalog also
-advance to version `0.2` because their closed shapes add required acknowledgment
-substate authority. The surrounding experimental profile, registry, binding,
-and handoff authorities remain version `0.1`; their semantic digests and stage
-references are refreshed without broadening their closed shapes. Published v0.1
-operation-input, stage-contract, case-catalog, and executable-result artifacts
-remain byte-identical and digest-checked as compatibility evidence. A
-v0.1 reader must reject the v0.2 input rather than infer the new substate
-semantics. Rollback selects the preserved v0.1 input, stage, catalog, and result
-artifacts and therefore does not claim support for acknowledged-receipt abort
-substates.
+The acknowledged-receipt abort correction adds required abort-state fields and
+changes the required authority references of the binding and Product handoff.
+The complete profile, registry, binding, handoff, operation, stage, case, result,
+index, comparison, projection, and digest-manifest graph therefore advances to
+version `0.2`. Published v0.1 artifacts remain byte-identical and are selected
+only as the complete rollback graph. The machine-readable compatibility map
+prohibits partial graphs, implicit fallback, forward inference, and v0.1/v0.2
+mixing. A v0.1 reader must reject v0.2 instead of reinterpreting v0.1.
+
+Before any acknowledgment Evidence digest is computed, the semantic validator
+requires a closed profile authority containing exactly the profile ID, version,
+digest, and instance ID. It then compares that authority with the selected
+profile, session/evaluation authority, and each acknowledgment binding.
+Malformed direct callers and normal Schema-driven callers both fail with the
+bounded `PET-PROFILE-AUTHORITY` code; raw language exceptions are not exposed.
 
 The operation-stage contract contains a closed matrix for all eight
 `TR-ABORT` source phases. Participant, commitment, attempt, deadline,
@@ -165,7 +170,7 @@ receipts, stale session/profile/attempt authority, or result acceptance before
 included in the abort projection, Product handoff, Coordinator state, or
 Evidence hooks.
 
-`config/pet-profile-error-codes.v0.1.json` is the closed bounded error-code
+`config/pet-profile-error-codes.v0.2.json` is the closed bounded error-code
 authority. Automated parity checks cover runtime emissions, mutation
 expectations, Schemas, and generated results. In particular, resource-policy
 and execution-authorization callback mismatches remain distinct, while timeout

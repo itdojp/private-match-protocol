@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import shutil
 import sys
@@ -26,10 +27,13 @@ from pet_profiles import (  # noqa: E402
     CANONICAL_CALLBACK_PATH,
     CALLBACK_BINDINGS,
     CASE_CATALOG_PATH,
+    COMPATIBILITY_PATH,
     COMPLETE_PROFILE_IDS,
     COMPONENT_PROFILE_IDS,
     GENERATED_PATHS,
     HANDOFF_PATH,
+    LEGACY_BINDING_PATH,
+    LEGACY_HANDOFF_PATH,
     ERROR_CODE_CATALOG_PATH,
     EVALUATING_ACKNOWLEDGMENT_SUBSTATE_ORDER,
     INVALID_CASE_CODES,
@@ -59,6 +63,10 @@ from pet_profiles import (  # noqa: E402
     validate_repository,
     validate_error_code_authority,
     validate_semantics,
+    validate_contract_compatibility,
+    expected_contract_compatibility,
+    require_acknowledgment_evidence_binding,
+    require_profile_authority,
     _acknowledgment_evidence_digest,
     _execution_authorization_digest,
     _execute_invalid_case,
@@ -170,6 +178,343 @@ class PetProfileTests(unittest.TestCase):
                 record["authoritative_context"]["profile_authority"] = malformed
                 with self.assertRaisesRegex(PetProfileError, "PET-PROFILE-AUTHORITY"):
                     validate_operation_input(self.values, record)
+
+    def test_published_v01_binding_handoff_and_profiles_are_byte_preserved(
+        self,
+    ) -> None:
+        expected = {
+            "schema/pet-protocol-binding.v0.1.schema.json": "f3bafeda118d2d4f8e8639ed5ae78694274b2393015ddf84a7fbc6f264aa2a01",
+            "specs/pet-integration/protocol-binding.v0.1.yaml": "423b049cdce59979d7179de9e1997a7abf5788a6f849b4a6b1fde3e5e6b4b432",
+            "schema/product-decision-engine-handoff.v0.1.schema.json": "a298815516a90098238c49746c40743ef9dea8b40592cbe75d76fec6e0c44019",
+            "handoff/product-decision-engine-port.v0.1.yaml": "277fefa5c549aafff4b34c13f0c7a14091bf25af5a12865ef9e38649c0cffdb3",
+            "profiles/pet-integration/secretflow-kkrt.v0.1.json": "2f3701adb199c3dcbb0ea5a2dcfb56729ce04ca3629c13c3e3198f3ff2a1be62",
+            "profiles/pet-integration/nitro-enclave.v0.1.json": "0e771ae5b39965476ba42d93ab4f00ec314541e1e45c7fe156348abff10fb1ab",
+            "profiles/pet-integration/voprf-component.v0.1.json": "a826982fc38ac39c4a0616ad5ff69118d4b887851f530958667889119080cfc9",
+            "registry/pet-integration-profiles.v0.1.yaml": "eadf100c2ac78bebd8e39327a825295d4adfdbce0dc7f9c94eef0d46e87f654a",
+            "generated/pet-integration/profile-index.v0.1.json": "7399342c3bc3989630c2d7d9b28208c26b87d0e35385c6100ad96a544416ff92",
+            "generated/pet-integration/product-handoff-projection.v0.1.json": "5f4e17f692b46bb445c3b0cb710613659459a05f58271c9bed3dafd5436a5617",
+            "config/pet-profile-error-codes.v0.1.json": "7290214598ca55257132c6511afea15fe8a4b5a86918d8d0d23bcd52d49289e5",
+            "schema/pet-profile-error-codes.v0.1.schema.json": "46a49b8fda8b727ba44b5d54bb12ccc95c4dac7e73bcc11818ff6a3185ccfe73",
+        }
+        for relative, digest in expected.items():
+            with self.subTest(path=relative):
+                self.assertEqual(
+                    digest,
+                    hashlib.sha256((ROOT / relative).read_bytes()).hexdigest(),
+                )
+
+    def test_v01_and_v02_binding_handoff_schemas_are_not_interchangeable(
+        self,
+    ) -> None:
+        legacy_binding = strict_yaml_load((ROOT / LEGACY_BINDING_PATH).read_text())
+        legacy_handoff = strict_yaml_load((ROOT / LEGACY_HANDOFF_PATH).read_text())
+        legacy_binding_schema = json.loads(
+            (ROOT / "schema/pet-protocol-binding.v0.1.schema.json").read_text()
+        )
+        legacy_handoff_schema = json.loads(
+            (
+                ROOT / "schema/product-decision-engine-handoff.v0.1.schema.json"
+            ).read_text()
+        )
+        self.assertFalse(
+            list(
+                Draft202012Validator(legacy_binding_schema).iter_errors(legacy_binding)
+            )
+        )
+        self.assertFalse(
+            list(
+                Draft202012Validator(legacy_handoff_schema).iter_errors(legacy_handoff)
+            )
+        )
+        self.assertFalse(
+            list(
+                Draft202012Validator(self.values["schemas"]["binding"]).iter_errors(
+                    self.values["binding"]
+                )
+            )
+        )
+        self.assertFalse(
+            list(
+                Draft202012Validator(self.values["schemas"]["handoff"]).iter_errors(
+                    self.values["handoff"]
+                )
+            )
+        )
+        self.assertTrue(
+            list(
+                Draft202012Validator(self.values["schemas"]["binding"]).iter_errors(
+                    legacy_binding
+                )
+            )
+        )
+        self.assertTrue(
+            list(
+                Draft202012Validator(self.values["schemas"]["handoff"]).iter_errors(
+                    legacy_handoff
+                )
+            )
+        )
+
+    def test_binding_and_handoff_version_boundaries_fail_closed(self) -> None:
+        legacy_binding = strict_yaml_load((ROOT / LEGACY_BINDING_PATH).read_text())
+        legacy_handoff = strict_yaml_load((ROOT / LEGACY_HANDOFF_PATH).read_text())
+        legacy_binding_schema = json.loads(
+            (ROOT / "schema/pet-protocol-binding.v0.1.schema.json").read_text()
+        )
+        legacy_handoff_schema = json.loads(
+            (
+                ROOT / "schema/product-decision-engine-handoff.v0.1.schema.json"
+            ).read_text()
+        )
+        cases = (
+            (
+                legacy_binding_schema,
+                {
+                    **legacy_binding,
+                    "operation_stage_contract_path": str(STAGE_CONTRACT_PATH),
+                },
+            ),
+            (
+                self.values["schemas"]["binding"],
+                {
+                    **self.values["binding"],
+                    "operation_stage_contract_path": (
+                        "specs/pet-integration/operation-stage-contract.v0.1.yaml"
+                    ),
+                },
+            ),
+            (
+                legacy_handoff_schema,
+                {
+                    **legacy_handoff,
+                    "acknowledgment_substate_requirements": copy.deepcopy(
+                        self.values["handoff"]["acknowledgment_substate_requirements"]
+                    ),
+                },
+            ),
+            (
+                self.values["schemas"]["handoff"],
+                {
+                    key: value
+                    for key, value in self.values["handoff"].items()
+                    if key != "acknowledgment_substate_requirements"
+                },
+            ),
+        )
+        for schema, artifact in cases:
+            with self.subTest(schema=schema["$id"]):
+                self.assertTrue(
+                    list(Draft202012Validator(schema).iter_errors(artifact))
+                )
+
+        compatibility = self.values["compatibility"]
+        rollback = {
+            item["role"]: item for item in compatibility["graphs"][0]["artifacts"]
+        }
+        current = {
+            item["role"]: item for item in compatibility["graphs"][1]["artifacts"]
+        }
+        for role in (
+            "operation-stage",
+            "operation-input-schema",
+            "profile-schema",
+            "registry",
+            "protocol-binding",
+            "product-handoff",
+            "error-code-catalog",
+            "error-code-schema",
+        ):
+            with self.subTest(role=role):
+                self.assertIn("v0.1", rollback[role]["path"])
+                self.assertIn("v0.2", current[role]["path"])
+        self.assertFalse(compatibility["rules"]["implicit_fallback"])
+        self.assertFalse(compatibility["rules"]["forward_inference"])
+        for requirement in compatibility["version_requirements"]:
+            version = f"v{requirement['contract_version']}"
+            for key, value in requirement.items():
+                if key.endswith("_path"):
+                    with self.subTest(version=version, path=key):
+                        self.assertIn(version, value)
+        self.assertEqual("0.2", self.values["error_codes"]["schema_version"])
+        self.assertEqual(
+            Path("config/pet-profile-error-codes.v0.2.json"),
+            ERROR_CODE_CATALOG_PATH,
+        )
+
+        current_projection = generated_files(ROOT)[GENERATED_PATHS["handoff"]]
+        self.assertEqual(
+            current_projection, generated_files(ROOT)[GENERATED_PATHS["handoff"]]
+        )
+
+    def test_contract_compatibility_map_closes_complete_version_graphs(self) -> None:
+        compatibility = self.values["compatibility"]
+        self.assertEqual(compatibility, expected_contract_compatibility(ROOT))
+        self.assertEqual(
+            [("rollback-v0.1", "0.1"), ("current-v0.2", "0.2")],
+            [
+                (item["graph_id"], item["contract_version"])
+                for item in compatibility["graphs"]
+            ],
+        )
+        validate_contract_compatibility(self.values)
+        for graph in compatibility["graphs"]:
+            paths = [item["path"] for item in graph["artifacts"]]
+            self.assertEqual(len(paths), len(set(paths)))
+        self.assertEqual(
+            COMPATIBILITY_PATH,
+            Path("config/pet-contract-compatibility.v0.2.json"),
+        )
+
+    def test_cross_version_and_partial_contract_graphs_fail_closed(self) -> None:
+        for mutation in ("cross-version", "partial", "redigested-substitution"):
+            with self.subTest(mutation=mutation):
+                values = copy.deepcopy(self.values)
+                graph = values["compatibility"]["graphs"][1]
+                if mutation == "cross-version":
+                    graph["artifacts"][0]["path"] = values["compatibility"]["graphs"][
+                        0
+                    ]["artifacts"][0]["path"]
+                elif mutation == "partial":
+                    graph["artifacts"].pop()
+                else:
+                    graph["artifacts"][0]["file_digest"] = "sha256:" + "aa" * 32
+                values["compatibility"]["compatibility_digest"] = detached_digest(
+                    "compatibility",
+                    values["compatibility"],
+                    "compatibility_digest",
+                )
+                with self.assertRaisesRegex(
+                    PetProfileError, "PET-CONTRACT-VERSION-GRAPH"
+                ):
+                    validate_contract_compatibility(values)
+
+    def test_profile_authority_helper_rejects_all_incomplete_shapes(self) -> None:
+        valid = copy.deepcopy(next(iter(self.values["profiles"].values())))
+        authority = {
+            "profile_id": valid["profile_id"],
+            "profile_version": valid["profile_version"],
+            "profile_digest": valid["profile_digest"],
+            "profile_instance_id": "urn:private-match:test:profile-instance:guard",
+        }
+        malformed = [
+            {},
+            None,
+            [],
+            "invalid",
+            {key: value for key, value in authority.items() if key != "profile_id"},
+            {
+                key: value
+                for key, value in authority.items()
+                if key != "profile_version"
+            },
+            {key: value for key, value in authority.items() if key != "profile_digest"},
+            {
+                key: value
+                for key, value in authority.items()
+                if key != "profile_instance_id"
+            },
+            {**authority, "extra": "closed"},
+            {**authority, "profile_id": 7},
+            {**authority, "profile_id": "Invalid Profile"},
+            {**authority, "profile_version": 2},
+            {**authority, "profile_digest": "sha256:not-a-digest"},
+            {**authority, "profile_instance_id": ""},
+            {**authority, "profile_instance_id": "contains whitespace"},
+        ]
+        for value in malformed:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(PetProfileError, "PET-PROFILE-AUTHORITY"):
+                    require_profile_authority(value)
+
+    def test_profile_authority_malformed_inputs_never_escape_raw_exceptions(
+        self,
+    ) -> None:
+        item = next(
+            case
+            for case in self.values["cases"]["valid_cases"]
+            if case.get("abort_acknowledgment_substate") == "party-a-acknowledged"
+        )
+        mutations: list[dict[str, object]] = []
+        base = operation_input_for_case(self.values, item)
+        for malformed in ({}, None, [], "invalid"):
+            record = copy.deepcopy(base)
+            record["authoritative_context"]["profile_authority"] = malformed
+            mutations.append(record)
+        for key in (
+            "profile_id",
+            "profile_version",
+            "profile_digest",
+            "profile_instance_id",
+        ):
+            record = copy.deepcopy(base)
+            record["authoritative_context"]["profile_authority"].pop(key)
+            if key != "profile_digest":
+                record["authoritative_context"]["initial_state"][
+                    "result_acknowledgment_bindings"
+                ]["party_a"].pop(key)
+            mutations.append(record)
+        for key in ("profile_id", "profile_version", "profile_instance_id"):
+            record = copy.deepcopy(base)
+            record["authoritative_context"]["initial_state"][
+                "result_acknowledgment_bindings"
+            ]["party_a"].pop(key)
+            mutations.append(record)
+        mismatch = copy.deepcopy(base)
+        mismatch["authoritative_context"]["profile_authority"]["profile_id"] = (
+            "private-match-experimental-nitro-enclave"
+        )
+        mutations.append(mismatch)
+        extra = copy.deepcopy(base)
+        extra["authoritative_context"]["profile_authority"]["extra"] = "closed"
+        mutations.append(extra)
+        for record in mutations:
+            with self.subTest(record=record):
+                with self.assertRaises(PetProfileError) as caught:
+                    validate_operation_input(self.values, record)
+                self.assertEqual("PET-PROFILE-AUTHORITY", caught.exception.code)
+
+    def test_acknowledgment_digest_helper_validates_before_indexing(self) -> None:
+        item = next(
+            case
+            for case in self.values["cases"]["valid_cases"]
+            if case.get("abort_acknowledgment_substate") == "party-a-acknowledged"
+        )
+        record = operation_input_for_case(self.values, item)
+        binding = record["authoritative_context"]["initial_state"][
+            "result_acknowledgment_bindings"
+        ]["party_a"]
+        for key in ("profile_id", "profile_version", "profile_instance_id"):
+            with self.subTest(key=key):
+                malformed = copy.deepcopy(binding)
+                malformed.pop(key)
+                with self.assertRaisesRegex(PetProfileError, "PET-PROFILE-AUTHORITY"):
+                    require_acknowledgment_evidence_binding(malformed)
+                with self.assertRaisesRegex(PetProfileError, "PET-PROFILE-AUTHORITY"):
+                    _acknowledgment_evidence_digest(malformed)
+        wrong_receipt_type = copy.deepcopy(binding)
+        wrong_receipt_type["opaque_receipt_ref"] = 7
+        with self.assertRaisesRegex(PetProfileError, "PET-RECEIPT-BINDING"):
+            _acknowledgment_evidence_digest(wrong_receipt_type)
+
+    def test_catalog_generator_and_validator_reject_malformed_profile_authority(
+        self,
+    ) -> None:
+        mutations = (
+            "abort-profile-authority-empty",
+            "abort-profile-authority-null",
+            "abort-profile-authority-extra-key",
+            "abort-ack-binding-missing-profile-id",
+        )
+        catalog = {
+            item["mutation"]: item["expected_error"]
+            for item in self.values["cases"]["invalid_cases"]
+        }
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertEqual("PET-PROFILE-AUTHORITY", catalog[mutation])
+                with self.assertRaises(PetProfileError) as caught:
+                    _execute_invalid_case(self.values, mutation)
+                self.assertEqual("PET-PROFILE-AUTHORITY", caught.exception.code)
 
     def test_research_authority_is_exact_offline_reviewed_snapshot(self) -> None:
         authority = self.values["authority"]
@@ -1227,7 +1572,7 @@ class PetProfileTests(unittest.TestCase):
         first = generated_files(ROOT)
         second = generated_files(ROOT)
         self.assertEqual(first, second)
-        self.assertEqual(50, len(first))
+        self.assertEqual(54, len(first))
         self.assertTrue(set(GENERATED_PATHS.values()) <= set(first))
         for relative, content in first.items():
             self.assertEqual(content, (ROOT / relative).read_bytes(), relative)
@@ -1258,7 +1603,7 @@ class PetProfileTests(unittest.TestCase):
         self.assertIn(
             "conformance/source/message-conformance-inputs.v0.1.json", input_paths
         )
-        self.assertEqual(49, len(manifest["generated_outputs"]))
+        self.assertEqual(53, len(manifest["generated_outputs"]))
 
     def _repository_copy(self):
         scratch = ROOT / "artifacts"

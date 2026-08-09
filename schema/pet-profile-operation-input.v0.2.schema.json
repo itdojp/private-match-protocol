@@ -1541,7 +1541,7 @@
           "type": "string"
         },
         "profile_version": {
-          "const": "0.1"
+          "const": "0.2"
         },
         "session_id": {
           "maxLength": 2048,
@@ -3698,12 +3698,6 @@
             "profile_authority": {
               "additionalProperties": false,
               "properties": {
-                "profile_class": {
-                  "enum": [
-                    "complete-decision-profile",
-                    "component-only"
-                  ]
-                },
                 "profile_digest": {
                   "pattern": "^sha256:[0-9a-f]{64}$",
                   "type": "string"
@@ -3728,7 +3722,6 @@
                 "profile_id",
                 "profile_version",
                 "profile_digest",
-                "profile_class",
                 "profile_instance_id"
               ],
               "type": "object"
@@ -3855,12 +3848,6 @@
             "profile_authority": {
               "additionalProperties": false,
               "properties": {
-                "profile_class": {
-                  "enum": [
-                    "complete-decision-profile",
-                    "component-only"
-                  ]
-                },
                 "profile_digest": {
                   "pattern": "^sha256:[0-9a-f]{64}$",
                   "type": "string"
@@ -3885,7 +3872,6 @@
                 "profile_id",
                 "profile_version",
                 "profile_digest",
-                "profile_class",
                 "profile_instance_id"
               ],
               "type": "object"
@@ -3965,12 +3951,6 @@
             "profile_authority": {
               "additionalProperties": false,
               "properties": {
-                "profile_class": {
-                  "enum": [
-                    "complete-decision-profile",
-                    "component-only"
-                  ]
-                },
                 "profile_digest": {
                   "pattern": "^sha256:[0-9a-f]{64}$",
                   "type": "string"
@@ -3995,7 +3975,6 @@
                 "profile_id",
                 "profile_version",
                 "profile_digest",
-                "profile_class",
                 "profile_instance_id"
               ],
               "type": "object"
@@ -4122,12 +4101,6 @@
             "profile_authority": {
               "additionalProperties": false,
               "properties": {
-                "profile_class": {
-                  "enum": [
-                    "complete-decision-profile",
-                    "component-only"
-                  ]
-                },
                 "profile_digest": {
                   "pattern": "^sha256:[0-9a-f]{64}$",
                   "type": "string"
@@ -4152,7 +4125,6 @@
                 "profile_id",
                 "profile_version",
                 "profile_digest",
-                "profile_class",
                 "profile_instance_id"
               ],
               "type": "object"
@@ -4295,12 +4267,6 @@
             "profile_authority": {
               "additionalProperties": false,
               "properties": {
-                "profile_class": {
-                  "enum": [
-                    "complete-decision-profile",
-                    "component-only"
-                  ]
-                },
                 "profile_digest": {
                   "pattern": "^sha256:[0-9a-f]{64}$",
                   "type": "string"
@@ -4325,7 +4291,6 @@
                 "profile_id",
                 "profile_version",
                 "profile_digest",
-                "profile_class",
                 "profile_instance_id"
               ],
               "type": "object"
@@ -4468,12 +4433,6 @@
             "profile_authority": {
               "additionalProperties": false,
               "properties": {
-                "profile_class": {
-                  "enum": [
-                    "complete-decision-profile",
-                    "component-only"
-                  ]
-                },
                 "profile_digest": {
                   "pattern": "^sha256:[0-9a-f]{64}$",
                   "type": "string"
@@ -4498,7 +4457,6 @@
                 "profile_id",
                 "profile_version",
                 "profile_digest",
-                "profile_class",
                 "profile_instance_id"
               ],
               "type": "object"
@@ -4578,12 +4536,6 @@
             "profile_authority": {
               "additionalProperties": false,
               "properties": {
-                "profile_class": {
-                  "enum": [
-                    "complete-decision-profile",
-                    "component-only"
-                  ]
-                },
                 "profile_digest": {
                   "pattern": "^sha256:[0-9a-f]{64}$",
                   "type": "string"
@@ -4608,7 +4560,6 @@
                 "profile_id",
                 "profile_version",
                 "profile_digest",
-                "profile_class",
                 "profile_instance_id"
               ],
               "type": "object"
@@ -4688,12 +4639,6 @@
             "profile_authority": {
               "additionalProperties": false,
               "properties": {
-                "profile_class": {
-                  "enum": [
-                    "complete-decision-profile",
-                    "component-only"
-                  ]
-                },
                 "profile_digest": {
                   "pattern": "^sha256:[0-9a-f]{64}$",
                   "type": "string"
@@ -4718,7 +4663,6 @@
                 "profile_id",
                 "profile_version",
                 "profile_digest",
-                "profile_class",
                 "profile_instance_id"
               ],
               "type": "object"
@@ -4798,12 +4742,6 @@
             "profile_authority": {
               "additionalProperties": false,
               "properties": {
-                "profile_class": {
-                  "enum": [
-                    "complete-decision-profile",
-                    "component-only"
-                  ]
-                },
                 "profile_digest": {
                   "pattern": "^sha256:[0-9a-f]{64}$",
                   "type": "string"
@@ -4828,7 +4766,6 @@
                 "profile_id",
                 "profile_version",
                 "profile_digest",
-                "profile_class",
                 "profile_instance_id"
               ],
               "type": "object"

@@ -29,7 +29,7 @@ path = [
   "schema/session-state-machine.schema.json",
   "schema/conformance-*.schema.json",
   "schema/pet-*.schema.json",
-  "schema/product-decision-engine-handoff.v0.1.schema.json",
+  "schema/product-decision-engine-handoff.v*.schema.json",
   "schema/research-technology-authority.v0.1.schema.json",
   "specs/pet-integration/*.yaml",
   "scripts/validate_leakage_contract.py",
@@ -76,7 +76,7 @@ path = [
   "specs/conformance/*.md",
   "specs/state-machines/*.md",
   "specs/pet-integration/*.md",
-  "generated/pet-integration/profile-comparison.v0.1.md",
+  "generated/pet-integration/profile-comparison.v*.md",
   "conformance/results/*.md",
 ]
 precedence = "aggregate"
