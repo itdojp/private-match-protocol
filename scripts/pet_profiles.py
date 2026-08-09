@@ -146,8 +146,8 @@ SCHEMAS = {
     "handoff": Path("schema/product-decision-engine-handoff.v0.1.schema.json"),
     "binding": Path("schema/pet-protocol-binding.v0.1.schema.json"),
     "cases": Path("schema/pet-profile-conformance-cases.v0.1.schema.json"),
-    "operation": Path("schema/pet-profile-operation-input.v0.1.schema.json"),
-    "case_results": Path("schema/pet-profile-case-results.v0.1.schema.json"),
+    "operation": Path("schema/pet-profile-operation-input.v0.2.schema.json"),
+    "case_results": Path("schema/pet-profile-case-results.v0.2.schema.json"),
     "stage": Path("schema/pet-operation-stage-contract.v0.1.schema.json"),
     "error_codes": Path("schema/pet-profile-error-codes.v0.1.schema.json"),
 }
@@ -156,7 +156,69 @@ GENERATED_PATHS = {
     "comparison": GENERATED_ROOT / "profile-comparison.v0.1.md",
     "handoff": GENERATED_ROOT / "product-handoff-projection.v0.1.json",
     "manifest": GENERATED_ROOT / "profile-digest-manifest.v0.1.json",
-    "case_results": GENERATED_ROOT / "executable-case-results.v0.1.json",
+    "case_results": GENERATED_ROOT / "executable-case-results.v0.2.json",
+}
+LEGACY_GENERATED_DIGESTS = {
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-commitments-pending.v0.1.json"
+    ): "sha256:5bdb4fc200490d03022f0b1881785fea8430e857071d5e23b4500e7b7878a06b",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-committed.v0.1.json"
+    ): "sha256:a22fec71773921b1cb1ae92202105f49ca82a03e7042d4a39bad2bca8d98fd6e",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-consent-pending.v0.1.json"
+    ): "sha256:e092468f66d840a629c9f4c1fea427205d7e11cbf95ae368c74d720903cf1189",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-created.v0.1.json"
+    ): "sha256:d3c1d47e1660822048db205f73f4040aa24ce5ff093e8cb12de66d5392837536",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-disclosure-authorized.v0.1.json"
+    ): "sha256:dcc69af8ce535753b9f0fed3178534623600b18e08ab56c56e21427aad267a57",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-participants-bound.v0.1.json"
+    ): "sha256:f0d742fb43fcdf5b89e25aa52d68ade4d67a4acf68c065f0d3861de0b26c3039",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-result-accepted.v0.1.json"
+    ): "sha256:1587188973cdc474d3f8ba72425f2ed333aac9fd9702b6c773a0aa06bfec80bf",
+    Path(
+        "generated/pet-integration/cases/pet-valid-cancellation-cleanup.v0.1.json"
+    ): "sha256:a179d0921c0beb3a6591cb109dab426c20c3db445bd0b512fa9908bf9f38577f",
+    Path(
+        "generated/pet-integration/cases/pet-valid-contribution-a.v0.1.json"
+    ): "sha256:0dea1d6e4662a390c7845552076f8fbd86bec0562ea263c87bcfe851c0419d75",
+    Path(
+        "generated/pet-integration/cases/pet-valid-contribution-b.v0.1.json"
+    ): "sha256:84a76e461d028bb15b953b2bf90f5c932f28e0e84438e90d41f767d961ad3316",
+    Path(
+        "generated/pet-integration/cases/pet-valid-evaluation-start.v0.1.json"
+    ): "sha256:291d94ee10d761984a909f0ece08f5b95a9341625c907a0e19904b0dfc272abe",
+    Path(
+        "generated/pet-integration/cases/pet-valid-evaluation-timeout.v0.1.json"
+    ): "sha256:88df3a5e51cc5386e0356e5eece12bf684a14aeea1bd3a5d344ede62eff4b3a4",
+    Path(
+        "generated/pet-integration/cases/pet-valid-nitro-selection.v0.1.json"
+    ): "sha256:25f61b8942698c1c2030d811dd8ce856ed482c517e0bb777fbee7642616d45f3",
+    Path(
+        "generated/pet-integration/cases/pet-valid-profile-callback.v0.1.json"
+    ): "sha256:8f83b67cdc4b47ee63bffd246e9728377b9c0df7593c5b685fa30959ab2e021c",
+    Path(
+        "generated/pet-integration/cases/pet-valid-query-budget.v0.1.json"
+    ): "sha256:52a293b5bc050db6f8dcfdbaa37fa2b49b3feeee02d44e01ecd1d9d0171a3f35",
+    Path(
+        "generated/pet-integration/cases/pet-valid-receipt-a.v0.1.json"
+    ): "sha256:a733747ab0f9d64484bd6112d868df935e9338f4ff04770b3edda727dc8993dd",
+    Path(
+        "generated/pet-integration/cases/pet-valid-receipt-b.v0.1.json"
+    ): "sha256:bf79cb1b35d6d166ff864500d54b8b30be5d9492dd96c54b4baf817cc4eee47d",
+    Path(
+        "generated/pet-integration/cases/pet-valid-secretflow-selection.v0.1.json"
+    ): "sha256:89ada833279dbf2b7ceaf0fcfc5c168400bee08ba72192ccbbe7d96d0daf4551",
+    Path(
+        "generated/pet-integration/cases/pet-valid-voprf-registration.v0.1.json"
+    ): "sha256:b5db359f0fccfc415c3d570a237825684e5c2fb95826647ab886758fc46cab45",
+    Path(
+        "generated/pet-integration/executable-case-results.v0.1.json"
+    ): "sha256:096c3fbf23cc1822a764d2d66a03c17943d5c41cabbd6254656426b315c4dcf3",
 }
 MAX_FILE_BYTES = 2 * 1024 * 1024
 
@@ -167,8 +229,8 @@ DOMAINS = {
     "handoff": b"private-match-product-decision-engine-handoff/v0.1\x00",
     "binding": b"private-match-pet-protocol-binding/v0.1\x00",
     "cases": b"private-match-pet-profile-conformance-cases/v0.1\x00",
-    "operation": b"private-match-pet-profile-operation-input/v0.1\x00",
-    "case_results": b"private-match-pet-profile-executable-case-results/v0.1\x00",
+    "operation": b"private-match-pet-profile-operation-input/v0.2\x00",
+    "case_results": b"private-match-pet-profile-executable-case-results/v0.2\x00",
     "stage": b"private-match-pet-operation-stage-contract/v0.1\x00",
     "observer": b"private-match-pet-synthetic-result-observer/v0.1\x00",
     "acknowledgment_evidence": (
@@ -2377,24 +2439,25 @@ def _validate_abort_phase_state(
             "PET-CALLBACK-BINDING",
         )
         _require(
-            binding.get("session_id") == observed["session_id"],
+            binding.get("session_id") == observed.get("session_id"),
             "PET-SESSION-BINDING",
         )
         _require(
-            binding.get("profile_id") == profile_authority["profile_id"],
+            binding.get("profile_id") == profile_authority.get("profile_id"),
             "PET-CROSS-PROFILE",
         )
         _require(
-            binding.get("profile_version") == profile_authority["profile_version"],
+            binding.get("profile_version") == profile_authority.get("profile_version"),
             "PET-PROFILE-VERSION",
         )
         _require(
             binding.get("profile_instance_id")
-            == profile_authority["profile_instance_id"],
+            == profile_authority.get("profile_instance_id"),
             "PET-PROFILE-INSTANCE",
         )
         _require(
-            binding.get("evaluation_attempt_id") == observed["evaluation_attempt_id"],
+            binding.get("evaluation_attempt_id")
+            == observed.get("evaluation_attempt_id"),
             "PET-EVALUATION-ATTEMPT",
         )
         _require(
@@ -2800,7 +2863,7 @@ def operation_input_for_case(
     )
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "record_type": "pet-profile-operation-input",
         "artifact_status": "experimental",
         "synthetic": True,
@@ -4170,6 +4233,10 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         GENERATED_PATHS["comparison"]: "\n".join(lines).encode("utf-8"),
         GENERATED_PATHS["handoff"]: _canonical_json(projection),
     }
+    for relative, digest in LEGACY_GENERATED_DIGESTS.items():
+        content = _regular_file(root, relative).read_bytes()
+        _require(sha256_bytes(content) == digest, "PET-LEGACY-VERSION-DIGEST")
+        files[relative] = content
     executed_results = []
     for item in values["cases"]["valid_cases"]:
         operation_input = operation_input_for_case(values, item)
@@ -4191,7 +4258,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             == (
                 "generated/pet-integration/cases/"
                 + item["case_id"].lower()
-                + ".v0.1.json"
+                + ".v0.2.json"
             ),
             "PET-CASE-INPUT-PATH",
             item["case_id"],
@@ -4207,7 +4274,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             }
         )
     case_results = {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "record_type": "pet-profile-executable-case-results",
         "artifact_status": "experimental",
         "catalog_digest": values["cases"]["catalog_digest"],
@@ -4273,6 +4340,9 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         Path("specs/pet-integration/secretflow-kkrt-v0.1.md"),
         Path("specs/pet-integration/nitro-enclave-v0.1.md"),
         Path("specs/pet-integration/voprf-component-v0.1.md"),
+        Path("schema/pet-profile-operation-input.v0.1.schema.json"),
+        Path("schema/pet-profile-case-results.v0.1.schema.json"),
+        Path("generated/pet-integration/executable-case-results.v0.1.json"),
     ]
     entries = []
     for relative in sorted(behavior_paths, key=lambda item: item.as_posix()):

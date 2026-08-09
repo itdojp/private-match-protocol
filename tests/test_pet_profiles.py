@@ -88,6 +88,48 @@ class PetProfileTests(unittest.TestCase):
         mutated["security_model"]["unstated_claim"] = True
         self.assertTrue(list(Draft202012Validator(schema).iter_errors(mutated)))
 
+    def test_operation_input_breaking_fields_use_v0_2_boundary(self) -> None:
+        legacy = json.loads(
+            (ROOT / "schema/pet-profile-operation-input.v0.1.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        current = self.values["schemas"]["operation"]
+        new_fields = {
+            "acknowledgment_substate_id",
+            "result_acknowledgment_bindings",
+            "proposed_result_presence",
+            "accepted_result_presence",
+        }
+        self.assertTrue(
+            new_fields.isdisjoint(legacy["$defs"]["abort_state"]["required"])
+        )
+        self.assertTrue(
+            new_fields.issubset(current["$defs"]["abort_state"]["required"])
+        )
+        item = next(
+            case
+            for case in self.values["cases"]["valid_cases"]
+            if case.get("abort_acknowledgment_substate") == "party-a-acknowledged"
+        )
+        record = operation_input_for_case(self.values, item)
+        self.assertEqual("0.2", record["schema_version"])
+        self.assertEqual("0.1", self.values["stage"]["schema_version"])
+        self.assertEqual("0.1", self.values["cases"]["schema_version"])
+        self.assertTrue(
+            all(
+                case["input_path"].endswith(".v0.2.json")
+                for case in self.values["cases"]["valid_cases"]
+            )
+        )
+        self.assertFalse(list(Draft202012Validator(current).iter_errors(record)))
+        legacy_record = copy.deepcopy(record)
+        legacy_record["schema_version"] = "0.1"
+        self.assertTrue(
+            list(Draft202012Validator(legacy).iter_errors(legacy_record)),
+            "v0.1 readers must reject rather than infer v0.2 abort state",
+        )
+
     def test_research_authority_is_exact_offline_reviewed_snapshot(self) -> None:
         authority = self.values["authority"]
         self.assertEqual(RESEARCH_COMMIT, authority["commit"])
@@ -812,6 +854,20 @@ class PetProfileTests(unittest.TestCase):
                 self.assertNotIn(prohibited, serialized)
             self.assertNotIn("synthetic_conformance_observer", serialized)
 
+    def test_malformed_acknowledged_abort_is_bounded_before_schema_validation(
+        self,
+    ) -> None:
+        item = next(
+            case
+            for case in self.values["cases"]["valid_cases"]
+            if case.get("abort_acknowledgment_substate") == "party-a-acknowledged"
+        )
+        record = operation_input_for_case(self.values, item)
+        del record["authoritative_context"]["initial_state"]["session_id"]
+        with self.assertRaises(PetProfileError) as caught:
+            validate_operation_input(self.values, record)
+        self.assertEqual("PET-SESSION-BINDING", caught.exception.code)
+
     def test_party_decision_vocabulary_is_closed_before_symmetry(self) -> None:
         record = conformance_input_for_mutation(
             self.values, "unknown-symmetric-decision"
@@ -1130,7 +1186,7 @@ class PetProfileTests(unittest.TestCase):
         first = generated_files(ROOT)
         second = generated_files(ROOT)
         self.assertEqual(first, second)
-        self.assertEqual(30, len(first))
+        self.assertEqual(50, len(first))
         self.assertTrue(set(GENERATED_PATHS.values()) <= set(first))
         for relative, content in first.items():
             self.assertEqual(content, (ROOT / relative).read_bytes(), relative)
@@ -1161,7 +1217,7 @@ class PetProfileTests(unittest.TestCase):
         self.assertIn(
             "conformance/source/message-conformance-inputs.v0.1.json", input_paths
         )
-        self.assertEqual(29, len(manifest["generated_outputs"]))
+        self.assertEqual(49, len(manifest["generated_outputs"]))
 
     def _repository_copy(self):
         scratch = ROOT / "artifacts"

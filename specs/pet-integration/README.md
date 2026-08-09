@@ -106,9 +106,12 @@ candidate requires a reviewed paid-AWS experiment grant. Missing authority is
 - Operation-stage authority:
   `specs/pet-integration/operation-stage-contract.v0.1.yaml`
 - Conformance cases: `conformance/pet-profiles/case-catalog.v0.1.json`
-- Closed operation input: `schema/pet-profile-operation-input.v0.1.schema.json`
+- Closed operation input: `schema/pet-profile-operation-input.v0.2.schema.json`
 - Executed case results:
-  `generated/pet-integration/executable-case-results.v0.1.json`
+  `generated/pet-integration/executable-case-results.v0.2.json`
+- Preserved Draft v0.1 compatibility evidence: the prior operation-input
+  Schema, 19 generated operation inputs, and executable result set remain
+  byte-identical and digest-checked.
 - Generated comparison/index/handoff projection/digest manifest:
   `generated/pet-integration/`
 
@@ -132,6 +135,16 @@ evaluation start. Those values therefore participate in the payload digest,
 message authentication input, semantic digest, wire fingerprint, replay and
 conflict equality, and canonical transcript input. No unsigned side channel is
 accepted.
+
+The acknowledged-receipt abort correction adds required abort-state fields,
+so the closed operation-input and executable-result contracts advance to
+version `0.2`. The surrounding experimental profile, registry, stage,
+binding, handoff, and catalog authorities remain version `0.1`; their semantic
+digests are refreshed without broadening their closed shapes. Published v0.1
+operation inputs and results remain unchanged as compatibility evidence. A
+v0.1 reader must reject the v0.2 input rather than infer the new substate
+semantics. Rollback selects the preserved v0.1 inputs and results and therefore
+does not claim support for acknowledged-receipt abort substates.
 
 The operation-stage contract contains a closed matrix for all eight
 `TR-ABORT` source phases. Participant, commitment, attempt, deadline,

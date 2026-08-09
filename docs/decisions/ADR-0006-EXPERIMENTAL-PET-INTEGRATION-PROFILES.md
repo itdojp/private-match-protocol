@@ -159,6 +159,18 @@ the resource-policy and execution-authorization digests into canonical message
 bytes rather than an unsigned reconstructed operation surface. Rolling back
 would reopen the reviewed substitution gap.
 
+The acknowledged-receipt abort correction separately advances only the
+closed PET operation-input and executable-result contracts to version `0.2`.
+Adding required acknowledgment-substate, binding, proposed-result-presence,
+and accepted-result-presence fields under operation-input version `0.1` would
+violate the repository compatibility policy. The v0.1 operation-input Schema,
+19 generated operation inputs, and executable result set therefore remain
+byte-identical and digest-checked. The profile, registry, stage, binding,
+handoff, and case-catalog versions remain `0.1`; they bind the new v0.2 input
+paths and semantic digests without changing their own closed field sets.
+Rollback uses the preserved v0.1 operation inputs/results and loses the new
+acknowledged-receipt abort coverage rather than silently inferring it.
+
 All `TR-ABORT` source phases are now governed by one derived closed phase
 matrix. The matrix is projected from the existing State Machine, not a second
 lifecycle model. A closed PET error-code catalog also requires exact parity
