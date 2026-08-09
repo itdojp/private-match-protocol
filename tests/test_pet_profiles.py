@@ -694,6 +694,7 @@ class PetProfileTests(unittest.TestCase):
                 ["party_a", "party_b"],
             ),
         }
+        self.assertEqual(set(expected_slots), set(evaluating))
         for substate, (contributions, acknowledgments) in expected_slots.items():
             with self.subTest(substate=substate):
                 record = operation_input_for_case(self.values, evaluating[substate])
