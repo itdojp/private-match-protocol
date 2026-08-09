@@ -113,7 +113,7 @@ NITRO_RECEIPT_BINDINGS = [
     "pcr_policy_digest",
     "enclave_artifact_digest",
 ]
-PROFILE_PATHS = {
+LEGACY_PROFILE_PATHS = {
     "private-match-experimental-secretflow-kkrt": Path(
         "profiles/pet-integration/secretflow-kkrt.v0.1.json"
     ),
@@ -124,57 +124,263 @@ PROFILE_PATHS = {
         "profiles/pet-integration/voprf-component.v0.1.json"
     ),
 }
+PROFILE_PATHS = {
+    "private-match-experimental-secretflow-kkrt": Path(
+        "profiles/pet-integration/secretflow-kkrt.v0.2.json"
+    ),
+    "private-match-experimental-nitro-enclave": Path(
+        "profiles/pet-integration/nitro-enclave.v0.2.json"
+    ),
+    "private-match-experimental-voprf-component": Path(
+        "profiles/pet-integration/voprf-component.v0.2.json"
+    ),
+}
 AUTHORITY_PATH = Path("config/research-technology-authority.v0.1.json")
-REGISTRY_PATH = Path("registry/pet-integration-profiles.v0.1.yaml")
-HANDOFF_PATH = Path("handoff/product-decision-engine-port.v0.1.yaml")
-BINDING_PATH = Path("specs/pet-integration/protocol-binding.v0.1.yaml")
-STAGE_CONTRACT_PATH = Path("specs/pet-integration/operation-stage-contract.v0.1.yaml")
-CASE_CATALOG_PATH = Path("conformance/pet-profiles/case-catalog.v0.1.json")
-ERROR_CODE_CATALOG_PATH = Path("config/pet-profile-error-codes.v0.1.json")
+LEGACY_REGISTRY_PATH = Path("registry/pet-integration-profiles.v0.1.yaml")
+LEGACY_HANDOFF_PATH = Path("handoff/product-decision-engine-port.v0.1.yaml")
+LEGACY_BINDING_PATH = Path("specs/pet-integration/protocol-binding.v0.1.yaml")
+REGISTRY_PATH = Path("registry/pet-integration-profiles.v0.2.yaml")
+HANDOFF_PATH = Path("handoff/product-decision-engine-port.v0.2.yaml")
+BINDING_PATH = Path("specs/pet-integration/protocol-binding.v0.2.yaml")
+STAGE_CONTRACT_PATH = Path("specs/pet-integration/operation-stage-contract.v0.2.yaml")
+CASE_CATALOG_PATH = Path("conformance/pet-profiles/case-catalog.v0.2.json")
+LEGACY_ERROR_CODE_CATALOG_PATH = Path("config/pet-profile-error-codes.v0.1.json")
+ERROR_CODE_CATALOG_PATH = Path("config/pet-profile-error-codes.v0.2.json")
+COMPATIBILITY_PATH = Path("config/pet-contract-compatibility.v0.2.json")
 CANONICAL_CALLBACK_PATH = Path(
     "conformance/pet-profiles/messages/result-acceptance-notice.v0.2.json"
 )
 STATE_MACHINE_PATH = Path("specs/state-machines/private-match-core-session-v0.1.yaml")
 MESSAGE_REGISTRY_PATH = Path("registry/message-types.v0.1.yaml")
 MESSAGE_SCHEMA_PATH = Path("schemas/messages/envelope.v0.1.schema.json")
+PET_MESSAGE_SCHEMA_PATH = Path("schemas/messages/envelope.v0.2.schema.json")
 MESSAGE_MATERIALS_PATH = Path("conformance/messages/verification-materials.v0.1.yaml")
 GENERATED_ROOT = Path("generated/pet-integration")
 SCHEMAS = {
     "authority": Path("schema/research-technology-authority.v0.1.schema.json"),
-    "profile": Path("schema/pet-integration-profile.v0.1.schema.json"),
-    "registry": Path("schema/pet-integration-profile-registry.v0.1.schema.json"),
-    "handoff": Path("schema/product-decision-engine-handoff.v0.1.schema.json"),
-    "binding": Path("schema/pet-protocol-binding.v0.1.schema.json"),
-    "cases": Path("schema/pet-profile-conformance-cases.v0.1.schema.json"),
-    "operation": Path("schema/pet-profile-operation-input.v0.1.schema.json"),
-    "case_results": Path("schema/pet-profile-case-results.v0.1.schema.json"),
-    "stage": Path("schema/pet-operation-stage-contract.v0.1.schema.json"),
-    "error_codes": Path("schema/pet-profile-error-codes.v0.1.schema.json"),
+    "profile": Path("schema/pet-integration-profile.v0.2.schema.json"),
+    "registry": Path("schema/pet-integration-profile-registry.v0.2.schema.json"),
+    "handoff": Path("schema/product-decision-engine-handoff.v0.2.schema.json"),
+    "binding": Path("schema/pet-protocol-binding.v0.2.schema.json"),
+    "cases": Path("schema/pet-profile-conformance-cases.v0.2.schema.json"),
+    "operation": Path("schema/pet-profile-operation-input.v0.2.schema.json"),
+    "case_results": Path("schema/pet-profile-case-results.v0.2.schema.json"),
+    "stage": Path("schema/pet-operation-stage-contract.v0.2.schema.json"),
+    "error_codes": Path("schema/pet-profile-error-codes.v0.2.schema.json"),
+    "compatibility": Path("schema/pet-contract-compatibility.v0.2.schema.json"),
 }
 GENERATED_PATHS = {
-    "index": GENERATED_ROOT / "profile-index.v0.1.json",
-    "comparison": GENERATED_ROOT / "profile-comparison.v0.1.md",
-    "handoff": GENERATED_ROOT / "product-handoff-projection.v0.1.json",
-    "manifest": GENERATED_ROOT / "profile-digest-manifest.v0.1.json",
-    "case_results": GENERATED_ROOT / "executable-case-results.v0.1.json",
+    "index": GENERATED_ROOT / "profile-index.v0.2.json",
+    "comparison": GENERATED_ROOT / "profile-comparison.v0.2.md",
+    "handoff": GENERATED_ROOT / "product-handoff-projection.v0.2.json",
+    "manifest": GENERATED_ROOT / "profile-digest-manifest.v0.2.json",
+    "case_results": GENERATED_ROOT / "executable-case-results.v0.2.json",
+}
+LEGACY_CONTRACT_GRAPH_PATHS = {
+    "operation-stage-schema": Path(
+        "schema/pet-operation-stage-contract.v0.1.schema.json"
+    ),
+    "operation-stage": Path("specs/pet-integration/operation-stage-contract.v0.1.yaml"),
+    "operation-input-schema": Path(
+        "schema/pet-profile-operation-input.v0.1.schema.json"
+    ),
+    "conformance-case-schema": Path(
+        "schema/pet-profile-conformance-cases.v0.1.schema.json"
+    ),
+    "conformance-case-catalog": Path("conformance/pet-profiles/case-catalog.v0.1.json"),
+    "executable-result-schema": Path(
+        "schema/pet-profile-case-results.v0.1.schema.json"
+    ),
+    "profile-schema": Path("schema/pet-integration-profile.v0.1.schema.json"),
+    "profile-secretflow": LEGACY_PROFILE_PATHS[
+        "private-match-experimental-secretflow-kkrt"
+    ],
+    "profile-nitro": LEGACY_PROFILE_PATHS["private-match-experimental-nitro-enclave"],
+    "profile-voprf": LEGACY_PROFILE_PATHS["private-match-experimental-voprf-component"],
+    "registry-schema": Path("schema/pet-integration-profile-registry.v0.1.schema.json"),
+    "registry": LEGACY_REGISTRY_PATH,
+    "protocol-binding-schema": Path("schema/pet-protocol-binding.v0.1.schema.json"),
+    "protocol-binding": LEGACY_BINDING_PATH,
+    "product-handoff-schema": Path(
+        "schema/product-decision-engine-handoff.v0.1.schema.json"
+    ),
+    "product-handoff": LEGACY_HANDOFF_PATH,
+    "message-envelope-schema": MESSAGE_SCHEMA_PATH,
+    "error-code-schema": Path("schema/pet-profile-error-codes.v0.1.schema.json"),
+    "error-code-catalog": LEGACY_ERROR_CODE_CATALOG_PATH,
+}
+CURRENT_CONTRACT_GRAPH_PATHS = {
+    "operation-stage-schema": SCHEMAS["stage"],
+    "operation-stage": STAGE_CONTRACT_PATH,
+    "operation-input-schema": SCHEMAS["operation"],
+    "conformance-case-schema": SCHEMAS["cases"],
+    "conformance-case-catalog": CASE_CATALOG_PATH,
+    "executable-result-schema": SCHEMAS["case_results"],
+    "profile-schema": SCHEMAS["profile"],
+    "profile-secretflow": PROFILE_PATHS["private-match-experimental-secretflow-kkrt"],
+    "profile-nitro": PROFILE_PATHS["private-match-experimental-nitro-enclave"],
+    "profile-voprf": PROFILE_PATHS["private-match-experimental-voprf-component"],
+    "registry-schema": SCHEMAS["registry"],
+    "registry": REGISTRY_PATH,
+    "protocol-binding-schema": SCHEMAS["binding"],
+    "protocol-binding": BINDING_PATH,
+    "product-handoff-schema": SCHEMAS["handoff"],
+    "product-handoff": HANDOFF_PATH,
+    "message-envelope-schema": PET_MESSAGE_SCHEMA_PATH,
+    "error-code-schema": SCHEMAS["error_codes"],
+    "error-code-catalog": ERROR_CODE_CATALOG_PATH,
+}
+LEGACY_GENERATED_DIGESTS = {
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-commitments-pending.v0.1.json"
+    ): "sha256:5bdb4fc200490d03022f0b1881785fea8430e857071d5e23b4500e7b7878a06b",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-committed.v0.1.json"
+    ): "sha256:a22fec71773921b1cb1ae92202105f49ca82a03e7042d4a39bad2bca8d98fd6e",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-consent-pending.v0.1.json"
+    ): "sha256:e092468f66d840a629c9f4c1fea427205d7e11cbf95ae368c74d720903cf1189",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-created.v0.1.json"
+    ): "sha256:d3c1d47e1660822048db205f73f4040aa24ce5ff093e8cb12de66d5392837536",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-disclosure-authorized.v0.1.json"
+    ): "sha256:dcc69af8ce535753b9f0fed3178534623600b18e08ab56c56e21427aad267a57",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-participants-bound.v0.1.json"
+    ): "sha256:f0d742fb43fcdf5b89e25aa52d68ade4d67a4acf68c065f0d3861de0b26c3039",
+    Path(
+        "generated/pet-integration/cases/pet-valid-abort-result-accepted.v0.1.json"
+    ): "sha256:1587188973cdc474d3f8ba72425f2ed333aac9fd9702b6c773a0aa06bfec80bf",
+    Path(
+        "generated/pet-integration/cases/pet-valid-cancellation-cleanup.v0.1.json"
+    ): "sha256:a179d0921c0beb3a6591cb109dab426c20c3db445bd0b512fa9908bf9f38577f",
+    Path(
+        "generated/pet-integration/cases/pet-valid-contribution-a.v0.1.json"
+    ): "sha256:0dea1d6e4662a390c7845552076f8fbd86bec0562ea263c87bcfe851c0419d75",
+    Path(
+        "generated/pet-integration/cases/pet-valid-contribution-b.v0.1.json"
+    ): "sha256:84a76e461d028bb15b953b2bf90f5c932f28e0e84438e90d41f767d961ad3316",
+    Path(
+        "generated/pet-integration/cases/pet-valid-evaluation-start.v0.1.json"
+    ): "sha256:291d94ee10d761984a909f0ece08f5b95a9341625c907a0e19904b0dfc272abe",
+    Path(
+        "generated/pet-integration/cases/pet-valid-evaluation-timeout.v0.1.json"
+    ): "sha256:88df3a5e51cc5386e0356e5eece12bf684a14aeea1bd3a5d344ede62eff4b3a4",
+    Path(
+        "generated/pet-integration/cases/pet-valid-nitro-selection.v0.1.json"
+    ): "sha256:25f61b8942698c1c2030d811dd8ce856ed482c517e0bb777fbee7642616d45f3",
+    Path(
+        "generated/pet-integration/cases/pet-valid-profile-callback.v0.1.json"
+    ): "sha256:8f83b67cdc4b47ee63bffd246e9728377b9c0df7593c5b685fa30959ab2e021c",
+    Path(
+        "generated/pet-integration/cases/pet-valid-query-budget.v0.1.json"
+    ): "sha256:52a293b5bc050db6f8dcfdbaa37fa2b49b3feeee02d44e01ecd1d9d0171a3f35",
+    Path(
+        "generated/pet-integration/cases/pet-valid-receipt-a.v0.1.json"
+    ): "sha256:a733747ab0f9d64484bd6112d868df935e9338f4ff04770b3edda727dc8993dd",
+    Path(
+        "generated/pet-integration/cases/pet-valid-receipt-b.v0.1.json"
+    ): "sha256:bf79cb1b35d6d166ff864500d54b8b30be5d9492dd96c54b4baf817cc4eee47d",
+    Path(
+        "generated/pet-integration/cases/pet-valid-secretflow-selection.v0.1.json"
+    ): "sha256:89ada833279dbf2b7ceaf0fcfc5c168400bee08ba72192ccbbe7d96d0daf4551",
+    Path(
+        "generated/pet-integration/cases/pet-valid-voprf-registration.v0.1.json"
+    ): "sha256:b5db359f0fccfc415c3d570a237825684e5c2fb95826647ab886758fc46cab45",
+    Path(
+        "generated/pet-integration/executable-case-results.v0.1.json"
+    ): "sha256:096c3fbf23cc1822a764d2d66a03c17943d5c41cabbd6254656426b315c4dcf3",
+    Path(
+        "generated/pet-integration/profile-index.v0.1.json"
+    ): "sha256:7399342c3bc3989630c2d7d9b28208c26b87d0e35385c6100ad96a544416ff92",
+    Path(
+        "generated/pet-integration/profile-comparison.v0.1.md"
+    ): "sha256:4ea0dc38ffab7e30d4f788322cb3855df0d4193d068e34ae211650bc41c71855",
+    Path(
+        "generated/pet-integration/product-handoff-projection.v0.1.json"
+    ): "sha256:5f4e17f692b46bb445c3b0cb710613659459a05f58271c9bed3dafd5436a5617",
+    Path(
+        "generated/pet-integration/profile-digest-manifest.v0.1.json"
+    ): "sha256:6728a4a1152409c7bc0359b9e6ace66397c741481f816a0b83da43c906e7b482",
+}
+LEGACY_BEHAVIOR_DIGESTS = {
+    Path(
+        "schema/pet-operation-stage-contract.v0.1.schema.json"
+    ): "sha256:7f645afeed764d3907f5cd2992a50a1caccf4fb2b92d53a7edddadc5b9e070ca",
+    Path(
+        "schema/pet-profile-conformance-cases.v0.1.schema.json"
+    ): "sha256:dd853a743c1ff3d467f162ba5d73a8d0744455daf6c093817811d48bc0a271b6",
+    Path(
+        "specs/pet-integration/operation-stage-contract.v0.1.yaml"
+    ): "sha256:aa65e4e5ac3cedd03ca99958fbea414232821d70de35f73f8c68c67f047d3df5",
+    Path(
+        "conformance/pet-profiles/case-catalog.v0.1.json"
+    ): "sha256:73d7398b85a29ebabd9771e63db7cd0febf9aa250aa8776d48fff83303890da4",
+    Path(
+        "schema/pet-protocol-binding.v0.1.schema.json"
+    ): "sha256:f3bafeda118d2d4f8e8639ed5ae78694274b2393015ddf84a7fbc6f264aa2a01",
+    Path(
+        "specs/pet-integration/protocol-binding.v0.1.yaml"
+    ): "sha256:423b049cdce59979d7179de9e1997a7abf5788a6f849b4a6b1fde3e5e6b4b432",
+    Path(
+        "schema/product-decision-engine-handoff.v0.1.schema.json"
+    ): "sha256:a298815516a90098238c49746c40743ef9dea8b40592cbe75d76fec6e0c44019",
+    Path(
+        "handoff/product-decision-engine-port.v0.1.yaml"
+    ): "sha256:277fefa5c549aafff4b34c13f0c7a14091bf25af5a12865ef9e38649c0cffdb3",
+    Path(
+        "schema/pet-integration-profile.v0.1.schema.json"
+    ): "sha256:820b119b71e46420d8e864fc48f763cb1dac7cb6bb5e5a752003b19d8f2892fe",
+    Path(
+        "schema/pet-integration-profile-registry.v0.1.schema.json"
+    ): "sha256:768f2e5a080a8ff3a62a66d773520e9de62f8ef2489740b9716e2989c9cb4f5a",
+    Path(
+        "profiles/pet-integration/secretflow-kkrt.v0.1.json"
+    ): "sha256:2f3701adb199c3dcbb0ea5a2dcfb56729ce04ca3629c13c3e3198f3ff2a1be62",
+    Path(
+        "profiles/pet-integration/nitro-enclave.v0.1.json"
+    ): "sha256:0e771ae5b39965476ba42d93ab4f00ec314541e1e45c7fe156348abff10fb1ab",
+    Path(
+        "profiles/pet-integration/voprf-component.v0.1.json"
+    ): "sha256:a826982fc38ac39c4a0616ad5ff69118d4b887851f530958667889119080cfc9",
+    Path(
+        "registry/pet-integration-profiles.v0.1.yaml"
+    ): "sha256:eadf100c2ac78bebd8e39327a825295d4adfdbce0dc7f9c94eef0d46e87f654a",
+    Path(
+        "schema/pet-profile-operation-input.v0.1.schema.json"
+    ): "sha256:d8152d50e36362ad4cfcf4f050911f44b90a6cbce6f8b96e2bc7b2f4b028c63f",
+    Path(
+        "schema/pet-profile-case-results.v0.1.schema.json"
+    ): "sha256:85e1c59350fe2e8aeab514679a832fa983abd86c4d40f960328b5806b1dce2e5",
+    Path(
+        "schema/pet-profile-error-codes.v0.1.schema.json"
+    ): "sha256:46a49b8fda8b727ba44b5d54bb12ccc95c4dac7e73bcc11818ff6a3185ccfe73",
+    Path(
+        "config/pet-profile-error-codes.v0.1.json"
+    ): "sha256:7290214598ca55257132c6511afea15fe8a4b5a86918d8d0d23bcd52d49289e5",
 }
 MAX_FILE_BYTES = 2 * 1024 * 1024
 
 DOMAINS = {
     "authority": b"private-match-research-technology-authority/v0.1\x00",
-    "profile": b"private-match-pet-integration-profile/v0.1\x00",
-    "registry": b"private-match-pet-profile-registry/v0.1\x00",
-    "handoff": b"private-match-product-decision-engine-handoff/v0.1\x00",
-    "binding": b"private-match-pet-protocol-binding/v0.1\x00",
-    "cases": b"private-match-pet-profile-conformance-cases/v0.1\x00",
-    "operation": b"private-match-pet-profile-operation-input/v0.1\x00",
-    "case_results": b"private-match-pet-profile-executable-case-results/v0.1\x00",
-    "stage": b"private-match-pet-operation-stage-contract/v0.1\x00",
+    "profile": b"private-match-pet-integration-profile/v0.2\x00",
+    "registry": b"private-match-pet-profile-registry/v0.2\x00",
+    "handoff": b"private-match-product-decision-engine-handoff/v0.2\x00",
+    "binding": b"private-match-pet-protocol-binding/v0.2\x00",
+    "cases": b"private-match-pet-profile-conformance-cases/v0.2\x00",
+    "operation": b"private-match-pet-profile-operation-input/v0.2\x00",
+    "case_results": b"private-match-pet-profile-executable-case-results/v0.2\x00",
+    "stage": b"private-match-pet-operation-stage-contract/v0.2\x00",
     "observer": b"private-match-pet-synthetic-result-observer/v0.1\x00",
+    "acknowledgment_evidence": (
+        b"private-match-pet-acknowledgment-evidence-binding/v0.1\x00"
+    ),
     "execution_authorization": b"private-match-pet-execution-authorization/v0.1\x00",
-    "index": b"private-match-pet-profile-index/v0.1\x00",
-    "projection": b"private-match-product-handoff-projection/v0.1\x00",
-    "manifest": b"private-match-pet-generated-manifest/v0.1\x00",
+    "index": b"private-match-pet-profile-index/v0.2\x00",
+    "projection": b"private-match-product-handoff-projection/v0.2\x00",
+    "manifest": b"private-match-pet-generated-manifest/v0.2\x00",
+    "compatibility": b"private-match-pet-contract-compatibility/v0.2\x00",
 }
 
 
@@ -195,6 +401,117 @@ def detached_digest(kind: str, value: dict[str, Any], field: str) -> str:
     material = copy.deepcopy(value)
     material.pop(field, None)
     return sha256_bytes(DOMAINS[kind] + canonicalize(material))
+
+
+def _contract_graph(
+    root: Path, graph_id: str, version: str, selection: str, paths: dict[str, Path]
+) -> dict[str, Any]:
+    artifacts = [
+        {
+            "role": role,
+            "path": path.as_posix(),
+            "file_digest": sha256_bytes(_regular_file(root, path).read_bytes()),
+        }
+        for role, path in sorted(paths.items())
+    ]
+    graph = {
+        "graph_id": graph_id,
+        "contract_version": version,
+        "selection": selection,
+        "artifacts": artifacts,
+        "graph_digest": "",
+    }
+    graph["graph_digest"] = sha256_bytes(
+        f"private-match-pet-contract-graph/v{version}\x00".encode("ascii")
+        + canonicalize(
+            {key: value for key, value in graph.items() if key != "graph_digest"}
+        )
+    )
+    return graph
+
+
+def expected_contract_compatibility(root: Path) -> dict[str, Any]:
+    value = {
+        "$schema": (
+            "https://github.com/itdojp/private-match-protocol/raw/main/"
+            "schema/pet-contract-compatibility.v0.2.schema.json"
+        ),
+        "schema_version": "0.2",
+        "record_type": "pet-contract-compatibility",
+        "artifact_status": "experimental",
+        "graphs": [
+            _contract_graph(
+                root,
+                "rollback-v0.1",
+                "0.1",
+                "rollback-only",
+                LEGACY_CONTRACT_GRAPH_PATHS,
+            ),
+            _contract_graph(
+                root,
+                "current-v0.2",
+                "0.2",
+                "current",
+                CURRENT_CONTRACT_GRAPH_PATHS,
+            ),
+        ],
+        "version_requirements": [
+            {
+                "contract_version": "0.1",
+                "selection": "rollback-only",
+                "profile_registry_path": LEGACY_REGISTRY_PATH.as_posix(),
+                "protocol_binding_path": LEGACY_BINDING_PATH.as_posix(),
+                "operation_stage_path": (
+                    "specs/pet-integration/operation-stage-contract.v0.1.yaml"
+                ),
+                "operation_input_schema_path": (
+                    "schema/pet-profile-operation-input.v0.1.schema.json"
+                ),
+                "product_handoff_path": LEGACY_HANDOFF_PATH.as_posix(),
+                "error_code_catalog_path": (LEGACY_ERROR_CODE_CATALOG_PATH.as_posix()),
+            },
+            {
+                "contract_version": "0.2",
+                "selection": "current",
+                "profile_registry_path": REGISTRY_PATH.as_posix(),
+                "protocol_binding_path": BINDING_PATH.as_posix(),
+                "operation_stage_path": STAGE_CONTRACT_PATH.as_posix(),
+                "operation_input_schema_path": SCHEMAS["operation"].as_posix(),
+                "product_handoff_path": HANDOFF_PATH.as_posix(),
+                "error_code_catalog_path": ERROR_CODE_CATALOG_PATH.as_posix(),
+            },
+        ],
+        "rules": {
+            "cross_version_mixing": "fail-closed",
+            "implicit_fallback": False,
+            "forward_inference": False,
+            "partial_graph": "fail-closed",
+            "rollback_selection": "complete-v0.1-graph-only",
+            "current_selection": "complete-v0.2-graph-only",
+        },
+        "limitations": [
+            "The compatibility map binds public contract files, not a Product implementation.",
+            "Rollback is an explicit whole-graph selection and never an implicit fallback.",
+        ],
+        "compatibility_digest": "",
+    }
+    value["compatibility_digest"] = detached_digest(
+        "compatibility", value, "compatibility_digest"
+    )
+    return value
+
+
+def validate_contract_compatibility(values: dict[str, Any]) -> None:
+    compatibility = values["compatibility"]
+    _require(
+        compatibility == expected_contract_compatibility(values["root"]),
+        "PET-CONTRACT-VERSION-GRAPH",
+    )
+    _require(
+        compatibility["compatibility_digest"]
+        == detached_digest("compatibility", compatibility, "compatibility_digest"),
+        "PET-CONTRACT-VERSION-GRAPH",
+    )
 
 
 def _safe_relative(value: str) -> PurePosixPath:
@@ -261,6 +578,21 @@ def _schema_validate(value: Any, schema: dict[str, Any], logical: str) -> None:
         )
 
 
+def _schema_validate_digest_authority(
+    value: Any, schema: dict[str, Any], logical: str
+) -> None:
+    """Run closed Schema checks for digest authority before semantic hashing."""
+
+    errors = sorted(
+        Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(value),
+        key=lambda item: list(item.absolute_path),
+    )
+    for error in errors:
+        path = {str(item) for item in error.absolute_path}
+        if path & {"profile_authority", "result_acknowledgment_bindings"}:
+            raise PetProfileError("PET-PROFILE-AUTHORITY", logical)
+
+
 def load_repository(root: Path) -> dict[str, Any]:
     schemas = {key: load_json(root, path) for key, path in SCHEMAS.items()}
     for key, schema in schemas.items():
@@ -277,10 +609,11 @@ def load_repository(root: Path) -> dict[str, Any]:
         "stage": load_yaml(root, STAGE_CONTRACT_PATH),
         "cases": load_json(root, CASE_CATALOG_PATH),
         "error_codes": load_json(root, ERROR_CODE_CATALOG_PATH),
+        "compatibility": load_json(root, COMPATIBILITY_PATH),
         "profiles": {key: load_json(root, path) for key, path in PROFILE_PATHS.items()},
         "state_machine": load_yaml(root, STATE_MACHINE_PATH),
         "message_registry": load_yaml(root, MESSAGE_REGISTRY_PATH),
-        "message_schema": load_json(root, MESSAGE_SCHEMA_PATH),
+        "message_schema": load_json(root, PET_MESSAGE_SCHEMA_PATH),
         "message_materials": load_yaml(root, MESSAGE_MATERIALS_PATH),
     }
     for key in (
@@ -291,6 +624,7 @@ def load_repository(root: Path) -> dict[str, Any]:
         "stage",
         "cases",
         "error_codes",
+        "compatibility",
     ):
         _schema_validate(
             values[key],
@@ -304,6 +638,7 @@ def load_repository(root: Path) -> dict[str, Any]:
                     "stage": STAGE_CONTRACT_PATH,
                     "cases": CASE_CATALOG_PATH,
                     "error_codes": ERROR_CODE_CATALOG_PATH,
+                    "compatibility": COMPATIBILITY_PATH,
                 }[key]
             ),
         )
@@ -316,6 +651,109 @@ def load_repository(root: Path) -> dict[str, Any]:
 def _require(condition: bool, code: str, logical: str = "artifact") -> None:
     if not condition:
         raise PetProfileError(code, logical)
+
+
+PROFILE_AUTHORITY_KEYS = frozenset(
+    {"profile_id", "profile_version", "profile_digest", "profile_instance_id"}
+)
+ACKNOWLEDGMENT_EVIDENCE_KEYS = frozenset(
+    {
+        "normalized_acknowledgment_status",
+        "opaque_receipt_ref",
+        "profile_evidence_ref",
+        "profile_evidence_binding_digest",
+        "session_id",
+        "profile_id",
+        "profile_version",
+        "profile_instance_id",
+        "evaluation_attempt_id",
+    }
+)
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+$")
+_PROFILE_ID_RE = re.compile(r"^[a-z][a-z0-9-]{2,127}$")
+_INSTANCE_ID_RE = re.compile(r"^[!-~]{1,2048}$")
+
+
+def require_profile_authority(value: Any) -> dict[str, str]:
+    """Return one closed, normalized profile authority or fail boundedly.
+
+    This helper is deliberately independent from the enclosing operation
+    Schema so direct semantic callers cannot reach digest or equality logic
+    with an incomplete mapping.
+    """
+
+    _require(
+        isinstance(value, dict) and set(value) == PROFILE_AUTHORITY_KEYS,
+        "PET-PROFILE-AUTHORITY",
+    )
+    normalized = {key: value[key] for key in sorted(PROFILE_AUTHORITY_KEYS)}
+    _require(
+        all(
+            isinstance(item, str) and 0 < len(item) <= 2048
+            for item in normalized.values()
+        ),
+        "PET-PROFILE-AUTHORITY",
+    )
+    _require(
+        bool(_PROFILE_ID_RE.fullmatch(normalized["profile_id"]))
+        and bool(_VERSION_RE.fullmatch(normalized["profile_version"]))
+        and bool(_DIGEST_RE.fullmatch(normalized["profile_digest"])),
+        "PET-PROFILE-AUTHORITY",
+    )
+    _require(
+        bool(_INSTANCE_ID_RE.fullmatch(normalized["profile_instance_id"])),
+        "PET-PROFILE-AUTHORITY",
+    )
+    return normalized
+
+
+def require_acknowledgment_evidence_binding(
+    value: Any, *, require_bound_digest: bool = True
+) -> dict[str, str]:
+    """Validate every public ACK Evidence digest input before projection."""
+
+    required_keys = (
+        ACKNOWLEDGMENT_EVIDENCE_KEYS
+        if require_bound_digest
+        else ACKNOWLEDGMENT_EVIDENCE_KEYS - {"profile_evidence_binding_digest"}
+    )
+    _require(
+        isinstance(value, dict) and set(value) == required_keys,
+        "PET-PROFILE-AUTHORITY",
+    )
+    _require(
+        value["normalized_acknowledgment_status"] == "ACKNOWLEDGED",
+        "PET-CALLBACK-BINDING",
+    )
+    _require(
+        isinstance(value["opaque_receipt_ref"], str)
+        and bool(_DIGEST_RE.fullmatch(value["opaque_receipt_ref"])),
+        "PET-RECEIPT-BINDING",
+    )
+    if require_bound_digest:
+        _require(
+            isinstance(value["profile_evidence_binding_digest"], str)
+            and bool(_DIGEST_RE.fullmatch(value["profile_evidence_binding_digest"])),
+            "PET-PROFILE-AUTHORITY",
+        )
+    for key in (
+        "profile_evidence_ref",
+        "session_id",
+        "profile_id",
+        "profile_instance_id",
+        "evaluation_attempt_id",
+    ):
+        _require(
+            isinstance(value[key], str) and 0 < len(value[key]) <= 2048,
+            "PET-PROFILE-AUTHORITY",
+        )
+    _require(
+        isinstance(value["profile_version"], str)
+        and bool(_VERSION_RE.fullmatch(value["profile_version"])),
+        "PET-PROFILE-AUTHORITY",
+    )
+    return {key: value[key] for key in sorted(required_keys)}
 
 
 def validate_research_authority(authority: dict[str, Any]) -> None:
@@ -403,7 +841,7 @@ def _validate_profile(
         "private-match-experimental-nitro-enclave": "aws-nitro-enclave",
         "private-match-experimental-voprf-component": "rfc9497-circl-voprf",
     }
-    _require(profile["profile_version"] == "0.1", "PET-PROFILE-VERSION", identifier)
+    _require(profile["profile_version"] == "0.2", "PET-PROFILE-VERSION", identifier)
     _require(
         profile["artifact_status"] == "experimental", "PET-PROFILE-STATUS", identifier
     )
@@ -879,6 +1317,18 @@ def validate_semantics(values: dict[str, Any]) -> None:
         "PET-BINDING-STAGE-DIGEST",
     )
     _require(
+        binding["contract_authority"]
+        == {
+            "operation_input_schema_path": SCHEMAS["operation"].as_posix(),
+            "conformance_case_schema_path": SCHEMAS["cases"].as_posix(),
+            "executable_result_schema_path": SCHEMAS["case_results"].as_posix(),
+            "message_envelope_schema_path": PET_MESSAGE_SCHEMA_PATH.as_posix(),
+            "evaluation_start_message_version": "0.2",
+            "result_acceptance_notice_message_version": "0.2",
+        },
+        "PET-CONTRACT-VERSION-GRAPH",
+    )
+    _require(
         binding["state_machine_digest"] == STATE_MACHINE_DIGEST
         and binding["message_registry_digest"] == MESSAGE_REGISTRY_DIGEST,
         "PET-BINDING-AUTHORITY",
@@ -927,6 +1377,26 @@ def validate_semantics(values: dict[str, Any]) -> None:
         and handoff["operation_stage_contract_digest"] == stage_digest,
         "PET-HANDOFF-STAGE-DIGEST",
     )
+    _require(
+        handoff["registry_path"] == REGISTRY_PATH.as_posix()
+        and handoff["protocol_binding_path"] == BINDING_PATH.as_posix()
+        and handoff["protocol_binding_digest"] == binding["binding_digest"],
+        "PET-CONTRACT-VERSION-GRAPH",
+    )
+    _require(
+        handoff["acknowledgment_substate_requirements"]
+        == {
+            "source_phase": "EVALUATING",
+            "phase_specific_abort_validation": True,
+            "common_opaque_receipt_preserved": True,
+            "proposed_result_presence_preserved": True,
+            "accepted_result_before_acceptance": "prohibited",
+            "party_local_plaintext_result_visibility": "party-local-only",
+            "operation_stage_contract_version": "0.2",
+            "protocol_binding_version": "0.2",
+        },
+        "PET-HANDOFF-STAGE-SEMANTICS",
+    )
     stage_projection_keys = (
         "lifecycle_stage",
         "expected_pre_phases",
@@ -959,6 +1429,10 @@ def validate_semantics(values: dict[str, Any]) -> None:
         "PET-HANDOFF-DIGEST",
     )
     validate_case_catalog(values, root=None)
+    # Validate the whole-version graph only after the individual contracts have
+    # produced their more specific fail-closed diagnostics.  This preserves the
+    # public error taxonomy while still rejecting a fully redigested mixed graph.
+    validate_contract_compatibility(values)
 
 
 def validate_error_code_authority(values: dict[str, Any]) -> None:
@@ -1340,7 +1814,16 @@ STAGE_FIELD_POLICY = {
         "required": ["normalized_failure_category", "cleanup_completed"],
         "none": [],
         "prohibited": ["fabricated_result_state", "bilateral_result", "new_receipt"],
-        "retained": ["session_id", "policy_binding", "selected_profile"],
+        "retained": [
+            "session_id",
+            "policy_binding",
+            "selected_profile",
+            "evaluation_contribution",
+            "result_ack",
+            "opaque_receipt_ref",
+            "proposed_result_state",
+            "accepted_result_state",
+        ],
         "invalidated": ["disclosure_state"],
         "party_local": [],
         "coordinator": ["normalized_failure_category", "cleanup_completed"],
@@ -1512,13 +1995,16 @@ def expected_operation_stage_contract(values: dict[str, Any]) -> dict[str, Any]:
         )
     result = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "record_type": "pet-operation-stage-contract",
         "artifact_status": "experimental",
         "state_machine_digest": STATE_MACHINE_DIGEST,
         "message_registry_digest": MESSAGE_REGISTRY_DIGEST,
         "operations": operations,
         "abort_phase_authority": _abort_phase_contract(values),
+        "evaluating_acknowledgment_substate_authority": (
+            _evaluating_acknowledgment_substate_contract(values)
+        ),
         "stage_contract_digest": "",
         "limitations": [
             "This contract is a deterministic projection of the reviewed State Machine and Message Registry, not an independent State Machine.",
@@ -1628,7 +2114,6 @@ def _profile_authority(profile: dict[str, Any], instance: str) -> dict[str, Any]
         "profile_id": profile["profile_id"],
         "profile_version": profile["profile_version"],
         "profile_digest": profile["profile_digest"],
-        "profile_class": profile["profile_class"],
         "profile_instance_id": instance,
     }
 
@@ -1712,6 +2197,295 @@ ABORT_PHASE_ORDER = (
     "DISCLOSURE_AUTHORIZED",
 )
 
+EVALUATING_ACKNOWLEDGMENT_SUBSTATE_ORDER = (
+    "contributions-none",
+    "contribution-a-only",
+    "contribution-b-only",
+    "contributions-complete-no-ack",
+    "party-a-acknowledged",
+    "party-b-acknowledged",
+    "both-acknowledged",
+)
+
+
+def _transition_effect(transition: dict[str, Any], effect_id: str) -> dict[str, Any]:
+    effect = next(
+        (item for item in transition["effects"] if item["id"] == effect_id), None
+    )
+    _require(effect is not None, "PET-ABORT-PHASE-AUTHORITY")
+    return effect
+
+
+def _require_acknowledgment_substate_authority(
+    values: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Bind EVALUATING receipt/result substates to the reviewed ACK transitions."""
+
+    transitions = {item["id"]: item for item in values["state_machine"]["transitions"]}
+    authority: dict[str, dict[str, Any]] = {}
+    for transition_id, party in (
+        ("TR-SUBMIT-CONTRIBUTION-A", "A"),
+        ("TR-SUBMIT-CONTRIBUTION-B", "B"),
+    ):
+        transition = transitions.get(transition_id)
+        _require(
+            transition is not None
+            and transition["from_phase"] == ["EVALUATING"]
+            and transition["to_phase"] == "SAME"
+            and transition["actor"] == f"party_{party.lower()}_client",
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        contribution_effect = _transition_effect(transition, f"E-CONTRIBUTION-{party}")
+        _require(
+            contribution_effect["operation"] == "bind_once"
+            and contribution_effect["writes"] == ["evaluation_contribution"]
+            and f"G-CONTRIBUTION-{party}-EMPTY"
+            in {guard["id"] for guard in transition["guards"]},
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+    for transition_id, party in (
+        ("TR-ACK-RECEIPT-A", "A"),
+        ("TR-ACK-RECEIPT-B", "B"),
+    ):
+        transition = transitions.get(transition_id)
+        _require(
+            transition is not None
+            and transition["from_phase"] == ["EVALUATING"]
+            and transition["to_phase"] == "SAME",
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        _require(
+            "G-CONTRIBUTIONS-COMPLETE"
+            in {guard["id"] for guard in transition["guards"]},
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        guards = {guard["id"]: guard for guard in transition["guards"]}
+        opaque_guard = guards.get("G-OPAQUE-RECEIPT")
+        local_result_guard = guards.get(f"G-LOCAL-RESULT-{party}")
+        effect = _transition_effect(transition, f"E-ACK-RECEIPT-{party}")
+        _require(
+            effect["operation"] == "set_if_unset_or_equal"
+            and effect["writes"]
+            == ["result_ack", "opaque_receipt_ref", "proposed_result_state"],
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        _require(
+            opaque_guard is not None
+            and opaque_guard["predicate"] == "profile_opaque_reference"
+            and set(opaque_guard["parameter_reads"])
+            == {
+                "opaque_receipt_parameter.opaque_receipt_ref",
+                "opaque_receipt_parameter.acknowledgment_status",
+                "opaque_receipt_parameter.profile_evidence_ref",
+            }
+            and any(
+                "peer" in argument and "equals" in argument
+                for argument in opaque_guard["arguments"]
+            ),
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        _require(
+            local_result_guard is not None
+            and local_result_guard["predicate"] == "event_parameter_one_of"
+            and local_result_guard["reads"] == ["proposed_result_state"]
+            and local_result_guard["parameter_reads"]
+            == ["local_result_parameter.local_result"],
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        coordinator_visibility = next(
+            (
+                item["data"]
+                for item in transition["visibility"]
+                if item["actor"] == "coordinator"
+            ),
+            None,
+        )
+        _require(
+            coordinator_visibility
+            == [
+                "opaque_receipt_ref",
+                "normalized_ack_status",
+            ]
+            and all(
+                "local result" not in field and "local-result" not in field
+                for field in coordinator_visibility
+            ),
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        authority[f"party_{party.lower()}"] = transition
+
+    accept = transitions.get("TR-ACCEPT-SYMMETRIC-RESULT")
+    start = transitions.get("TR-START-EVALUATION")
+    abort = transitions.get("TR-ABORT")
+    _require(
+        accept is not None
+        and accept["from_phase"] == ["EVALUATING"]
+        and accept["to_phase"] == "RESULT_ACCEPTED"
+        and "accepted_result_state"
+        in _transition_effect(accept, "E-ACCEPT-RESULT")["writes"],
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    _require(
+        start is not None
+        and start["to_phase"] == "EVALUATING"
+        and "query_budget_state"
+        in {field for effect in start["effects"] for field in effect.get("writes", [])},
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    _require(abort is not None, "PET-ABORT-PHASE-AUTHORITY")
+    abort_writes = {
+        field for effect in abort["effects"] for field in effect.get("writes", [])
+    }
+    _require(
+        not abort_writes
+        & {
+            "evaluation_contribution",
+            "result_ack",
+            "opaque_receipt_ref",
+            "proposed_result_state",
+            "accepted_result_state",
+        },
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    return authority
+
+
+def _evaluating_acknowledgment_substate_contract(
+    values: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Derive all reachable EVALUATING contribution/acknowledgment substates."""
+
+    _require_acknowledgment_substate_authority(values)
+    rows = (
+        ("contributions-none", [], []),
+        ("contribution-a-only", ["party_a"], []),
+        ("contribution-b-only", ["party_b"], []),
+        ("contributions-complete-no-ack", ["party_a", "party_b"], []),
+        ("party-a-acknowledged", ["party_a", "party_b"], ["party_a"]),
+        ("party-b-acknowledged", ["party_a", "party_b"], ["party_b"]),
+        (
+            "both-acknowledged",
+            ["party_a", "party_b"],
+            ["party_a", "party_b"],
+        ),
+    )
+    result = []
+    for substate_id, contributions, acknowledgments in rows:
+        presence = {
+            party: "present" if party in acknowledgments else "none"
+            for party in ("party_a", "party_b")
+        }
+        result.append(
+            {
+                "substate_id": substate_id,
+                "completed_contribution_slots": contributions,
+                "receipt_acknowledgment_slots": acknowledgments,
+                "result_acknowledgment_presence": presence,
+                "opaque_receipt_state": (
+                    "common-present" if acknowledgments else "none"
+                ),
+                "proposed_result_presence": presence,
+                "accepted_result_presence": {
+                    "party_a": "none",
+                    "party_b": "none",
+                },
+                "profile_evidence_presence": presence,
+                "binding_context_fields": [
+                    "session_id",
+                    "profile_id",
+                    "profile_version",
+                    "profile_instance_id",
+                    "evaluation_attempt_id",
+                    "profile_evidence_ref",
+                    "profile_evidence_binding_digest",
+                ],
+                "query_budget_state": "CONSUMED",
+                "transcript_state": "retained-then-abort-appended",
+                "abort_cleanup_effect": "required",
+                "fields_retained_for_audit": [
+                    "evaluation_contribution",
+                    "result_ack",
+                    "opaque_receipt_ref",
+                    "proposed_result_state",
+                    "accepted_result_state",
+                ],
+                "fields_invalidated_for_future_mutation": [
+                    "disclosure_state",
+                    "live_session_mutation",
+                ],
+                "coordinator_visible_fields": [
+                    "opaque_receipt_ref",
+                    "normalized_ack_status",
+                ],
+                "party_local_only_fields": [
+                    "proposed_result_state",
+                    "local_result_binding",
+                ],
+            }
+        )
+    _require(
+        tuple(item["substate_id"] for item in result)
+        == EVALUATING_ACKNOWLEDGMENT_SUBSTATE_ORDER,
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    return result
+
+
+def _fixture_acknowledgment_binding(
+    party: str,
+    *,
+    receipt: str,
+    session: str,
+    attempt: str,
+    profile_authority: dict[str, Any],
+) -> dict[str, Any]:
+    """Return only Coordinator-visible normalized ACK authority.
+
+    The Party-local proposed result value is deliberately represented by a
+    separate presence bit in the synthetic abort-state projection.  It never
+    crosses this public authority boundary.
+    """
+    suffix = party.removeprefix("party_")
+    binding = {
+        "normalized_acknowledgment_status": "ACKNOWLEDGED",
+        "opaque_receipt_ref": receipt,
+        "profile_evidence_ref": f"urn:private-match:test:profile-evidence:{suffix}",
+        "session_id": session,
+        "profile_id": profile_authority["profile_id"],
+        "profile_version": profile_authority["profile_version"],
+        "profile_instance_id": profile_authority["profile_instance_id"],
+        "evaluation_attempt_id": attempt,
+    }
+    binding["profile_evidence_binding_digest"] = _acknowledgment_evidence_digest(
+        binding
+    )
+    return binding
+
+
+def _acknowledgment_evidence_digest(binding: dict[str, Any]) -> str:
+    """Bind a public Evidence reference to its exact ACK authority context."""
+
+    material = dict(binding) if isinstance(binding, dict) else binding
+    if isinstance(material, dict):
+        material.pop("profile_evidence_binding_digest", None)
+    validated = require_acknowledgment_evidence_binding(
+        material, require_bound_digest=False
+    )
+    projection = {
+        key: validated[key]
+        for key in (
+            "profile_evidence_ref",
+            "session_id",
+            "profile_id",
+            "profile_version",
+            "profile_instance_id",
+            "evaluation_attempt_id",
+        )
+    }
+    return sha256_bytes(
+        DOMAINS["acknowledgment_evidence"] + _canonical_json(projection)
+    )
+
 
 def _abort_phase_projection(
     values: dict[str, Any],
@@ -1725,9 +2499,12 @@ def _abort_phase_projection(
     receipt: str,
     resource_policy_binding: str,
     execution_authorization_digest: str,
+    profile_authority: dict[str, Any],
+    acknowledgment_substate: str | None,
 ) -> dict[str, Any]:
     """Project the exact pre-abort state from the reviewed TR-ABORT phases."""
 
+    _require_acknowledgment_substate_authority(values)
     abort = next(
         item
         for item in values["state_machine"]["transitions"]
@@ -1742,6 +2519,56 @@ def _abort_phase_projection(
     commitment_value = commitment if rank >= 3 else None
     evaluation_available = rank >= 4
     result_available = rank >= 5
+    substate_rows = {
+        item["substate_id"]: item
+        for item in _evaluating_acknowledgment_substate_contract(values)
+    }
+    if phase == "EVALUATING":
+        _require(
+            acknowledgment_substate in substate_rows,
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+        substate = substate_rows[acknowledgment_substate]
+        evaluating_contributions = substate["completed_contribution_slots"]
+        evaluating_acknowledgments = substate["receipt_acknowledgment_slots"]
+    else:
+        _require(acknowledgment_substate is None, "PET-ABORT-PHASE-AUTHORITY")
+        substate = None
+        evaluating_contributions = []
+        evaluating_acknowledgments = []
+    receipt_available = result_available or bool(evaluating_acknowledgments)
+    acknowledgment_slots = (
+        ["party_a", "party_b"] if result_available else evaluating_acknowledgments
+    )
+    contribution_slots = (
+        ["party_a", "party_b"]
+        if result_available
+        else evaluating_contributions
+        if phase == "EVALUATING"
+        else []
+    )
+    acknowledgment_bindings = {
+        party: (
+            _fixture_acknowledgment_binding(
+                party,
+                receipt=receipt,
+                session=session,
+                attempt=attempt,
+                profile_authority=profile_authority,
+            )
+            if party in acknowledgment_slots
+            else None
+        )
+        for party in ("party_a", "party_b")
+    }
+    proposed_presence = {
+        party: "PRESENT" if party in acknowledgment_slots else "NONE"
+        for party in ("party_a", "party_b")
+    }
+    accepted_presence = {
+        party: "PRESENT" if result_available else "NONE"
+        for party in ("party_a", "party_b")
+    }
     state = _state(
         phase,
         session=session,
@@ -1749,11 +2576,17 @@ def _abort_phase_projection(
         participants=participant_value,
         commitment=commitment_value,
         attempt=attempt if evaluation_available else None,
-        receipt=receipt if result_available else None,
-        result_state="ACCEPTED" if result_available else None,
+        receipt=receipt if receipt_available else None,
+        result_state=(
+            "ACCEPTED"
+            if result_available
+            else "PROPOSED"
+            if evaluating_acknowledgments
+            else None
+        ),
         budget=("NONE" if rank <= 1 else "RESERVED" if rank < 4 else "CONSUMED"),
-        contributions=["party_a", "party_b"] if evaluation_available else [],
-        acknowledgments=["party_a", "party_b"] if result_available else [],
+        contributions=contribution_slots,
+        acknowledgments=acknowledgment_slots,
         authoritative_time=(
             "2026-07-21T00:00:30Z" if evaluation_available else "2026-07-21T00:00:00Z"
         ),
@@ -1778,6 +2611,12 @@ def _abort_phase_projection(
                 "AUTHORIZED" if phase == "DISCLOSURE_AUTHORIZED" else "NONE"
             ),
             "cleanup_state": "NOT_STARTED",
+            "acknowledgment_substate_id": (
+                acknowledgment_substate if phase == "EVALUATING" else "not-applicable"
+            ),
+            "result_acknowledgment_bindings": acknowledgment_bindings,
+            "proposed_result_presence": proposed_presence,
+            "accepted_result_presence": accepted_presence,
         }
     )
     return state
@@ -1786,6 +2625,7 @@ def _abort_phase_projection(
 def _abort_phase_contract(values: dict[str, Any]) -> list[dict[str, Any]]:
     """Machine-readable phase matrix derived from the reviewed abort transition."""
 
+    _require_acknowledgment_substate_authority(values)
     abort = next(
         item
         for item in values["state_machine"]["transitions"]
@@ -1821,8 +2661,20 @@ def _abort_phase_contract(values: dict[str, Any]) -> list[dict[str, Any]]:
                     if rank >= 5
                     else "empty"
                 ),
-                "receipt_state": "accepted" if rank >= 5 else "none",
-                "result_state": "accepted" if rank >= 5 else "none",
+                "receipt_state": (
+                    "accepted"
+                    if rank >= 5
+                    else "present-iff-acknowledgment"
+                    if phase == "EVALUATING"
+                    else "none"
+                ),
+                "result_state": (
+                    "accepted"
+                    if rank >= 5
+                    else "proposed-iff-acknowledgment"
+                    if phase == "EVALUATING"
+                    else "none"
+                ),
                 "consent_state": (
                     "pending"
                     if phase == "CONSENT_PENDING"
@@ -1847,9 +2699,54 @@ def _abort_phase_contract(values: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
+def _require_abort_confidentiality(observed: dict[str, Any]) -> None:
+    forbidden_keys = {
+        "local_result",
+        "party_local_result",
+        "plaintext_result",
+        "result_value",
+        "exact_count",
+        "matching_element",
+        "private_input",
+        "raw_grant",
+        "credential",
+    }
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            _require(
+                not (set(value) & forbidden_keys),
+                "PET-PUBLIC-RESULT-EXPOSURE",
+            )
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+        elif isinstance(value, str):
+            _require(value not in PROTOCOL_OUTPUTS, "PET-PUBLIC-RESULT-EXPOSURE")
+
+    walk(observed)
+
+
 def _validate_abort_phase_state(
-    values: dict[str, Any], observed: dict[str, Any]
+    values: dict[str, Any],
+    observed: dict[str, Any],
+    profile_authority: dict[str, Any],
 ) -> None:
+    profile_authority = require_profile_authority(profile_authority)
+    selected_profile = values["profiles"].get(profile_authority["profile_id"])
+    _require(selected_profile is not None, "PET-PROFILE-AUTHORITY")
+    _require(
+        profile_authority
+        == require_profile_authority(
+            _profile_authority(
+                selected_profile, profile_authority["profile_instance_id"]
+            )
+        ),
+        "PET-PROFILE-AUTHORITY",
+    )
+    _require_abort_confidentiality(observed)
     phase = observed.get("phase", "")
     _require(phase in ABORT_PHASE_ORDER, "PET-ABORT-PHASE-AUTHORITY")
     authority = next(
@@ -1889,17 +2786,122 @@ def _validate_abort_phase_state(
             "party_a",
             "party_b",
         ]
+    substate = None
+    if phase == "EVALUATING":
+        substate = next(
+            (
+                item
+                for item in _evaluating_acknowledgment_substate_contract(values)
+                if item["substate_id"] == observed.get("acknowledgment_substate_id")
+            ),
+            None,
+        )
+        _require(
+            substate is not None
+            and contributions == substate["completed_contribution_slots"]
+            and acknowledgments == substate["receipt_acknowledgment_slots"],
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+    else:
+        _require(
+            observed.get("acknowledgment_substate_id") == "not-applicable",
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
+    receipt_expected = authority["receipt_state"] == "accepted" or bool(acknowledgments)
+    result_expected = (
+        "ACCEPTED"
+        if authority["result_state"] == "accepted"
+        else "PROPOSED"
+        if authority["result_state"] == "proposed-iff-acknowledgment"
+        and bool(acknowledgments)
+        else None
+    )
+    _require(slots_valid, "PET-ABORT-PHASE-AUTHORITY")
     _require(
-        slots_valid
-        and (observed.get("opaque_receipt_ref") is not None)
-        == (authority["receipt_state"] == "accepted")
-        and observed.get("result_state")
-        == ("ACCEPTED" if authority["result_state"] == "accepted" else None)
+        (observed.get("opaque_receipt_ref") is not None) == receipt_expected,
+        (
+            "PET-RECEIPT-BINDING"
+            if phase == "EVALUATING"
+            else "PET-ABORT-PHASE-AUTHORITY"
+        ),
+    )
+    _require(
+        observed.get("result_state") == result_expected
         and observed.get("consent_state") == authority["consent_state"].upper()
         and observed.get("disclosure_state") == authority["disclosure_state"].upper()
         and observed.get("cleanup_state") == authority["cleanup_state_before"],
         "PET-ABORT-PHASE-AUTHORITY",
     )
+    expected_proposed = {
+        party: "PRESENT" if party in acknowledgments else "NONE"
+        for party in ("party_a", "party_b")
+    }
+    expected_accepted = {
+        party: "PRESENT" if authority["result_state"] == "accepted" else "NONE"
+        for party in ("party_a", "party_b")
+    }
+    _require(
+        observed.get("proposed_result_presence") == expected_proposed
+        and observed.get("accepted_result_presence") == expected_accepted,
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    bindings = observed.get("result_acknowledgment_bindings")
+    _require(
+        isinstance(bindings, dict) and set(bindings) == {"party_a", "party_b"},
+        "PET-ABORT-PHASE-AUTHORITY",
+    )
+    for party in ("party_a", "party_b"):
+        binding = bindings[party]
+        if party not in acknowledgments:
+            _require(binding is None, "PET-ABORT-PHASE-AUTHORITY")
+            continue
+        binding = require_acknowledgment_evidence_binding(binding)
+        _require(
+            binding.get("opaque_receipt_ref") == observed.get("opaque_receipt_ref"),
+            "PET-RECEIPT-BINDING",
+        )
+        _require(
+            binding.get("normalized_acknowledgment_status") == "ACKNOWLEDGED",
+            "PET-CALLBACK-BINDING",
+        )
+        _require(
+            binding.get("session_id") == observed.get("session_id"),
+            "PET-SESSION-BINDING",
+        )
+        _require(
+            binding.get("profile_id") == profile_authority.get("profile_id"),
+            "PET-CROSS-PROFILE",
+        )
+        _require(
+            binding.get("profile_version") == profile_authority.get("profile_version"),
+            "PET-PROFILE-VERSION",
+        )
+        _require(
+            binding.get("profile_instance_id")
+            == profile_authority.get("profile_instance_id"),
+            "PET-PROFILE-INSTANCE",
+        )
+        _require(
+            binding.get("evaluation_attempt_id")
+            == observed.get("evaluation_attempt_id"),
+            "PET-EVALUATION-ATTEMPT",
+        )
+        _require(
+            isinstance(binding.get("profile_evidence_ref"), str)
+            and bool(binding["profile_evidence_ref"])
+            and binding.get("profile_evidence_binding_digest")
+            == _acknowledgment_evidence_digest(binding),
+            "PET-CALLBACK-BINDING",
+        )
+    if substate is not None:
+        _require(
+            {
+                party: "present" if bindings[party] is not None else "none"
+                for party in ("party_a", "party_b")
+            }
+            == substate["result_acknowledgment_presence"],
+            "PET-ABORT-PHASE-AUTHORITY",
+        )
 
 
 def _expected_transition(
@@ -2005,9 +3007,11 @@ def _expected_transition(
         "initial_phase": initial,
         "accepted_transition_ids": transition_ids,
         "resulting_phase": resulting,
-        "fields_introduced": stage["fields_introduced"],
-        "fields_retained_unchanged": stage["fields_retained_unchanged"],
-        "fields_invalidated": stage["fields_invalidated"],
+        # Copy list-valued authority so a synthetic mutation cannot rewrite
+        # the loaded stage contract through a shared reference.
+        "fields_introduced": list(stage["fields_introduced"]),
+        "fields_retained_unchanged": list(stage["fields_retained_unchanged"]),
+        "fields_invalidated": list(stage["fields_invalidated"]),
         "query_budget_effect": query_budget_effect,
         "transcript_mutated": stage["transcript_mutated"],
         "runner_status": "pass",
@@ -2260,6 +3264,8 @@ def operation_input_for_case(
             receipt=receipt,
             resource_policy_binding=resource_policy_binding,
             execution_authorization_digest=authorization["authority_digest"],
+            profile_authority=pa,
+            acknowledgment_substate=item.get("abort_acknowledgment_substate"),
         )
         presented = {
             "operation": operation,
@@ -2275,6 +3281,13 @@ def operation_input_for_case(
             "cancellation_requested": True,
             "cleanup_completed": True,
         }
+    if "profile_id" in presented:
+        presented["profile_class"] = profile["profile_class"]
+    if "selected_profile" in presented:
+        presented["selected_profile"] = {
+            **presented["selected_profile"],
+            "profile_class": profile["profile_class"],
+        }
     context["expected_presented_operation"] = copy.deepcopy(presented)
     observer = (
         _observer_for_receipt(receipt)
@@ -2283,7 +3296,7 @@ def operation_input_for_case(
     )
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "record_type": "pet-profile-operation-input",
         "artifact_status": "experimental",
         "synthetic": True,
@@ -2488,12 +3501,20 @@ def validate_operation_input(
         ) != ["party_a", "party_b"]:
             raise PetProfileError("PET-CONTRIBUTIONS-INCOMPLETE")
         if operation == "abort-and-cleanup":
-            _validate_abort_phase_state(values, state_candidate)
+            _schema_validate_digest_authority(
+                record, values["schemas"]["operation"], "operation-input"
+            )
+            _validate_abort_phase_state(
+                values,
+                state_candidate,
+                context_candidate.get("profile_authority"),
+            )
     _schema_validate(record, values["schemas"]["operation"], "operation-input")
     context = record["authoritative_context"]
     protocol = context["protocol_authority"]
     _require(protocol == _protocol_authority(values), "PET-PROTOCOL-AUTHORITY")
-    profile_id = context["profile_authority"]["profile_id"]
+    profile_authority = require_profile_authority(context["profile_authority"])
+    profile_id = profile_authority["profile_id"]
     _require(profile_id in values["profiles"], "PET-PROFILE-UNKNOWN")
     profile = values["profiles"][profile_id]
     presented_authority = context["expected_presented_operation"]
@@ -2527,9 +3548,9 @@ def validate_operation_input(
                 raise PetProfileError("PET-CROSS-PROFILE")
             raise PetProfileError(field_error_codes.get(key, "PET-OPERATION-AUTHORITY"))
     expected_profile = _profile_authority(
-        profile, context["profile_authority"]["profile_instance_id"]
+        profile, profile_authority["profile_instance_id"]
     )
-    _require(context["profile_authority"] == expected_profile, "PET-PROFILE-AUTHORITY")
+    _require(profile_authority == expected_profile, "PET-PROFILE-AUTHORITY")
     for key in (
         "profile_id",
         "profile_version",
@@ -2538,13 +3559,19 @@ def validate_operation_input(
         "profile_instance_id",
     ):
         if key in presented:
+            expected_value = (
+                profile["profile_class"]
+                if key == "profile_class"
+                else profile_authority[key]
+            )
             _require(
-                presented[key] == context["profile_authority"][key],
+                presented[key] == expected_value,
                 field_error_codes.get(key, "PET-PROFILE-AUTHORITY"),
             )
     if "selected_profile" in presented:
         _require(
-            presented["selected_profile"] == context["profile_authority"],
+            presented["selected_profile"]
+            == {**profile_authority, "profile_class": profile["profile_class"]},
             "PET-PROFILE-AUTHORITY",
         )
     _require(context["lifecycle_stage"] == operation, "PET-LIFECYCLE-STAGE")
@@ -2609,7 +3636,7 @@ def validate_operation_input(
                 "PET-EXECUTION-AUTHORIZATION-BINDING",
             )
         if operation == "abort-and-cleanup":
-            _validate_abort_phase_state(values, state)
+            _validate_abort_phase_state(values, state, context["profile_authority"])
         if operation == "evaluation-timeout":
             _require(
                 state["authoritative_time"] == presented["authoritative_time"]
@@ -2802,6 +3829,33 @@ STAGE_INVALID_CASE_CODES = {
     "abort-created-consumed-budget": "PET-QUERY-BUDGET",
     "abort-wrong-terminal-phase": "PET-STATE-TRANSITION-PARITY",
     "abort-redigested-impossible-state": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-ack-missing-receipt": "PET-RECEIPT-BINDING",
+    "abort-evaluating-ack-missing-proposed-result": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-unacknowledged-future-receipt": "PET-RECEIPT-BINDING",
+    "abort-evaluating-ack-a-null-receipt": "PET-RECEIPT-BINDING",
+    "abort-evaluating-ack-b-null-receipt": "PET-RECEIPT-BINDING",
+    "abort-evaluating-ack-a-missing-proposed-result": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-ack-b-missing-proposed-result": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-proposed-without-ack": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-party-receipt-mismatch": "PET-RECEIPT-BINDING",
+    "abort-evaluating-ack-status-mismatch": "PET-CALLBACK-BINDING",
+    "abort-evaluating-profile-evidence-mismatch": "PET-CALLBACK-BINDING",
+    "abort-evaluating-ack-before-bilateral-contribution": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-accepted-result-before-transition": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-accepted-result-conflict": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-receipt-authority-mismatch": "PET-RECEIPT-BINDING",
+    "abort-evaluating-clears-acknowledged-receipt": "PET-STATE-TRANSITION-PARITY",
+    "abort-evaluating-rewrites-proposed-result": "PET-STATE-TRANSITION-PARITY",
+    "abort-evaluating-exposes-party-result": "PET-PUBLIC-RESULT-EXPOSURE",
+    "abort-evaluating-redigested-impossible-ack-substate": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-other-party-proposed-result": "PET-ABORT-PHASE-AUTHORITY",
+    "abort-evaluating-stale-ack-session": "PET-SESSION-BINDING",
+    "abort-evaluating-stale-ack-profile": "PET-CROSS-PROFILE",
+    "abort-evaluating-stale-ack-attempt": "PET-EVALUATION-ATTEMPT",
+    "abort-profile-authority-empty": "PET-PROFILE-AUTHORITY",
+    "abort-profile-authority-null": "PET-PROFILE-AUTHORITY",
+    "abort-profile-authority-extra-key": "PET-PROFILE-AUTHORITY",
+    "abort-ack-binding-missing-profile-id": "PET-PROFILE-AUTHORITY",
 }
 INVALID_CASE_CODES = {**INVALID_CASE_CODES, **STAGE_INVALID_CASE_CODES}
 
@@ -2811,6 +3865,7 @@ def _case_for(
     operation: str,
     profile: str | None = None,
     party: str | None = None,
+    abort_substate: str | None = None,
 ) -> dict[str, Any]:
     return next(
         item
@@ -2818,6 +3873,10 @@ def _case_for(
         if item["operation"] == operation
         and (profile is None or item["profile_id"] == profile)
         and (party is None or item.get("party_slot") == party)
+        and (
+            abort_substate is None
+            or item.get("abort_acknowledgment_substate") == abort_substate
+        )
     )
 
 
@@ -2844,10 +3903,61 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
         "abort-created-result-inconsistent": "CREATED",
         "abort-created-consumed-budget": "CREATED",
         "abort-redigested-impossible-state": "CREATED",
+        "abort-evaluating-ack-missing-receipt": "EVALUATING",
+        "abort-evaluating-ack-missing-proposed-result": "EVALUATING",
+        "abort-evaluating-unacknowledged-future-receipt": "EVALUATING",
+        "abort-evaluating-ack-a-null-receipt": "EVALUATING",
+        "abort-evaluating-ack-b-null-receipt": "EVALUATING",
+        "abort-evaluating-ack-a-missing-proposed-result": "EVALUATING",
+        "abort-evaluating-ack-b-missing-proposed-result": "EVALUATING",
+        "abort-evaluating-proposed-without-ack": "EVALUATING",
+        "abort-evaluating-party-receipt-mismatch": "EVALUATING",
+        "abort-evaluating-ack-status-mismatch": "EVALUATING",
+        "abort-evaluating-profile-evidence-mismatch": "EVALUATING",
+        "abort-evaluating-ack-before-bilateral-contribution": "EVALUATING",
+        "abort-evaluating-accepted-result-before-transition": "EVALUATING",
+        "abort-evaluating-accepted-result-conflict": "EVALUATING",
+        "abort-evaluating-receipt-authority-mismatch": "EVALUATING",
+        "abort-evaluating-clears-acknowledged-receipt": "EVALUATING",
+        "abort-evaluating-rewrites-proposed-result": "EVALUATING",
+        "abort-evaluating-exposes-party-result": "EVALUATING",
+        "abort-evaluating-redigested-impossible-ack-substate": "EVALUATING",
+        "abort-evaluating-other-party-proposed-result": "EVALUATING",
+        "abort-evaluating-stale-ack-session": "EVALUATING",
+        "abort-evaluating-stale-ack-profile": "EVALUATING",
+        "abort-evaluating-stale-ack-attempt": "EVALUATING",
+        "abort-profile-authority-empty": "EVALUATING",
+        "abort-profile-authority-null": "EVALUATING",
+        "abort-profile-authority-extra-key": "EVALUATING",
+        "abort-ack-binding-missing-profile-id": "EVALUATING",
     }
     if mutation in abort_phase_mutations:
-        abort_case = copy.deepcopy(_case_for(values, "abort-and-cleanup"))
+        substate_by_mutation = {
+            "abort-evaluating-unacknowledged-future-receipt": "contributions-complete-no-ack",
+            "abort-evaluating-proposed-without-ack": "contributions-complete-no-ack",
+            "abort-evaluating-ack-before-bilateral-contribution": "party-a-acknowledged",
+            "abort-evaluating-ack-a-null-receipt": "party-a-acknowledged",
+            "abort-evaluating-ack-a-missing-proposed-result": "party-a-acknowledged",
+            "abort-evaluating-other-party-proposed-result": "party-a-acknowledged",
+            "abort-evaluating-ack-b-null-receipt": "party-b-acknowledged",
+            "abort-evaluating-ack-b-missing-proposed-result": "party-b-acknowledged",
+        }
+        substate = substate_by_mutation.get(mutation, "both-acknowledged")
+        abort_case = copy.deepcopy(
+            _case_for(
+                values,
+                "abort-and-cleanup",
+                abort_substate=(
+                    substate
+                    if abort_phase_mutations[mutation] == "EVALUATING"
+                    else None
+                ),
+            )
+        )
         abort_case["abort_source_phase"] = abort_phase_mutations[mutation]
+        abort_case["abort_acknowledgment_substate"] = (
+            substate if abort_phase_mutations[mutation] == "EVALUATING" else None
+        )
         record = operation_input_for_case(values, abort_case)
     elif mutation in {
         "unknown-symmetric-decision",
@@ -3076,6 +4186,84 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
     elif mutation == "abort-redigested-impossible-state":
         c["initial_state"]["evaluation_attempt_id"] = "redigested-future-attempt"
         c["expected_presented_operation"] = copy.deepcopy(p)
+    elif mutation == "abort-evaluating-ack-missing-receipt":
+        c["initial_state"]["opaque_receipt_ref"] = None
+    elif mutation == "abort-evaluating-ack-missing-proposed-result":
+        c["initial_state"]["result_state"] = None
+    elif mutation == "abort-evaluating-unacknowledged-future-receipt":
+        c["initial_state"]["opaque_receipt_ref"] = "sha256:" + "a8" * 32
+    elif mutation in {
+        "abort-evaluating-ack-a-null-receipt",
+        "abort-evaluating-ack-b-null-receipt",
+    }:
+        c["initial_state"]["opaque_receipt_ref"] = None
+    elif mutation == "abort-evaluating-ack-a-missing-proposed-result":
+        c["initial_state"]["proposed_result_presence"]["party_a"] = "NONE"
+    elif mutation == "abort-evaluating-ack-b-missing-proposed-result":
+        c["initial_state"]["proposed_result_presence"]["party_b"] = "NONE"
+    elif mutation == "abort-evaluating-proposed-without-ack":
+        c["initial_state"]["proposed_result_presence"]["party_a"] = "PRESENT"
+    elif mutation == "abort-evaluating-party-receipt-mismatch":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_b"][
+            "opaque_receipt_ref"
+        ] = "sha256:" + "a9" * 32
+    elif mutation == "abort-evaluating-ack-status-mismatch":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "normalized_acknowledgment_status"
+        ] = "REJECTED"
+    elif mutation == "abort-evaluating-profile-evidence-mismatch":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "profile_evidence_ref"
+        ] = "urn:private-match:test:profile-evidence:other"
+    elif mutation == "abort-evaluating-ack-before-bilateral-contribution":
+        c["initial_state"]["completed_contribution_slots"] = ["party_a"]
+    elif mutation == "abort-evaluating-accepted-result-before-transition":
+        c["initial_state"]["accepted_result_presence"]["party_a"] = "PRESENT"
+    elif mutation == "abort-evaluating-accepted-result-conflict":
+        c["initial_state"]["result_state"] = "ACCEPTED"
+        c["initial_state"]["accepted_result_presence"] = {
+            "party_a": "PRESENT",
+            "party_b": "PRESENT",
+        }
+    elif mutation == "abort-evaluating-receipt-authority-mismatch":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "opaque_receipt_ref"
+        ] = "sha256:" + "aa" * 32
+    elif mutation == "abort-evaluating-clears-acknowledged-receipt":
+        e["fields_retained_unchanged"].remove("opaque_receipt_ref")
+    elif mutation == "abort-evaluating-rewrites-proposed-result":
+        e["fields_retained_unchanged"].remove("proposed_result_state")
+    elif mutation == "abort-evaluating-exposes-party-result":
+        c["initial_state"]["party_local_result"] = "MATCH"
+    elif mutation == "abort-evaluating-redigested-impossible-ack-substate":
+        c["initial_state"]["acknowledgment_substate_id"] = (
+            "contributions-complete-no-ack"
+        )
+        c["expected_presented_operation"] = copy.deepcopy(p)
+    elif mutation == "abort-evaluating-other-party-proposed-result":
+        c["initial_state"]["proposed_result_presence"]["party_b"] = "PRESENT"
+    elif mutation == "abort-evaluating-stale-ack-session":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "session_id"
+        ] = "urn:private-match:test:session:stale"
+    elif mutation == "abort-evaluating-stale-ack-profile":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "profile_id"
+        ] = "private-match-experimental-nitro-enclave"
+    elif mutation == "abort-evaluating-stale-ack-attempt":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"][
+            "evaluation_attempt_id"
+        ] = "urn:private-match:test:evaluation:stale"
+    elif mutation == "abort-profile-authority-empty":
+        c["profile_authority"] = {}
+    elif mutation == "abort-profile-authority-null":
+        c["profile_authority"] = None
+    elif mutation == "abort-profile-authority-extra-key":
+        c["profile_authority"]["unreviewed"] = "rejected"
+    elif mutation == "abort-ack-binding-missing-profile-id":
+        c["initial_state"]["result_acknowledgment_bindings"]["party_a"].pop(
+            "profile_id"
+        )
     elif mutation == "abort-wrong-terminal-phase":
         e["resulting_phase"] = "CLOSED"
     elif mutation == "callback-session-mismatch":
@@ -3444,7 +4632,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     profiles = values["profiles"]
     summaries = [_profile_summary(profiles[key]) for key in sorted(profiles)]
     index = {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "record_type": "pet-integration-profile-index",
         "artifact_status": "experimental",
         "research_authority_digest": values["authority"]["authority_digest"],
@@ -3458,7 +4646,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     }
     index["index_digest"] = detached_digest("index", index, "index_digest")
     projection = {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "record_type": "product-decision-engine-handoff-projection",
         "artifact_status": "experimental",
         "handoff_digest": values["handoff"]["handoff_digest"],
@@ -3491,7 +4679,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
     ]
     for item in summaries:
         lines.append(
-            f"| `{item['profile_id']}/0.1` | {item['profile_class']} | {item['technology_family']} | {item['security_model']} | {item['trust_model']} | contract-only | no | no |"
+            f"| `{item['profile_id']}/{item['profile_version']}` | {item['profile_class']} | {item['technology_family']} | {item['security_model']} | {item['trust_model']} | contract-only | no | no |"
         )
     lines += [
         "",
@@ -3506,6 +4694,13 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         GENERATED_PATHS["comparison"]: "\n".join(lines).encode("utf-8"),
         GENERATED_PATHS["handoff"]: _canonical_json(projection),
     }
+    for relative, digest in LEGACY_GENERATED_DIGESTS.items():
+        content = _regular_file(root, relative).read_bytes()
+        _require(sha256_bytes(content) == digest, "PET-LEGACY-VERSION-DIGEST")
+        files[relative] = content
+    for relative, digest in LEGACY_BEHAVIOR_DIGESTS.items():
+        content = _regular_file(root, relative).read_bytes()
+        _require(sha256_bytes(content) == digest, "PET-LEGACY-VERSION-DIGEST")
     executed_results = []
     for item in values["cases"]["valid_cases"]:
         operation_input = operation_input_for_case(values, item)
@@ -3527,7 +4722,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             == (
                 "generated/pet-integration/cases/"
                 + item["case_id"].lower()
-                + ".v0.1.json"
+                + ".v0.2.json"
             ),
             "PET-CASE-INPUT-PATH",
             item["case_id"],
@@ -3543,7 +4738,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             }
         )
     case_results = {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "record_type": "pet-profile-executable-case-results",
         "artifact_status": "experimental",
         "catalog_digest": values["cases"]["catalog_digest"],
@@ -3577,6 +4772,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         STAGE_CONTRACT_PATH,
         CASE_CATALOG_PATH,
         ERROR_CODE_CATALOG_PATH,
+        COMPATIBILITY_PATH,
         CANONICAL_CALLBACK_PATH,
         *SCHEMAS.values(),
         *PROFILE_PATHS.values(),
@@ -3595,6 +4791,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         Path("specs/state-machines/private-match-core-session-v0.1.yaml"),
         Path("registry/message-types.v0.1.yaml"),
         Path("schemas/messages/envelope.v0.1.schema.json"),
+        PET_MESSAGE_SCHEMA_PATH,
         Path("schemas/registry/message-types.v0.1.schema.json"),
         Path("conformance/messages/verification-materials.v0.1.yaml"),
         Path("conformance/messages/expected-digests/vectors.v0.1.json"),
@@ -3602,6 +4799,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         Path(".github/workflows/protocol-spec.yml"),
         Path("REUSE.toml"),
         Path("README.md"),
+        *LEGACY_BEHAVIOR_DIGESTS,
         Path("ROADMAP.md"),
         Path("GOVERNANCE.md"),
         Path("docs/decisions/ADR-0006-EXPERIMENTAL-PET-INTEGRATION-PROFILES.md"),
@@ -3609,6 +4807,12 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         Path("specs/pet-integration/secretflow-kkrt-v0.1.md"),
         Path("specs/pet-integration/nitro-enclave-v0.1.md"),
         Path("specs/pet-integration/voprf-component-v0.1.md"),
+        Path("specs/pet-integration/secretflow-kkrt-v0.2.md"),
+        Path("specs/pet-integration/nitro-enclave-v0.2.md"),
+        Path("specs/pet-integration/voprf-component-v0.2.md"),
+        Path("schema/pet-profile-operation-input.v0.1.schema.json"),
+        Path("schema/pet-profile-case-results.v0.1.schema.json"),
+        Path("generated/pet-integration/executable-case-results.v0.1.json"),
     ]
     entries = []
     for relative in sorted(behavior_paths, key=lambda item: item.as_posix()):
@@ -3625,7 +4829,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         for path, content in sorted(files.items(), key=lambda item: item[0].as_posix())
     ]
     manifest = {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "record_type": "pet-integration-generated-manifest",
         "artifact_status": "experimental",
         "research_authority_digest": values["authority"]["authority_digest"],
@@ -3634,6 +4838,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
         "binding_digest": values["binding"]["binding_digest"],
         "operation_stage_digest": values["stage"]["stage_contract_digest"],
         "case_catalog_digest": values["cases"]["catalog_digest"],
+        "compatibility_digest": values["compatibility"]["compatibility_digest"],
         "behavior_inputs": entries,
         "generated_outputs": output_entries,
         "implementation_digest": "",

@@ -46,6 +46,20 @@ monotonic authoritative-time advance that reaches the stored deadline. Generic
 abort uses every reviewed `TR-ABORT` source phase and preserves a consumed
 budget after evaluation starts.
 
+Because `TR-ACK-RECEIPT-A/B` are same-phase `EVALUATING` transitions, abort
+authority also derives an exact contribution and acknowledgment substate
+matrix. It distinguishes no acknowledgment, Party A only, Party B only, and
+both Parties rather than reducing acknowledgment state to a boolean. Empty
+acknowledgment slots bind to a null receipt and absent proposed-result state;
+each acknowledgment binds to both completed contributions, one common opaque
+receipt, a normalized per-Party acknowledgment authority, a domain-separated
+digest over the public profile-Evidence reference and exact
+session/profile/instance/attempt authority, and only a Party-local
+proposed-result presence marker. `TR-ABORT` retains those existing
+audit references because its reviewed effect does not write them. The validator
+rejects nullable or mixed-authority combinations that cannot be produced by the
+State Machine rather than treating the phase label as the complete state.
+
 Keep Party-local plaintext results outside the public presented operation.
 Synthetic conformance may use a separate domain-separated global observer to
 compare both Party-local decisions and their common receipt. The observer is
@@ -130,10 +144,10 @@ input completeness, performance, or production eligibility.
 
 ## Compatibility and rollback
 
-These are new experimental Draft v0.1 artifacts and do not modify existing
-State Machine or Message schemas. Consumers must reject unknown versions and
-component-only engine selection. Rollback removes the new registry/profiles and
-handoff as a unit; it must not silently fall back to an unregistered adapter.
+The experimental PET authority is exact-version-only. Consumers must reject
+unknown versions and component-only engine selection. Rollback selects one
+complete reviewed graph; it must not silently fall back to an unregistered
+adapter or combine authority from different graph versions.
 
 ## Corrective Draft compatibility and authority closure
 
@@ -144,6 +158,25 @@ those two message types is no longer accepted. The change is necessary to bind
 the resource-policy and execution-authorization digests into canonical message
 bytes rather than an unsigned reconstructed operation surface. Rolling back
 would reopen the reviewed substitution gap.
+
+The acknowledged-receipt abort correction changes required state fields,
+accepted semantic authority, and the Product pre/post-state obligation. The
+complete profiles, registry, binding, handoff, operation-input, operation-stage,
+conformance-case, executable-result, index, comparison, projection, and digest
+manifest therefore advance together to version `0.2`. The corresponding v0.1
+artifacts remain byte-identical. `config/pet-contract-compatibility.v0.2.json`
+binds both complete graphs and rejects cross-version mixing, implicit fallback,
+forward inference, and partial authority. Rollback selects only the preserved
+v0.1 graph and loses acknowledged-receipt abort coverage rather than inferring
+v0.2 semantics.
+
+Acknowledgment Evidence digest inputs are structurally validated before any
+field projection or digest computation. The profile authority is a closed
+four-field mapping, must equal the selected profile/session/evaluation
+authority and each acknowledgment binding, and fails with the bounded
+`PET-PROFILE-AUTHORITY` code when malformed. Schema validation remains the
+normal first line of defense, while the semantic helper independently protects
+direct callers from raw `KeyError`, `TypeError`, or attribute failures.
 
 All `TR-ABORT` source phases are now governed by one derived closed phase
 matrix. The matrix is projected from the existing State Machine, not a second

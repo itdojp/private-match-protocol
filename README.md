@@ -54,8 +54,8 @@ The following belong in private repositories:
   [canonical conformance-state projection](specs/conformance/CONFORMANCE_STATE_PROJECTION_V0.1.md), and
   [offline adapter-result contract](specs/conformance/INTEROPERABILITY_ADAPTER_CONTRACT_V0.1.md)
 - [Experimental PET integration profiles](specs/pet-integration/README.md),
-  [machine-readable profile registry](registry/pet-integration-profiles.v0.1.yaml), and
-  [public Product decision-engine handoff](handoff/product-decision-engine-port.v0.1.yaml)
+  [machine-readable profile registry](registry/pet-integration-profiles.v0.2.yaml), and
+  [public Product decision-engine handoff](handoff/product-decision-engine-port.v0.2.yaml)
 
 ## Maturity
 
@@ -73,6 +73,10 @@ fabricate later commitment, attempt, receipt, verification-material, or result
 state. Party plaintext decisions remain outside public callback and Product-port
 surfaces; a separate synthetic global observer is used only by offline fixture
 conformance.
+The complete current PET authority is version `0.2`. Published `v0.1` binding,
+handoff, profile, registry, operation, and generated authorities remain
+byte-preserved as an explicit whole-graph rollback option; mixed-version graphs
+fail closed.
 
 ## Initial design principles
 

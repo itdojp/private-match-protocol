@@ -1,0 +1,1691 @@
+{
+  "$defs": {
+    "authentication": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "key_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "signature",
+            "mac",
+            "profile-attestation"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "verification_material_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "algorithm_id",
+        "key_id",
+        "verification_material_id",
+        "value"
+      ],
+      "type": "object"
+    },
+    "callbackIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "callback_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "evaluation_attempt_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "kind": {
+          "const": "profile_callback"
+        },
+        "profile_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "profile_instance_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "profile_version": {
+          "const": "0.2",
+          "type": "string"
+        },
+        "session_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "profile_id",
+        "profile_version",
+        "profile_instance_id",
+        "callback_id",
+        "idempotency_key",
+        "session_id",
+        "evaluation_attempt_id"
+      ],
+      "type": "object"
+    },
+    "digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "identifier": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+      "type": "string"
+    },
+    "noticeIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "derived_transition"
+        },
+        "notice_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "notice_id"
+      ],
+      "type": "object"
+    },
+    "operationIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "actor_id": {
+          "const": "coordinator"
+        },
+        "idempotency_key": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "kind": {
+          "const": "coordinator_command"
+        },
+        "operation_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "actor_id",
+        "operation_id",
+        "idempotency_key"
+      ],
+      "type": "object"
+    },
+    "partyBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "key_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "participant_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "participant_id",
+        "key_id"
+      ],
+      "type": "object"
+    },
+    "partyIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "issued_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "kind": {
+          "const": "party_message"
+        },
+        "message_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "nonce": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "sender_participant_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "sequence": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "sender_participant_id",
+        "message_id",
+        "nonce",
+        "sequence",
+        "issued_at"
+      ],
+      "type": "object"
+    },
+    "payload_abort_notice": {
+      "additionalProperties": false,
+      "properties": {
+        "internal_failure_code": {
+          "enum": [
+            "REPLAY_CONFLICT",
+            "COMMITMENT_MUTATION",
+            "EVALUATION_TIMEOUT",
+            "PARTIAL_PARTY_FAILURE",
+            "RESULT_CONFLICT",
+            "CONSENT_EXPIRED",
+            "CONSENT_WITHDRAWN",
+            "UNKNOWN_STATE"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "internal_failure_code"
+      ],
+      "type": "object"
+    },
+    "payload_close_notice": {
+      "additionalProperties": false,
+      "properties": {
+        "reason_category": {
+          "enum": [
+            "NORMAL_CLOSE",
+            "POLICY_CLOSE"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason_category"
+      ],
+      "type": "object"
+    },
+    "payload_commitment_registration": {
+      "additionalProperties": false,
+      "properties": {
+        "opaque_commitment": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "opaque_commitment"
+      ],
+      "type": "object"
+    },
+    "payload_consent_grant": {
+      "additionalProperties": false,
+      "properties": {
+        "audience": {
+          "items": {
+            "enum": [
+              "party_a_client",
+              "party_b_client"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "consent_artifact_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "consent_nonce": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "disclosure_profile_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "disclosure_profile_version": {
+          "const": "0.1",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "issued_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "opaque_receipt_ref": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "scope": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "opaque_receipt_ref",
+        "disclosure_profile_id",
+        "disclosure_profile_version",
+        "scope",
+        "audience",
+        "issued_at",
+        "expires_at",
+        "consent_nonce",
+        "consent_artifact_digest"
+      ],
+      "type": "object"
+    },
+    "payload_consent_withdrawal": {
+      "additionalProperties": false,
+      "properties": {
+        "consent_artifact_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "consent_nonce": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "reason_category": {
+          "enum": [
+            "USER_WITHDRAWAL",
+            "POLICY_WITHDRAWAL"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "consent_nonce",
+        "consent_artifact_digest",
+        "reason_category"
+      ],
+      "type": "object"
+    },
+    "payload_disclosure_completion_notice": {
+      "additionalProperties": false,
+      "properties": {
+        "audience": {
+          "items": {
+            "enum": [
+              "party_a_client",
+              "party_b_client"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "authorization_ref": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "completion_ref": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "profile_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "profile_version": {
+          "const": "0.1",
+          "type": "string"
+        },
+        "scope": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "profile_id",
+        "profile_version",
+        "scope",
+        "audience",
+        "completion_ref",
+        "authorization_ref"
+      ],
+      "type": "object"
+    },
+    "payload_disclosure_extension_authorization": {
+      "additionalProperties": false,
+      "properties": {
+        "audience": {
+          "items": {
+            "enum": [
+              "party_a_client",
+              "party_b_client"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "authorization_ref": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "profile_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "profile_version": {
+          "const": "0.1",
+          "type": "string"
+        },
+        "scope": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "profile_id",
+        "profile_version",
+        "scope",
+        "audience",
+        "authorization_ref"
+      ],
+      "type": "object"
+    },
+    "payload_evaluation_contribution": {
+      "additionalProperties": false,
+      "properties": {
+        "contribution_ref": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "contribution_ref"
+      ],
+      "type": "object"
+    },
+    "payload_evaluation_start": {
+      "additionalProperties": false,
+      "properties": {
+        "evaluation_attempt_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "evaluation_deadline": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "execution_authorization_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "resource_policy_binding": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evaluation_attempt_id",
+        "evaluation_deadline",
+        "resource_policy_binding",
+        "execution_authorization_digest"
+      ],
+      "type": "object"
+    },
+    "payload_expiry_notice": {
+      "additionalProperties": false,
+      "properties": {
+        "observed_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "party_error_category": {
+          "const": "SESSION_UNAVAILABLE"
+        }
+      },
+      "required": [
+        "party_error_category",
+        "observed_at"
+      ],
+      "type": "object"
+    },
+    "payload_normalized_error_notice": {
+      "additionalProperties": false,
+      "properties": {
+        "human_message": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "new_session_required": {
+          "type": "boolean"
+        },
+        "party_error_category": {
+          "enum": [
+            "BINDING_ERROR",
+            "VERSION_ERROR",
+            "REPLAY_ERROR",
+            "ORDERING_ERROR",
+            "COMMITMENT_ERROR",
+            "AUTHORIZATION_ERROR",
+            "VERIFICATION_ERROR",
+            "EVALUATION_ERROR",
+            "RESULT_ERROR",
+            "CONSENT_ERROR",
+            "DISCLOSURE_ERROR",
+            "SESSION_UNAVAILABLE",
+            "UNSUPPORTED",
+            "CLOCK_ERROR"
+          ],
+          "type": "string"
+        },
+        "retry_class": {
+          "enum": [
+            "not-retryable",
+            "new-message",
+            "new-session",
+            "idempotent-resend"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "party_error_category",
+        "retry_class",
+        "new_session_required"
+      ],
+      "type": "object"
+    },
+    "payload_opaque_receipt_ack": {
+      "additionalProperties": false,
+      "properties": {
+        "acknowledgment_status": {
+          "const": "ACKNOWLEDGED"
+        },
+        "opaque_receipt_ref": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "profile_evidence_ref": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "opaque_receipt_ref",
+        "acknowledgment_status",
+        "profile_evidence_ref"
+      ],
+      "type": "object"
+    },
+    "payload_participant_binding": {
+      "additionalProperties": false,
+      "properties": {
+        "participant_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "participant_key_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "participant_id",
+        "participant_key_id"
+      ],
+      "type": "object"
+    },
+    "payload_policy_acceptance": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptance_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "policy_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "policy_version": {
+          "const": "0.1",
+          "type": "string"
+        }
+      },
+      "required": [
+        "policy_id",
+        "policy_version",
+        "acceptance_digest"
+      ],
+      "type": "object"
+    },
+    "payload_query_budget_reservation": {
+      "additionalProperties": false,
+      "properties": {
+        "authorization_ref": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "authorization_ref"
+      ],
+      "type": "object"
+    },
+    "payload_result_acceptance_notice": {
+      "additionalProperties": false,
+      "properties": {
+        "acknowledgment_status": {
+          "const": "BOTH_ACKNOWLEDGED"
+        },
+        "execution_authorization_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "opaque_receipt_ref": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "profile_evidence_ref": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "resource_policy_binding": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "opaque_receipt_ref",
+        "acknowledgment_status",
+        "profile_evidence_ref",
+        "resource_policy_binding",
+        "execution_authorization_digest"
+      ],
+      "type": "object"
+    },
+    "payload_session_acceptance": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptance_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "proposal_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_digest",
+        "acceptance_digest"
+      ],
+      "type": "object"
+    },
+    "payload_session_proposal": {
+      "additionalProperties": false,
+      "properties": {
+        "clock_policy": {
+          "additionalProperties": false,
+          "properties": {
+            "allowed_clock_skew_seconds": {
+              "maximum": 86400,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "evaluation_timeout_seconds": {
+              "maximum": 604800,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maximum_time_jump_seconds": {
+              "maximum": 604800,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "message_stale_threshold_seconds": {
+              "maximum": 604800,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "allowed_clock_skew_seconds",
+            "message_stale_threshold_seconds",
+            "evaluation_timeout_seconds",
+            "maximum_time_jump_seconds"
+          ],
+          "type": "object"
+        },
+        "proposal_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "selected_integration_profile": {
+          "additionalProperties": false,
+          "properties": {
+            "profile_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "profile_instance_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "profile_version": {
+              "$ref": "#/$defs/version"
+            }
+          },
+          "required": [
+            "profile_id",
+            "profile_version",
+            "profile_instance_id"
+          ],
+          "type": "object"
+        },
+        "session_expires_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_digest",
+        "session_expires_at",
+        "clock_policy",
+        "selected_integration_profile"
+      ],
+      "type": "object"
+    },
+    "sender": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "enum": [
+            "party_a_client",
+            "party_b_client",
+            "coordinator",
+            "selected_integration_profile",
+            "assurance_pipeline"
+          ],
+          "type": "string"
+        },
+        "key_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        },
+        "participant_id": {
+          "oneOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "actor",
+        "participant_id",
+        "key_id"
+      ],
+      "type": "object"
+    },
+    "sessionContext": {
+      "additionalProperties": false,
+      "properties": {
+        "commitment_pair_id": {
+          "oneOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evaluation_attempt_id": {
+          "oneOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "intended_audience": {
+          "items": {
+            "enum": [
+              "party_a_client",
+              "party_b_client"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "participants": {
+          "additionalProperties": false,
+          "properties": {
+            "party_a": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "key_id": {
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+                      "type": "string"
+                    },
+                    "participant_id": {
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "participant_id",
+                    "key_id"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "party_b": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "key_id": {
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+                      "type": "string"
+                    },
+                    "participant_id": {
+                      "maxLength": 160,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "participant_id",
+                    "key_id"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "party_a",
+            "party_b"
+          ],
+          "type": "object"
+        },
+        "policy": {
+          "additionalProperties": false,
+          "properties": {
+            "policy_id": {
+              "maxLength": 160,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+              "type": "string"
+            },
+            "policy_version": {
+              "const": "0.1",
+              "type": "string"
+            }
+          },
+          "required": [
+            "policy_id",
+            "policy_version"
+          ],
+          "type": "object"
+        },
+        "selected_integration_profile": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "profile_id": {
+                  "maxLength": 160,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+                  "type": "string"
+                },
+                "profile_instance_id": {
+                  "maxLength": 160,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+                  "type": "string"
+                },
+                "profile_version": {
+                  "const": "0.2",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "profile_id",
+                "profile_version",
+                "profile_instance_id"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "policy",
+        "participants",
+        "intended_audience",
+        "commitment_pair_id",
+        "evaluation_attempt_id",
+        "selected_integration_profile"
+      ],
+      "type": "object"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "version": {
+      "const": "0.1",
+      "type": "string"
+    }
+  },
+  "$id": "https://github.com/itdojp/private-match-protocol/schemas/messages/envelope.v0.2.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "session_proposal"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "coordinator_command"
+          },
+          "identity": {
+            "$ref": "#/$defs/operationIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_session_proposal"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "session_acceptance"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "party_message"
+          },
+          "identity": {
+            "$ref": "#/$defs/partyIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_session_acceptance"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "participant_binding"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "party_message"
+          },
+          "identity": {
+            "$ref": "#/$defs/partyIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_participant_binding"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "policy_acceptance"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "party_message"
+          },
+          "identity": {
+            "$ref": "#/$defs/partyIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_policy_acceptance"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "commitment_registration"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "party_message"
+          },
+          "identity": {
+            "$ref": "#/$defs/partyIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_commitment_registration"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "query_budget_reservation"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "coordinator_command"
+          },
+          "identity": {
+            "$ref": "#/$defs/operationIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_query_budget_reservation"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "evaluation_start"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "coordinator_command"
+          },
+          "identity": {
+            "$ref": "#/$defs/operationIdentity"
+          },
+          "message_version": {
+            "const": "0.2"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_evaluation_start"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "evaluation_contribution"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "party_message"
+          },
+          "identity": {
+            "$ref": "#/$defs/partyIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_evaluation_contribution"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "opaque_receipt_ack"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "party_message"
+          },
+          "identity": {
+            "$ref": "#/$defs/partyIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_opaque_receipt_ack"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "result_acceptance_notice"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "profile_callback"
+          },
+          "identity": {
+            "$ref": "#/$defs/callbackIdentity"
+          },
+          "message_version": {
+            "const": "0.2"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_result_acceptance_notice"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "consent_grant"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "party_message"
+          },
+          "identity": {
+            "$ref": "#/$defs/partyIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_consent_grant"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "consent_withdrawal"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "party_message"
+          },
+          "identity": {
+            "$ref": "#/$defs/partyIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_consent_withdrawal"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "disclosure_extension_authorization"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "coordinator_command"
+          },
+          "identity": {
+            "$ref": "#/$defs/operationIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_disclosure_extension_authorization"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "disclosure_completion_notice"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "profile_callback"
+          },
+          "identity": {
+            "$ref": "#/$defs/callbackIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_disclosure_completion_notice"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "abort_notice"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "coordinator_command"
+          },
+          "identity": {
+            "$ref": "#/$defs/operationIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_abort_notice"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "normalized_error_notice"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "derived_transition"
+          },
+          "identity": {
+            "$ref": "#/$defs/noticeIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_normalized_error_notice"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "close_notice"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "coordinator_command"
+          },
+          "identity": {
+            "$ref": "#/$defs/operationIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_close_notice"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "message_type": {
+            "const": "expiry_notice"
+          }
+        },
+        "required": [
+          "message_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "delivery_class": {
+            "const": "derived_transition"
+          },
+          "identity": {
+            "$ref": "#/$defs/noticeIdentity"
+          },
+          "message_version": {
+            "const": "0.1"
+          },
+          "payload": {
+            "$ref": "#/$defs/payload_expiry_notice"
+          }
+        }
+      }
+    }
+  ],
+  "description": "Draft strict UTF-8 JSON/JCS message contract. Cryptographic algorithm selection and authentication verification are outside this artifact.",
+  "properties": {
+    "audience": {
+      "items": {
+        "enum": [
+          "party_a_client",
+          "party_b_client",
+          "coordinator",
+          "selected_integration_profile",
+          "assurance_pipeline"
+        ],
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "authentication": {
+      "$ref": "#/$defs/authentication"
+    },
+    "delivery_class": {
+      "enum": [
+        "party_message",
+        "coordinator_command",
+        "profile_callback",
+        "derived_transition"
+      ],
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "identity": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/partyIdentity"
+        },
+        {
+          "$ref": "#/$defs/operationIdentity"
+        },
+        {
+          "$ref": "#/$defs/callbackIdentity"
+        },
+        {
+          "$ref": "#/$defs/noticeIdentity"
+        }
+      ]
+    },
+    "issued_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "message_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "message_type": {
+      "enum": [
+        "session_proposal",
+        "session_acceptance",
+        "participant_binding",
+        "policy_acceptance",
+        "commitment_registration",
+        "query_budget_reservation",
+        "evaluation_start",
+        "evaluation_contribution",
+        "opaque_receipt_ack",
+        "result_acceptance_notice",
+        "consent_grant",
+        "consent_withdrawal",
+        "disclosure_extension_authorization",
+        "disclosure_completion_notice",
+        "abort_notice",
+        "normalized_error_notice",
+        "close_notice",
+        "expiry_notice"
+      ],
+      "type": "string"
+    },
+    "message_version": {
+      "enum": [
+        "0.1",
+        "0.2"
+      ],
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "payload_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "prior_transcript_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "protocol_profile": {
+      "const": "private-match-core"
+    },
+    "protocol_version": {
+      "const": "0.1",
+      "type": "string"
+    },
+    "sender": {
+      "$ref": "#/$defs/sender"
+    },
+    "session_context": {
+      "$ref": "#/$defs/sessionContext"
+    }
+  },
+  "required": [
+    "protocol_profile",
+    "protocol_version",
+    "message_type",
+    "message_version",
+    "delivery_class",
+    "session_context",
+    "sender",
+    "audience",
+    "issued_at",
+    "expires_at",
+    "identity",
+    "prior_transcript_digest",
+    "payload",
+    "payload_digest",
+    "authentication",
+    "message_digest"
+  ],
+  "title": "Private Match core message envelope v0.1",
+  "type": "object"
+}

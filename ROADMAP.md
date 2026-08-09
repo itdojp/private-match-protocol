@@ -112,6 +112,11 @@ Machine. Public operations contain only data available at that stage; bilateral
 Party plaintext results are isolated to a synthetic observer that is excluded
 from Coordinator and Product ports.
 
+The current experimental authority uses a complete v0.2 profile, registry,
+binding, handoff, operation, and generated-artifact graph. Published v0.1 bytes
+remain an explicit whole-graph rollback authority; cross-version and partial
+graphs fail closed.
+
 Exit criteria:
 
 - selected integration is experimental, not production ready
