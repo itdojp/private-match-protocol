@@ -405,6 +405,10 @@
     "public_result_field_policy_digest": {
       "pattern": "^sha256:[0-9a-f]{64}$",
       "type": "string"
+    },
+    "error_code_catalog_path": {
+      "const": "config/pet-profile-error-codes.v0.3.json",
+      "type": "string"
     }
   },
   "required": [
@@ -426,7 +430,8 @@
     "protocol_binding_digest",
     "acknowledgment_substate_requirements",
     "public_result_field_policy_path",
-    "public_result_field_policy_digest"
+    "public_result_field_policy_digest",
+    "error_code_catalog_path"
   ],
   "title": "Public Product decision-engine port handoff",
   "type": "object"

@@ -1419,6 +1419,12 @@ def _validate_handoff_semantics(handoff: dict[str, Any]) -> None:
     )
     handoff_fields = {item["field"]: item for item in handoff["port_fields"]}
     _require(
+        handoff["error_code_catalog_path"] == ERROR_CODE_CATALOG_PATH.as_posix()
+        and ERROR_CODE_CATALOG_PATH.as_posix()
+        in handoff_fields["deterministic-error-categories"]["public_semantic_meaning"],
+        "PET-CONTRACT-VERSION-GRAPH",
+    )
+    _require(
         "no use-case predicate or threshold is selected"
         in handoff_fields["decision-policy-binding"]["public_semantic_meaning"]
         and "reject missing, unknown, changed, defaulted, or substituted policy authority"
@@ -5029,6 +5035,7 @@ def generated_files(root: Path) -> dict[Path, bytes]:
             "policy_digest"
         ],
         "public_result_field_policy_path": RESULT_FIELD_POLICY_PATH.as_posix(),
+        "error_code_catalog_path": values["handoff"]["error_code_catalog_path"],
         "acknowledgment_substate_requirements": values["handoff"][
             "acknowledgment_substate_requirements"
         ],

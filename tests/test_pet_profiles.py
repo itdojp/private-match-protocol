@@ -33,6 +33,7 @@ from pet_profiles import (  # noqa: E402
     GENERATED_PATHS,
     HANDOFF_PATH,
     LEGACY_BINDING_PATH,
+    LEGACY_ERROR_CODE_CATALOG_PATH,
     LEGACY_HANDOFF_PATH,
     ERROR_CODE_CATALOG_PATH,
     EVALUATING_ACKNOWLEDGMENT_SUBSTATE_ORDER,
@@ -702,6 +703,37 @@ class PetProfileTests(unittest.TestCase):
         serialized = json.dumps(handoff)
         self.assertNotIn("private-match-product/", serialized)
         self.assertNotIn("src/", serialized)
+
+    def test_v03_product_handoff_binds_current_error_code_catalog(self) -> None:
+        handoff = self.values["handoff"]
+        expected_path = ERROR_CODE_CATALOG_PATH.as_posix()
+        self.assertEqual(expected_path, handoff["error_code_catalog_path"])
+        error_field = next(
+            item
+            for item in handoff["port_fields"]
+            if item["field"] == "deterministic-error-categories"
+        )
+        self.assertIn(expected_path, error_field["public_semantic_meaning"])
+        projection = json.loads(
+            (ROOT / GENERATED_PATHS["handoff"]).read_text(encoding="utf-8")
+        )
+        self.assertEqual(expected_path, projection["error_code_catalog_path"])
+
+        stale = copy.deepcopy(handoff)
+        stale["error_code_catalog_path"] = LEGACY_ERROR_CODE_CATALOG_PATH.as_posix()
+        stale_error_field = next(
+            item
+            for item in stale["port_fields"]
+            if item["field"] == "deterministic-error-categories"
+        )
+        stale_error_field["public_semantic_meaning"] = stale_error_field[
+            "public_semantic_meaning"
+        ].replace(expected_path, LEGACY_ERROR_CODE_CATALOG_PATH.as_posix())
+        stale["handoff_digest"] = detached_digest("handoff", stale, "handoff_digest")
+        mutated = copy.deepcopy(self.values)
+        mutated["handoff"] = stale
+        with self.assertRaisesRegex(PetProfileError, "PET-CONTRACT-VERSION-GRAPH"):
+            validate_semantics(mutated)
 
     def test_valid_synthetic_cases_never_execute_a_candidate(self) -> None:
         cases = self.values["cases"]

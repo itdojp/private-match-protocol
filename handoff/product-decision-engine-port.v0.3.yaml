@@ -62,7 +62,7 @@ port_fields:
   - plaintext Coordinator result
   - secret material
 - field: deterministic-error-categories
-  public_semantic_meaning: Closed normalized failure categories and bounded PET validator codes from config/pet-profile-error-codes.v0.1.json; runtime, Schema, mutation, and generated-result vocabularies must match exactly.
+  public_semantic_meaning: Closed normalized failure categories and bounded PET validator codes from config/pet-profile-error-codes.v0.3.json; runtime, Schema, mutation, and generated-result vocabularies must match exactly.
   requirement: required
   source_profile_field: protocol_contract.failure_mappings
   expected_product_port_behavior: map only catalogued codes and normalized profile categories without raw vendor, secret, or local-path detail
@@ -297,7 +297,7 @@ limitations:
 - The handoff defines public semantics, not private Product implementation structure.
 - Registration and contract-fixture validation are not candidate execution permission.
 - No match predicate, production adapter, authentication, cloud, or KMS selection is made.
-handoff_digest: sha256:17fed6ebdf571136ee7086eaa2877cc9990fe19809399aeb98d96e04a42db265
+handoff_digest: sha256:fb17e8542fff33d64b757a1200d0cc9dbe3b55cc90f4e82b6acae7c24b060850
 operation_stage_contract_path: specs/pet-integration/operation-stage-contract.v0.3.yaml
 operation_stage_contract_digest: sha256:07a4e0c5b3eb8fc8e89d60399d4216f66264ff305dc4a33104dd34d3686748b0
 operation_stage_projection:
@@ -583,3 +583,4 @@ acknowledgment_substate_requirements:
   - evaluation_attempt_id
 public_result_field_policy_path: config/pet-public-result-field-policy.v0.3.json
 public_result_field_policy_digest: sha256:a7dc0d49e9f6fdd3bb25ebdf1583727dcf28fb0d052262a0a11257023f0603e9
+error_code_catalog_path: config/pet-profile-error-codes.v0.3.json
