@@ -1,0 +1,149 @@
+{
+  "$id": "https://github.com/itdojp/private-match-protocol/raw/main/schema/pet-public-result-field-policy.v0.3.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Closed PET public result-field confidentiality policy",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "const": "https://github.com/itdojp/private-match-protocol/raw/main/schema/pet-public-result-field-policy.v0.3.schema.json"
+    },
+    "schema_version": {
+      "const": "0.3"
+    },
+    "record_type": {
+      "const": "pet-public-result-field-policy"
+    },
+    "artifact_status": {
+      "const": "experimental"
+    },
+    "decision_vocabulary": {
+      "const": [
+        "MATCH",
+        "NO_MATCH",
+        "INDETERMINATE"
+      ]
+    },
+    "public_surfaces": {
+      "const": [
+        "authoritative_context.initial_state",
+        "presented_operation",
+        "product_handoff_input",
+        "evidence_hooks",
+        "public_audit_projection"
+      ]
+    },
+    "prohibited_result_field_names": {
+      "const": [
+        "bilateral_result",
+        "credential",
+        "exact_count",
+        "local_result",
+        "matching_element",
+        "party_a_result",
+        "party_b_result",
+        "party_local_result",
+        "party_results",
+        "plaintext_result",
+        "private_input",
+        "raw_grant",
+        "result_value"
+      ]
+    },
+    "prohibited_public_paths": {
+      "const": [
+        "authoritative_context.initial_state.party_local_result",
+        "evidence_hooks.party_local_result",
+        "presented_operation.party_a_result",
+        "presented_operation.party_b_result",
+        "presented_operation.party_results",
+        "product_handoff_input.synthetic_conformance_observer",
+        "public_audit_projection.synthetic_conformance_observer"
+      ]
+    },
+    "synthetic_observer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "surface": {
+          "const": "synthetic_conformance_observer"
+        },
+        "visibility": {
+          "const": "synthetic-global-observer"
+        },
+        "allowed_decision_paths": {
+          "const": [
+            "synthetic_conformance_observer.party_local_result_observations.party_a",
+            "synthetic_conformance_observer.party_local_result_observations.party_b"
+          ]
+        },
+        "coordinator_visible": {
+          "const": false
+        },
+        "product_port_input": {
+          "const": false
+        },
+        "evidence_exported": {
+          "const": false
+        }
+      },
+      "required": [
+        "surface",
+        "visibility",
+        "allowed_decision_paths",
+        "coordinator_visible",
+        "product_port_input",
+        "evidence_exported"
+      ]
+    },
+    "coordinator_visible_normalized_paths": {
+      "const": [
+        "authoritative_context.initial_state.accepted_result_presence.party_a",
+        "authoritative_context.initial_state.accepted_result_presence.party_b",
+        "authoritative_context.initial_state.proposed_result_presence.party_a",
+        "authoritative_context.initial_state.proposed_result_presence.party_b",
+        "authoritative_context.initial_state.result_state",
+        "authoritative_context.initial_state.result_acknowledgment_bindings.party_a.normalized_acknowledgment_status",
+        "authoritative_context.initial_state.result_acknowledgment_bindings.party_b.normalized_acknowledgment_status"
+      ]
+    },
+    "metadata_string_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_valid_metadata_may_equal_decision_vocabulary": {
+          "const": true
+        },
+        "substring_matching": {
+          "const": "prohibited"
+        },
+        "arbitrary_value_global_scanning": {
+          "const": "prohibited"
+        }
+      },
+      "required": [
+        "schema_valid_metadata_may_equal_decision_vocabulary",
+        "substring_matching",
+        "arbitrary_value_global_scanning"
+      ]
+    },
+    "policy_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "$schema",
+    "schema_version",
+    "record_type",
+    "artifact_status",
+    "decision_vocabulary",
+    "public_surfaces",
+    "prohibited_result_field_names",
+    "prohibited_public_paths",
+    "synthetic_observer",
+    "coordinator_visible_normalized_paths",
+    "metadata_string_policy",
+    "policy_digest"
+  ]
+}

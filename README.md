@@ -54,8 +54,8 @@ The following belong in private repositories:
   [canonical conformance-state projection](specs/conformance/CONFORMANCE_STATE_PROJECTION_V0.1.md), and
   [offline adapter-result contract](specs/conformance/INTEROPERABILITY_ADAPTER_CONTRACT_V0.1.md)
 - [Experimental PET integration profiles](specs/pet-integration/README.md),
-  [machine-readable profile registry](registry/pet-integration-profiles.v0.2.yaml), and
-  [public Product decision-engine handoff](handoff/product-decision-engine-port.v0.2.yaml)
+  [machine-readable profile registry](registry/pet-integration-profiles.v0.3.yaml), and
+  [public Product decision-engine handoff](handoff/product-decision-engine-port.v0.3.yaml)
 
 ## Maturity
 
@@ -73,10 +73,12 @@ fabricate later commitment, attempt, receipt, verification-material, or result
 state. Party plaintext decisions remain outside public callback and Product-port
 surfaces; a separate synthetic global observer is used only by offline fixture
 conformance.
-The complete current PET authority is version `0.2`. Published `v0.1` binding,
-handoff, profile, registry, operation, and generated authorities remain
-byte-preserved as an explicit whole-graph rollback option; mixed-version graphs
-fail closed.
+The complete current PET wrapper authority is version `0.3`. It applies a
+path-aware public-result confidentiality policy and binds acknowledgment
+Evidence to the exact selected profile digest. The reviewed profile contracts
+remain the exact byte-preserved `v0.2` dependencies of that wrapper. Published
+`v0.1` and `v0.2` graphs remain byte-preserved historical authorities;
+mixed-version and partial graphs fail closed.
 
 ## Initial design principles
 

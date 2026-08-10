@@ -43,6 +43,7 @@ path = [
   "scripts/generate_verifier_manifest.py",
   "scripts/protocol_time.py",
   "scripts/pet_profiles.py",
+  "scripts/pet_v02_digests.py",
   "scripts/strict_yaml.py",
   "scripts/validate_messages.py",
   "scripts/validate_pet_profiles.py",

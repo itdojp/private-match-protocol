@@ -1,0 +1,438 @@
+{
+  "$id": "https://github.com/itdojp/private-match-protocol/raw/main/schema/product-decision-engine-handoff.v0.3.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "acknowledgment_substate_requirements": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_result_before_acceptance": {
+          "const": "prohibited"
+        },
+        "common_opaque_receipt_preserved": {
+          "const": true
+        },
+        "operation_stage_contract_version": {
+          "const": "0.3"
+        },
+        "party_local_plaintext_result_visibility": {
+          "const": "party-local-only"
+        },
+        "phase_specific_abort_validation": {
+          "const": true
+        },
+        "proposed_result_presence_preserved": {
+          "const": true
+        },
+        "protocol_binding_version": {
+          "const": "0.3"
+        },
+        "source_phase": {
+          "const": "EVALUATING"
+        },
+        "exact_profile_digest_required": {
+          "const": true
+        },
+        "acknowledgment_evidence_binding_version": {
+          "const": "0.3"
+        },
+        "acknowledgment_evidence_digest_domain": {
+          "const": "private-match-pet-acknowledgment-evidence/v0.3"
+        },
+        "acknowledgment_evidence_digest_projection": {
+          "const": [
+            "acknowledging_party_slot",
+            "normalized_acknowledgment_status",
+            "opaque_receipt_ref",
+            "participant_binding_digest",
+            "profile_evidence_ref",
+            "session_id",
+            "profile_id",
+            "profile_version",
+            "profile_digest",
+            "profile_instance_id",
+            "evaluation_attempt_id"
+          ]
+        },
+        "exact_acknowledging_party_slot_required": {
+          "const": true
+        },
+        "participant_binding_digest_required": {
+          "const": true
+        }
+      },
+      "required": [
+        "source_phase",
+        "phase_specific_abort_validation",
+        "common_opaque_receipt_preserved",
+        "proposed_result_presence_preserved",
+        "accepted_result_before_acceptance",
+        "party_local_plaintext_result_visibility",
+        "operation_stage_contract_version",
+        "protocol_binding_version",
+        "exact_profile_digest_required",
+        "acknowledgment_evidence_binding_version",
+        "acknowledgment_evidence_digest_domain",
+        "acknowledgment_evidence_digest_projection",
+        "exact_acknowledging_party_slot_required",
+        "participant_binding_digest_required"
+      ],
+      "type": "object"
+    },
+    "artifact_status": {
+      "const": "experimental"
+    },
+    "evidence_boundary": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "prohibited": {
+          "items": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "status_vocabulary": {
+          "const": [
+            "pass",
+            "fail",
+            "skip",
+            "unsupported",
+            "timeout",
+            "tool-error"
+          ],
+          "type": "array"
+        }
+      },
+      "required": [
+        "allowed",
+        "prohibited",
+        "status_vocabulary"
+      ],
+      "type": "object"
+    },
+    "global_prohibited_content": {
+      "items": {
+        "maxLength": 2048,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "handoff_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "handoff_id": {
+      "const": "private-match-product-decision-engine-port"
+    },
+    "limitations": {
+      "items": {
+        "maxLength": 2048,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "operation_stage_contract_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "operation_stage_contract_path": {
+      "const": "specs/pet-integration/operation-stage-contract.v0.3.yaml",
+      "type": "string"
+    },
+    "operation_stage_projection": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "coordinator_visible_fields": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "expected_post_phases": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "expected_pre_phases": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "fields_introduced": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "fields_prohibited_on_input": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "fields_required_none": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "fields_required_on_input": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "lifecycle_stage": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operation": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "party_local_only_fields": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "query_budget_effect": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "result_classification": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "transcript_mutated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "operation",
+          "lifecycle_stage",
+          "expected_pre_phases",
+          "expected_post_phases",
+          "fields_required_on_input",
+          "fields_required_none",
+          "fields_prohibited_on_input",
+          "fields_introduced",
+          "party_local_only_fields",
+          "coordinator_visible_fields",
+          "result_classification",
+          "query_budget_effect",
+          "transcript_mutated"
+        ],
+        "type": "object"
+      },
+      "maxItems": 9,
+      "minItems": 9,
+      "type": "array"
+    },
+    "port_fields": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_product_port_behavior": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "fail_closed_rule": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "field": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "prohibited_content": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "public_semantic_meaning": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "requirement": {
+            "enum": [
+              "required",
+              "optional",
+              "unsupported"
+            ]
+          },
+          "source_profile_field": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "public_semantic_meaning",
+          "requirement",
+          "source_profile_field",
+          "expected_product_port_behavior",
+          "fail_closed_rule",
+          "prohibited_content"
+        ],
+        "type": "object"
+      },
+      "maxItems": 20,
+      "minItems": 20,
+      "type": "array"
+    },
+    "protocol_binding_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "protocol_binding_path": {
+      "const": "specs/pet-integration/protocol-binding.v0.3.yaml",
+      "type": "string"
+    },
+    "registry_path": {
+      "const": "registry/pet-integration-profiles.v0.3.yaml",
+      "type": "string"
+    },
+    "research_authority_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.3"
+    },
+    "selection_rule": {
+      "additionalProperties": false,
+      "properties": {
+        "complete_profile_required": {
+          "const": true
+        },
+        "component_only_rejected": {
+          "const": true
+        },
+        "production_selection": {
+          "const": "not-selected"
+        },
+        "unknown_profile_behavior": {
+          "const": "fail-closed"
+        }
+      },
+      "required": [
+        "complete_profile_required",
+        "component_only_rejected",
+        "production_selection",
+        "unknown_profile_behavior"
+      ],
+      "type": "object"
+    },
+    "public_result_field_policy_path": {
+      "const": "config/pet-public-result-field-policy.v0.3.json",
+      "type": "string"
+    },
+    "public_result_field_policy_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "error_code_catalog_path": {
+      "const": "config/pet-profile-error-codes.v0.3.json",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "handoff_id",
+    "artifact_status",
+    "research_authority_digest",
+    "registry_path",
+    "selection_rule",
+    "port_fields",
+    "global_prohibited_content",
+    "evidence_boundary",
+    "limitations",
+    "handoff_digest",
+    "operation_stage_contract_path",
+    "operation_stage_contract_digest",
+    "operation_stage_projection",
+    "protocol_binding_path",
+    "protocol_binding_digest",
+    "acknowledgment_substate_requirements",
+    "public_result_field_policy_path",
+    "public_result_field_policy_digest",
+    "error_code_catalog_path"
+  ],
+  "title": "Public Product decision-engine port handoff",
+  "type": "object"
+}

@@ -184,3 +184,32 @@ lifecycle model. A closed PET error-code catalog also requires exact parity
 among runtime, Schema, mutation, generated-result, test, and documentation
 surfaces. These corrections do not authorize candidate or production
 execution and do not change the experimental profile classification.
+
+## Result confidentiality and exact-profile Evidence correction
+
+The current wrapper graph advances to v0.3. Public-result confidentiality is
+defined by closed JSON paths, field semantics, actor visibility, and Schemas;
+it is not a recursive comparison of every string with the Protocol decision
+vocabulary. Result-bearing fields remain prohibited regardless of value, while
+schema-valid metadata may equal `MATCH`, `NO_MATCH`, or `INDETERMINATE` without
+being reclassified as plaintext result data. Decision values remain permitted
+only in the reviewed synthetic-global-observer result paths.
+
+Acknowledgment Evidence now binds the exact selected `profile_digest` in both
+the closed binding and the domain-separated digest projection. The new
+`private-match-pet-acknowledgment-evidence/v0.3` domain prevents a v0.2 digest
+projection from being interpreted as v0.3. The projection includes the exact
+acknowledging Party slot, opaque participant-binding digest, normalized
+acknowledgment status, and opaque receipt, so cross-slot copying, participant
+substitution, or receipt substitution cannot retain a valid Evidence digest.
+The profile digest must equal the
+selected profile, session/evaluation, registry, acknowledgment, observer, and
+Product handoff authorities wherever those surfaces represent the binding.
+
+The complete published v0.1 and v0.2 graphs remain byte-preserved. The current
+v0.3 wrapper graph explicitly reuses the unchanged v0.2 profile contracts as
+shared exact-byte dependencies; it versions every changed registry, binding,
+handoff, stage, operation, conformance, result, policy, compatibility, and
+generated authority. No partial graph, implicit fallback, forward inference,
+or cross-version acknowledgment binding is accepted. Rollback or historical
+selection is explicit and never changes the current selector.
