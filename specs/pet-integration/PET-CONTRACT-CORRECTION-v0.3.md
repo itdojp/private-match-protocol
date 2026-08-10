@@ -20,9 +20,10 @@ profile ID, version, instance, session, evaluation attempt, receipt, status, and
 Evidence reference. The binding projection uses the new domain separator
 `private-match-pet-acknowledgment-evidence/v0.3`. A legacy acknowledgment digest
 or a redigested substitution for another profile artifact cannot satisfy the
-v0.3 authority. The projection also covers the normalized acknowledgment status
-and common opaque receipt, preventing an Evidence digest from being reused
-after coordinated receipt substitution.
+v0.3 authority. The projection also covers the exact acknowledging Party slot,
+opaque participant-binding digest, normalized acknowledgment status, and common
+opaque receipt, preventing an Evidence digest from being copied across Party
+slots or reused after participant or receipt substitution.
 
 ## Compatibility and supersession
 

@@ -627,8 +627,10 @@ evaluating_acknowledgment_substate_authority:
     party_b: none
   profile_evidence_presence: *id001
   binding_context_fields:
+  - acknowledging_party_slot
   - normalized_acknowledgment_status
   - opaque_receipt_ref
+  - participant_binding_digest
   - session_id
   - profile_id
   - profile_version
@@ -669,8 +671,10 @@ evaluating_acknowledgment_substate_authority:
     party_b: none
   profile_evidence_presence: *id002
   binding_context_fields:
+  - acknowledging_party_slot
   - normalized_acknowledgment_status
   - opaque_receipt_ref
+  - participant_binding_digest
   - session_id
   - profile_id
   - profile_version
@@ -711,8 +715,10 @@ evaluating_acknowledgment_substate_authority:
     party_b: none
   profile_evidence_presence: *id003
   binding_context_fields:
+  - acknowledging_party_slot
   - normalized_acknowledgment_status
   - opaque_receipt_ref
+  - participant_binding_digest
   - session_id
   - profile_id
   - profile_version
@@ -754,8 +760,10 @@ evaluating_acknowledgment_substate_authority:
     party_b: none
   profile_evidence_presence: *id004
   binding_context_fields:
+  - acknowledging_party_slot
   - normalized_acknowledgment_status
   - opaque_receipt_ref
+  - participant_binding_digest
   - session_id
   - profile_id
   - profile_version
@@ -798,8 +806,10 @@ evaluating_acknowledgment_substate_authority:
     party_b: none
   profile_evidence_presence: *id005
   binding_context_fields:
+  - acknowledging_party_slot
   - normalized_acknowledgment_status
   - opaque_receipt_ref
+  - participant_binding_digest
   - session_id
   - profile_id
   - profile_version
@@ -842,8 +852,10 @@ evaluating_acknowledgment_substate_authority:
     party_b: none
   profile_evidence_presence: *id006
   binding_context_fields:
+  - acknowledging_party_slot
   - normalized_acknowledgment_status
   - opaque_receipt_ref
+  - participant_binding_digest
   - session_id
   - profile_id
   - profile_version
@@ -887,8 +899,10 @@ evaluating_acknowledgment_substate_authority:
     party_b: none
   profile_evidence_presence: *id007
   binding_context_fields:
+  - acknowledging_party_slot
   - normalized_acknowledgment_status
   - opaque_receipt_ref
+  - participant_binding_digest
   - session_id
   - profile_id
   - profile_version
@@ -915,7 +929,7 @@ evaluating_acknowledgment_substate_authority:
   party_local_only_fields:
   - proposed_result_state
   - local_result_binding
-stage_contract_digest: sha256:dee2caedc0d4c2d59d5369ca4ae4d829f41d0c7a7d0e12d81dad4666e11003a5
+stage_contract_digest: sha256:07a4e0c5b3eb8fc8e89d60399d4216f66264ff305dc4a33104dd34d3686748b0
 limitations:
 - This contract is a deterministic projection of the reviewed State Machine and Message Registry, not an independent State Machine.
 - Synthetic global-observer data is test-only and is not a Product or Coordinator input.

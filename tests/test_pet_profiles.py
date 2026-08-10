@@ -509,6 +509,16 @@ class PetProfileTests(unittest.TestCase):
         wrong_receipt_type["opaque_receipt_ref"] = 7
         with self.assertRaisesRegex(PetProfileError, "PET-RECEIPT-BINDING"):
             _acknowledgment_evidence_digest(wrong_receipt_type)
+        wrong_slot_type = copy.deepcopy(binding)
+        wrong_slot_type["acknowledging_party_slot"] = []
+        with self.assertRaisesRegex(
+            PetProfileError, "PET-ACKNOWLEDGMENT-EVIDENCE-BINDING"
+        ):
+            _acknowledgment_evidence_digest(wrong_slot_type)
+        wrong_participant_binding = copy.deepcopy(binding)
+        wrong_participant_binding["participant_binding_digest"] = "not-a-digest"
+        with self.assertRaisesRegex(PetProfileError, "PET-PARTICIPANT-BINDING"):
+            _acknowledgment_evidence_digest(wrong_participant_binding)
 
     def test_catalog_generator_and_validator_reject_malformed_profile_authority(
         self,
@@ -1161,6 +1171,11 @@ class PetProfileTests(unittest.TestCase):
                     binding = state["result_acknowledgment_bindings"][party]
                     self.assertEqual(party in acknowledgments, binding is not None)
                     if binding:
+                        self.assertEqual(party, binding["acknowledging_party_slot"])
+                        self.assertEqual(
+                            state["participant_binding_digest"],
+                            binding["participant_binding_digest"],
+                        )
                         self.assertEqual(
                             state["opaque_receipt_ref"], binding["opaque_receipt_ref"]
                         )
@@ -1374,8 +1389,10 @@ class PetProfileTests(unittest.TestCase):
         projection = {
             key: binding[key]
             for key in (
+                "acknowledging_party_slot",
                 "normalized_acknowledgment_status",
                 "opaque_receipt_ref",
+                "participant_binding_digest",
                 "profile_evidence_ref",
                 "session_id",
                 "profile_id",
@@ -1418,6 +1435,37 @@ class PetProfileTests(unittest.TestCase):
             )
         self.assertEqual("PET-ACKNOWLEDGMENT-EVIDENCE-BINDING", caught.exception.code)
 
+    def test_acknowledgment_evidence_binds_party_slot_and_participant(self) -> None:
+        item = next(
+            case
+            for case in self.values["cases"]["valid_cases"]
+            if case.get("abort_acknowledgment_substate") == "both-acknowledged"
+        )
+        record = operation_input_for_case(self.values, item)
+        state = record["authoritative_context"]["initial_state"]
+        for party in ("party_a", "party_b"):
+            binding = state["result_acknowledgment_bindings"][party]
+            self.assertEqual(party, binding["acknowledging_party_slot"])
+            self.assertEqual(
+                state["participant_binding_digest"],
+                binding["participant_binding_digest"],
+            )
+
+        for mutation, expected in (
+            (
+                "abort-ack-evidence-party-slot-substitution",
+                "PET-ACKNOWLEDGMENT-EVIDENCE-BINDING",
+            ),
+            (
+                "abort-ack-evidence-participant-binding-substitution",
+                "PET-PARTICIPANT-BINDING",
+            ),
+        ):
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(PetProfileError) as caught:
+                    _execute_invalid_case(self.values, mutation)
+                self.assertEqual(expected, caught.exception.code)
+
     def test_profile_digest_binding_mutations_are_bounded_and_catalogued(self) -> None:
         mutations = {
             key: value
@@ -1439,14 +1487,18 @@ class PetProfileTests(unittest.TestCase):
     ) -> None:
         requirements = self.values["handoff"]["acknowledgment_substate_requirements"]
         self.assertTrue(requirements["exact_profile_digest_required"])
+        self.assertTrue(requirements["exact_acknowledging_party_slot_required"])
+        self.assertTrue(requirements["participant_binding_digest_required"])
         self.assertEqual(
             "private-match-pet-acknowledgment-evidence/v0.3",
             requirements["acknowledgment_evidence_digest_domain"],
         )
         self.assertEqual(
             [
+                "acknowledging_party_slot",
                 "normalized_acknowledgment_status",
                 "opaque_receipt_ref",
+                "participant_binding_digest",
                 "profile_evidence_ref",
                 "session_id",
                 "profile_id",
@@ -1463,6 +1515,7 @@ class PetProfileTests(unittest.TestCase):
             if item["field"] == "pre-post-state-contract"
         )
         self.assertIn("profile/version/digest/instance", pre_post["fail_closed_rule"])
+        self.assertIn("participant-binding substitution", pre_post["fail_closed_rule"])
         projection = json.loads(
             (ROOT / GENERATED_PATHS["handoff"]).read_text(encoding="utf-8")
         )

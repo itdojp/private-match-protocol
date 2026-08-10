@@ -46,8 +46,8 @@ review_deadline: '2027-01-31'
 limitations:
 - Experimental profiles do not select a production PET engine.
 - Research candidate results are not-run and may supersede these contracts.
-registry_digest: sha256:4bb2c1ebeb9eb0e0efd0589283b954637b5ac7bc6b02ae635d2e75a83c97b1ce
-operation_stage_contract_digest: sha256:dee2caedc0d4c2d59d5369ca4ae4d829f41d0c7a7d0e12d81dad4666e11003a5
+registry_digest: sha256:9891e8f179d8653830dee5376c9be29ad884ac317241ed1c1f6e8be520167d6b
+operation_stage_contract_digest: sha256:07a4e0c5b3eb8fc8e89d60399d4216f66264ff305dc4a33104dd34d3686748b0
 public_result_field_policy_path: config/pet-public-result-field-policy.v0.3.json
 public_result_field_policy_digest: sha256:a7dc0d49e9f6fdd3bb25ebdf1583727dcf28fb0d052262a0a11257023f0603e9
 profile_contract_authority:

@@ -70,10 +70,12 @@ preserves state introduced atomically by
 `TR-ABORT` retains those receipt and proposed-result audit references because
 its reviewed effects do not write or clear them.
 
-The digest projection includes the normalized acknowledgment status and common
+The digest projection includes the exact acknowledging Party slot, opaque
+participant-binding digest, normalized acknowledgment status, and common
 opaque receipt as well as the Evidence, session, exact profile, and evaluation
-authorities. Substituting a receipt in both the enclosing state and binding
-without recomputing the Evidence digest therefore fails closed.
+authorities. Copying one Party binding into the other slot, substituting the
+participant authority, or substituting a receipt in both the enclosing state
+and binding without recomputing the Evidence digest therefore fails closed.
 
 ## Minimum result and private boundary
 

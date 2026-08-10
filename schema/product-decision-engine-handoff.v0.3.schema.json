@@ -41,8 +41,10 @@
         },
         "acknowledgment_evidence_digest_projection": {
           "const": [
+            "acknowledging_party_slot",
             "normalized_acknowledgment_status",
             "opaque_receipt_ref",
+            "participant_binding_digest",
             "profile_evidence_ref",
             "session_id",
             "profile_id",
@@ -51,6 +53,12 @@
             "profile_instance_id",
             "evaluation_attempt_id"
           ]
+        },
+        "exact_acknowledging_party_slot_required": {
+          "const": true
+        },
+        "participant_binding_digest_required": {
+          "const": true
         }
       },
       "required": [
@@ -65,7 +73,9 @@
         "exact_profile_digest_required",
         "acknowledgment_evidence_binding_version",
         "acknowledgment_evidence_digest_domain",
-        "acknowledgment_evidence_digest_projection"
+        "acknowledgment_evidence_digest_projection",
+        "exact_acknowledging_party_slot_required",
+        "participant_binding_digest_required"
       ],
       "type": "object"
     },

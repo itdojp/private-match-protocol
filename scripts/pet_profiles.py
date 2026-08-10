@@ -872,8 +872,10 @@ PROFILE_AUTHORITY_KEYS = frozenset(
 )
 ACKNOWLEDGMENT_EVIDENCE_KEYS = frozenset(
     {
+        "acknowledging_party_slot",
         "normalized_acknowledgment_status",
         "opaque_receipt_ref",
+        "participant_binding_digest",
         "profile_evidence_ref",
         "profile_evidence_binding_digest",
         "session_id",
@@ -942,9 +944,19 @@ def require_acknowledgment_evidence_binding(
         "PET-CALLBACK-BINDING",
     )
     _require(
+        isinstance(value["acknowledging_party_slot"], str)
+        and value["acknowledging_party_slot"] in {"party_a", "party_b"},
+        "PET-ACKNOWLEDGMENT-EVIDENCE-BINDING",
+    )
+    _require(
         isinstance(value["opaque_receipt_ref"], str)
         and bool(_DIGEST_RE.fullmatch(value["opaque_receipt_ref"])),
         "PET-RECEIPT-BINDING",
+    )
+    _require(
+        isinstance(value["participant_binding_digest"], str)
+        and bool(_DIGEST_RE.fullmatch(value["participant_binding_digest"])),
+        "PET-PARTICIPANT-BINDING",
     )
     if require_bound_digest:
         _require(
@@ -1628,13 +1640,17 @@ def validate_semantics(values: dict[str, Any]) -> None:
             "operation_stage_contract_version": "0.3",
             "protocol_binding_version": "0.3",
             "exact_profile_digest_required": True,
+            "exact_acknowledging_party_slot_required": True,
+            "participant_binding_digest_required": True,
             "acknowledgment_evidence_binding_version": "0.3",
             "acknowledgment_evidence_digest_domain": (
                 "private-match-pet-acknowledgment-evidence/v0.3"
             ),
             "acknowledgment_evidence_digest_projection": [
+                "acknowledging_party_slot",
                 "normalized_acknowledgment_status",
                 "opaque_receipt_ref",
+                "participant_binding_digest",
                 "profile_evidence_ref",
                 "session_id",
                 "profile_id",
@@ -2647,8 +2663,10 @@ def _evaluating_acknowledgment_substate_contract(
                 },
                 "profile_evidence_presence": presence,
                 "binding_context_fields": [
+                    "acknowledging_party_slot",
                     "normalized_acknowledgment_status",
                     "opaque_receipt_ref",
+                    "participant_binding_digest",
                     "session_id",
                     "profile_id",
                     "profile_version",
@@ -2694,6 +2712,7 @@ def _fixture_acknowledgment_binding(
     party: str,
     *,
     receipt: str,
+    participant_binding_digest: str,
     session: str,
     attempt: str,
     profile_authority: dict[str, Any],
@@ -2706,8 +2725,10 @@ def _fixture_acknowledgment_binding(
     """
     suffix = party.removeprefix("party_")
     binding = {
+        "acknowledging_party_slot": party,
         "normalized_acknowledgment_status": "ACKNOWLEDGED",
         "opaque_receipt_ref": receipt,
+        "participant_binding_digest": participant_binding_digest,
         "profile_evidence_ref": f"urn:private-match:test:profile-evidence:{suffix}",
         "session_id": session,
         "profile_id": profile_authority["profile_id"],
@@ -2734,8 +2755,10 @@ def _acknowledgment_evidence_digest(binding: dict[str, Any]) -> str:
     projection = {
         key: validated[key]
         for key in (
+            "acknowledging_party_slot",
             "normalized_acknowledgment_status",
             "opaque_receipt_ref",
+            "participant_binding_digest",
             "profile_evidence_ref",
             "session_id",
             "profile_id",
@@ -2813,6 +2836,7 @@ def _abort_phase_projection(
             _fixture_acknowledgment_binding(
                 party,
                 receipt=receipt,
+                participant_binding_digest=participants,
                 session=session,
                 attempt=attempt,
                 profile_authority=profile_authority,
@@ -3097,6 +3121,15 @@ def _validate_abort_phase_state(
             _require(binding is None, "PET-ABORT-PHASE-AUTHORITY")
             continue
         binding = require_acknowledgment_evidence_binding(binding)
+        _require(
+            binding.get("acknowledging_party_slot") == party,
+            "PET-ACKNOWLEDGMENT-EVIDENCE-BINDING",
+        )
+        _require(
+            binding.get("participant_binding_digest")
+            == observed.get("participant_binding_digest"),
+            "PET-PARTICIPANT-BINDING",
+        )
         _require(
             binding.get("opaque_receipt_ref") == observed.get("opaque_receipt_ref"),
             "PET-RECEIPT-BINDING",
@@ -4126,6 +4159,8 @@ STAGE_INVALID_CASE_CODES = {
     "abort-ack-evidence-reference-reused-profile-digest": "PET-PROFILE-AUTHORITY",
     "abort-ack-cross-authority-digest-substitution": "PET-PROFILE-AUTHORITY",
     "abort-ack-evidence-receipt-substitution": "PET-ACKNOWLEDGMENT-EVIDENCE-BINDING",
+    "abort-ack-evidence-party-slot-substitution": "PET-ACKNOWLEDGMENT-EVIDENCE-BINDING",
+    "abort-ack-evidence-participant-binding-substitution": "PET-PARTICIPANT-BINDING",
     "abort-evaluating-exposes-arbitrary-result-field": "PET-PUBLIC-RESULT-EXPOSURE",
 }
 INVALID_CASE_CODES = {**INVALID_CASE_CODES, **STAGE_INVALID_CASE_CODES}
@@ -4211,6 +4246,8 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
         "abort-ack-evidence-reference-reused-profile-digest": "EVALUATING",
         "abort-ack-cross-authority-digest-substitution": "EVALUATING",
         "abort-ack-evidence-receipt-substitution": "EVALUATING",
+        "abort-ack-evidence-party-slot-substitution": "EVALUATING",
+        "abort-ack-evidence-participant-binding-substitution": "EVALUATING",
         "abort-evaluating-exposes-arbitrary-result-field": "EVALUATING",
     }
     if mutation in abort_phase_mutations:
@@ -4585,6 +4622,15 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
             c["initial_state"]["result_acknowledgment_bindings"][party][
                 "opaque_receipt_ref"
             ] = replacement
+    elif mutation == "abort-ack-evidence-party-slot-substitution":
+        bindings = c["initial_state"]["result_acknowledgment_bindings"]
+        bindings["party_b"] = copy.deepcopy(bindings["party_a"])
+    elif mutation == "abort-ack-evidence-participant-binding-substitution":
+        binding = c["initial_state"]["result_acknowledgment_bindings"]["party_a"]
+        binding["participant_binding_digest"] = "sha256:" + "a8" * 32
+        binding["profile_evidence_binding_digest"] = _acknowledgment_evidence_digest(
+            binding
+        )
     elif mutation == "abort-evaluating-exposes-arbitrary-result-field":
         c["initial_state"]["result_value"] = "not-a-decision"
     elif mutation == "abort-wrong-terminal-phase":
