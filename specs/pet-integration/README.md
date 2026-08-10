@@ -18,8 +18,8 @@ The [RFC 9497/CIRCL VOPRF profile](voprf-component-v0.2.md) is component-only.
 It cannot be selected as `selected_integration_profile`, does not define set or
 session semantics, and cannot emit the Protocol result.
 
-The profiles do not duplicate the State Machine. The
-[machine-readable binding](protocol-binding.v0.2.yaml) references exact State
+The profiles do not duplicate the State Machine. The current
+[machine-readable binding](protocol-binding.v0.3.yaml) references exact State
 Machine and Message Registry semantic digests and maps profile operations to
 existing events, messages, transitions, guards, effects, transcript behavior,
 and replay/idempotency domains.
@@ -33,7 +33,7 @@ Message Registry and State Machine.
 
 ## Lifecycle-stage authority
 
-`operation-stage-contract.v0.2.yaml` is a closed deterministic projection of
+`operation-stage-contract.v0.3.yaml` is a closed deterministic projection of
 the current State Machine and Message Registry. Each operation has its own
 pre-phase, transition set, post-phase/effect, field-availability rules,
 transcript behavior, query-budget effect, and result classification. Early
@@ -61,8 +61,10 @@ they do not collapse those states into a boolean. No acknowledgment requires a
 null receipt and no proposed-result presence. Each acknowledgment requires both
 completed contributions, the common opaque receipt, the corresponding
 normalized acknowledgment binding, a domain-separated digest binding its
-public profile-Evidence reference to the exact session/profile/instance/attempt
-authority, and only a Party-local proposed-result **presence** marker. This
+public profile-Evidence reference to the exact
+session/profile/version/**digest**/instance/attempt authority, and only a
+Party-local proposed-result **presence** marker. The changed projection uses the
+`private-match-pet-acknowledgment-evidence/v0.3` domain separator. This
 preserves state introduced atomically by
 `TR-ACK-RECEIPT-A/B` even though those transitions keep the phase unchanged.
 `TR-ABORT` retains those receipt and proposed-result audit references because
@@ -76,6 +78,14 @@ counts, matching or non-matching rows, raw identifiers, participant identities,
 private inputs, and Coordinator-visible plaintext results are prohibited.
 Repeated-query controls and query-budget authority remain Protocol/Product
 responsibilities rather than upstream PET responsibilities.
+
+Public-result confidentiality is path- and field-authority based. A public
+result-bearing key or reviewed prohibited path fails closed regardless of its
+value. Conversely, schema-valid non-result metadata is not treated as a result
+merely because its string value happens to equal `MATCH`, `NO_MATCH`, or
+`INDETERMINATE`. Those decision values are accepted only at the closed
+synthetic-observer result paths, where actor visibility is explicitly
+`synthetic-global-observer`.
 
 The public `presented_operation` surface never carries both Parties' plaintext
 decisions. Synthetic callback conformance uses a separate, domain-separated
@@ -101,20 +111,22 @@ candidate requires a reviewed paid-AWS experiment grant. Missing authority is
 ## Artifacts
 
 - Research snapshot: `config/research-technology-authority.v0.1.json`
-- Profile registry: `registry/pet-integration-profiles.v0.2.yaml`
-- Product handoff: `handoff/product-decision-engine-port.v0.2.yaml`
-- Protocol binding: `specs/pet-integration/protocol-binding.v0.2.yaml`
-- Closed version graph: `config/pet-contract-compatibility.v0.2.json`
+- Profile registry: `registry/pet-integration-profiles.v0.3.yaml`
+- Product handoff: `handoff/product-decision-engine-port.v0.3.yaml`
+- Protocol binding: `specs/pet-integration/protocol-binding.v0.3.yaml`
+- Closed version graph: `config/pet-contract-compatibility.v0.3.json`
+- Public-result field policy:
+  `config/pet-public-result-field-policy.v0.3.json`
 - Operation-stage authority:
-  `specs/pet-integration/operation-stage-contract.v0.2.yaml`
-- Conformance cases: `conformance/pet-profiles/case-catalog.v0.2.json`
-- Closed operation input: `schema/pet-profile-operation-input.v0.2.schema.json`
+  `specs/pet-integration/operation-stage-contract.v0.3.yaml`
+- Conformance cases: `conformance/pet-profiles/case-catalog.v0.3.json`
+- Closed operation input: `schema/pet-profile-operation-input.v0.3.schema.json`
 - Executed case results:
-  `generated/pet-integration/executable-case-results.v0.2.json`
-- Preserved Draft v0.1 compatibility evidence: the prior profiles, registry,
-  binding, Product handoff, operation-input, operation-stage, and case-catalog
-  Schemas and records, generated operation inputs, comparison/index/projection,
-  and executable result set remain byte-identical and digest-checked.
+  `generated/pet-integration/executable-case-results.v0.3.json`
+- Preserved Draft v0.1 and v0.2 compatibility evidence: both published graphs
+  remain byte-identical and digest-checked. The current v0.3 wrapper reuses the
+  exact v0.2 profile contracts as explicit shared dependencies rather than
+  changing their meaning or version.
 - Generated comparison/index/handoff projection/digest manifest:
   `generated/pet-integration/`
 
@@ -128,7 +140,7 @@ and presented operation, executed through the same semantic validator used by
 negative cases, and bound by input/observer/result digests. This proves contract handling
 only; it does not prove PET security, policy correctness, or candidate behavior.
 
-## Corrective callback, abort, and error authority
+## Corrective callback, abort, result, and error authority
 
 Draft message compatibility is exact-version-only. `evaluation_start` and
 `result_acceptance_notice` use message version `0.2`; all other Draft message
@@ -187,3 +199,12 @@ The published distinctions are:
 - `PET-AUTHORITATIVE-TIME-ORDER` for noncanonical or nonmonotonic time; and
 - `PET-EVALUATION-DEADLINE` when the authoritative time has not reached the
   immutable deadline.
+
+The v0.3 correction does not modify the published v0.1 or v0.2 artifacts.
+`config/pet-contract-compatibility.v0.3.json` selects one complete v0.3 wrapper
+graph, pins the unchanged v0.2 profiles as shared exact-byte dependencies, and
+rejects implicit fallback, forward inference, partial graphs, and cross-version
+substitution. The current acknowledgment Evidence binding requires
+`profile_digest`; a v0.2 acknowledgment binding therefore cannot be presented
+to a v0.3 validator. See
+[PET contract correction v0.3](PET-CONTRACT-CORRECTION-v0.3.md).

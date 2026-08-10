@@ -112,9 +112,11 @@ Machine. Public operations contain only data available at that stage; bilateral
 Party plaintext results are isolated to a synthetic observer that is excluded
 from Coordinator and Product ports.
 
-The current experimental authority uses a complete v0.2 profile, registry,
-binding, handoff, operation, and generated-artifact graph. Published v0.1 bytes
-remain an explicit whole-graph rollback authority; cross-version and partial
+The current experimental wrapper authority is v0.3. It uses path-aware
+result-field confidentiality and binds acknowledgment Evidence to the exact
+profile digest while retaining the reviewed profile contracts as byte-exact
+v0.2 dependencies. Published v0.1 and v0.2 graphs remain explicit historical
+authorities; cross-version, partial, implicit-fallback, and forward-inference
 graphs fail closed.
 
 Exit criteria:

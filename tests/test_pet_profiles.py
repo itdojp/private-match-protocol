@@ -42,6 +42,7 @@ from pet_profiles import (  # noqa: E402
     PROFILE_PATHS,
     PROHIBITED_OUTPUTS,
     PROTOCOL_OUTPUTS,
+    RESULT_FIELD_POLICY_PATH,
     RECEIPT_BINDINGS,
     RESEARCH_COMMIT,
     RESEARCH_FILES,
@@ -64,15 +65,19 @@ from pet_profiles import (  # noqa: E402
     validate_error_code_authority,
     validate_semantics,
     validate_contract_compatibility,
+    validate_result_field_policy,
     expected_contract_compatibility,
     require_acknowledgment_evidence_binding,
     require_profile_authority,
     _acknowledgment_evidence_digest,
+    _require_abort_confidentiality,
+    _validate_result_field_paths,
     _execution_authorization_digest,
     _execute_invalid_case,
 )
 from strict_yaml import strict_yaml_load  # noqa: E402
 from canonicalize_message import canonicalize, populate_digests, strict_loads  # noqa: E402
+from pet_v02_digests import PUBLISHED_V02_DIGESTS  # noqa: E402
 
 
 class PetProfileTests(unittest.TestCase):
@@ -96,7 +101,7 @@ class PetProfileTests(unittest.TestCase):
         mutated["security_model"]["unstated_claim"] = True
         self.assertTrue(list(Draft202012Validator(schema).iter_errors(mutated)))
 
-    def test_operation_input_breaking_fields_use_v0_2_boundary(self) -> None:
+    def test_operation_input_breaking_fields_use_v0_3_boundary(self) -> None:
         legacy = json.loads(
             (ROOT / "schema/pet-profile-operation-input.v0.1.schema.json").read_text(
                 encoding="utf-8"
@@ -121,12 +126,12 @@ class PetProfileTests(unittest.TestCase):
             if case.get("abort_acknowledgment_substate") == "party-a-acknowledged"
         )
         record = operation_input_for_case(self.values, item)
-        self.assertEqual("0.2", record["schema_version"])
-        self.assertEqual("0.2", self.values["stage"]["schema_version"])
-        self.assertEqual("0.2", self.values["cases"]["schema_version"])
+        self.assertEqual("0.3", record["schema_version"])
+        self.assertEqual("0.3", self.values["stage"]["schema_version"])
+        self.assertEqual("0.3", self.values["cases"]["schema_version"])
         self.assertTrue(
             all(
-                case["input_path"].endswith(".v0.2.json")
+                case["input_path"].endswith(".v0.3.json")
                 for case in self.values["cases"]["valid_cases"]
             )
         )
@@ -135,7 +140,7 @@ class PetProfileTests(unittest.TestCase):
         legacy_record["schema_version"] = "0.1"
         self.assertTrue(
             list(Draft202012Validator(legacy).iter_errors(legacy_record)),
-            "v0.1 readers must reject rather than infer v0.2 abort state",
+            "v0.1 readers must reject rather than infer v0.3 abort state",
         )
         legacy_stage = json.loads(
             (ROOT / "schema/pet-operation-stage-contract.v0.1.schema.json").read_text(
@@ -311,8 +316,11 @@ class PetProfileTests(unittest.TestCase):
         rollback = {
             item["role"]: item for item in compatibility["graphs"][0]["artifacts"]
         }
-        current = {
+        historical = {
             item["role"]: item for item in compatibility["graphs"][1]["artifacts"]
+        }
+        current = {
+            item["role"]: item for item in compatibility["graphs"][2]["artifacts"]
         }
         for role in (
             "operation-stage",
@@ -326,7 +334,9 @@ class PetProfileTests(unittest.TestCase):
         ):
             with self.subTest(role=role):
                 self.assertIn("v0.1", rollback[role]["path"])
-                self.assertIn("v0.2", current[role]["path"])
+                self.assertIn("v0.2", historical[role]["path"])
+                expected_version = "v0.2" if role == "profile-schema" else "v0.3"
+                self.assertIn(expected_version, current[role]["path"])
         self.assertFalse(compatibility["rules"]["implicit_fallback"])
         self.assertFalse(compatibility["rules"]["forward_inference"])
         for requirement in compatibility["version_requirements"]:
@@ -335,9 +345,9 @@ class PetProfileTests(unittest.TestCase):
                 if key.endswith("_path"):
                     with self.subTest(version=version, path=key):
                         self.assertIn(version, value)
-        self.assertEqual("0.2", self.values["error_codes"]["schema_version"])
+        self.assertEqual("0.3", self.values["error_codes"]["schema_version"])
         self.assertEqual(
-            Path("config/pet-profile-error-codes.v0.2.json"),
+            Path("config/pet-profile-error-codes.v0.3.json"),
             ERROR_CODE_CATALOG_PATH,
         )
 
@@ -350,7 +360,11 @@ class PetProfileTests(unittest.TestCase):
         compatibility = self.values["compatibility"]
         self.assertEqual(compatibility, expected_contract_compatibility(ROOT))
         self.assertEqual(
-            [("rollback-v0.1", "0.1"), ("current-v0.2", "0.2")],
+            [
+                ("rollback-v0.1", "0.1"),
+                ("historical-v0.2", "0.2"),
+                ("current-v0.3", "0.3"),
+            ],
             [
                 (item["graph_id"], item["contract_version"])
                 for item in compatibility["graphs"]
@@ -362,14 +376,14 @@ class PetProfileTests(unittest.TestCase):
             self.assertEqual(len(paths), len(set(paths)))
         self.assertEqual(
             COMPATIBILITY_PATH,
-            Path("config/pet-contract-compatibility.v0.2.json"),
+            Path("config/pet-contract-compatibility.v0.3.json"),
         )
 
     def test_cross_version_and_partial_contract_graphs_fail_closed(self) -> None:
         for mutation in ("cross-version", "partial", "redigested-substitution"):
             with self.subTest(mutation=mutation):
                 values = copy.deepcopy(self.values)
-                graph = values["compatibility"]["graphs"][1]
+                graph = values["compatibility"]["graphs"][2]
                 if mutation == "cross-version":
                     graph["artifacts"][0]["path"] = values["compatibility"]["graphs"][
                         0
@@ -1240,6 +1254,316 @@ class PetProfileTests(unittest.TestCase):
                 self.assertNotIn(prohibited, serialized)
             self.assertNotIn("synthetic_conformance_observer", serialized)
 
+    def test_result_confidentiality_is_path_aware_not_value_global(self) -> None:
+        policy = self.values["result_field_policy"]
+        operation_schema = self.values["schemas"]["operation"]
+        schemas = {
+            "session_id": operation_schema["$defs"]["abort_state"]["properties"][
+                "session_id"
+            ],
+            "policy_id": operation_schema["$defs"]["abort_state"]["properties"][
+                "policy_id"
+            ],
+            "profile_evidence_ref": operation_schema["$defs"]["acknowledgment_binding"][
+                "properties"
+            ]["profile_evidence_ref"],
+        }
+        item = next(
+            case
+            for case in self.values["cases"]["valid_cases"]
+            if case.get("abort_acknowledgment_substate") == "party-a-acknowledged"
+        )
+        base = operation_input_for_case(self.values, item)["authoritative_context"][
+            "initial_state"
+        ]
+        for field in ("session_id", "policy_id", "profile_evidence_ref"):
+            for value in PROTOCOL_OUTPUTS:
+                with self.subTest(field=field, value=value):
+                    self.assertFalse(
+                        list(Draft202012Validator(schemas[field]).iter_errors(value))
+                    )
+                    observed = copy.deepcopy(base)
+                    if field == "profile_evidence_ref":
+                        observed["result_acknowledgment_bindings"]["party_a"][field] = (
+                            value
+                        )
+                    else:
+                        observed[field] = value
+                    _require_abort_confidentiality(policy, observed)
+
+        _require_abort_confidentiality(
+            policy,
+            {"metadata": {"reviewed_label": "MATCH", "note": "NO_MATCH"}},
+        )
+        for key, value in (
+            ("plaintext_result", "MATCH"),
+            ("result_value", "not-a-decision"),
+            ("party_local_result", "opaque-looking-but-forbidden"),
+            ("exact_count", 0),
+            ("matching_element", "synthetic"),
+            ("private_input", "synthetic"),
+            ("raw_grant", "synthetic"),
+            ("credential", "synthetic"),
+        ):
+            with self.subTest(forbidden_key=key):
+                with self.assertRaisesRegex(
+                    PetProfileError, "PET-PUBLIC-RESULT-EXPOSURE"
+                ):
+                    _require_abort_confidentiality(policy, {"metadata": {key: value}})
+
+    def test_observer_decisions_are_confined_to_exact_synthetic_paths(self) -> None:
+        callback = next(
+            item
+            for item in self.values["cases"]["valid_cases"]
+            if item["operation"] == "accept-profile-callback"
+        )
+        observer = operation_input_for_case(self.values, callback)[
+            "synthetic_conformance_observer"
+        ]
+        assert observer is not None
+        _validate_result_field_paths(
+            self.values["result_field_policy"],
+            observer,
+            surface="synthetic_conformance_observer",
+        )
+        for surface in (
+            "product_handoff_input",
+            "public_audit_projection",
+        ):
+            with self.subTest(surface=surface):
+                with self.assertRaisesRegex(
+                    PetProfileError, "PET-PUBLIC-RESULT-EXPOSURE"
+                ):
+                    _validate_result_field_paths(
+                        self.values["result_field_policy"],
+                        {"synthetic_conformance_observer": observer},
+                        surface=surface,
+                    )
+        unexpected = copy.deepcopy(observer)
+        unexpected["party_local_result_observations"]["party_c"] = "MATCH"
+        with self.assertRaisesRegex(PetProfileError, "PET-PUBLIC-RESULT-EXPOSURE"):
+            _validate_result_field_paths(
+                self.values["result_field_policy"],
+                unexpected,
+                surface="synthetic_conformance_observer",
+            )
+
+    def test_acknowledgment_evidence_digest_binds_exact_profile_artifact(self) -> None:
+        item = next(
+            case
+            for case in self.values["cases"]["valid_cases"]
+            if case.get("abort_acknowledgment_substate") == "party-a-acknowledged"
+        )
+        record = operation_input_for_case(self.values, item)
+        binding = record["authoritative_context"]["initial_state"][
+            "result_acknowledgment_bindings"
+        ]["party_a"]
+        self.assertIsNotNone(binding)
+        assert binding is not None
+        self.assertEqual(
+            record["authoritative_context"]["profile_authority"]["profile_digest"],
+            binding["profile_digest"],
+        )
+        changed = copy.deepcopy(binding)
+        changed["profile_digest"] = self.values["profiles"][
+            "private-match-experimental-nitro-enclave"
+        ]["profile_digest"]
+        changed.pop("profile_evidence_binding_digest")
+        changed_digest = _acknowledgment_evidence_digest(changed)
+        self.assertNotEqual(binding["profile_evidence_binding_digest"], changed_digest)
+        projection = {
+            key: binding[key]
+            for key in (
+                "profile_evidence_ref",
+                "session_id",
+                "profile_id",
+                "profile_version",
+                "profile_digest",
+                "profile_instance_id",
+                "evaluation_attempt_id",
+            )
+        }
+        expected = (
+            "sha256:"
+            + hashlib.sha256(
+                b"private-match-pet-acknowledgment-evidence/v0.3\x00"
+                + canonicalize(projection)
+            ).hexdigest()
+        )
+        self.assertEqual(expected, binding["profile_evidence_binding_digest"])
+
+    def test_profile_digest_binding_mutations_are_bounded_and_catalogued(self) -> None:
+        mutations = {
+            key: value
+            for key, value in INVALID_CASE_CODES.items()
+            if key.startswith("abort-ack-binding-")
+            or key.startswith("abort-ack-evidence-")
+            or key == "abort-ack-cross-authority-digest-substitution"
+        }
+        self.assertGreaterEqual(len(mutations), 10)
+        for mutation, expected in mutations.items():
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(PetProfileError) as caught:
+                    _execute_invalid_case(self.values, mutation)
+                self.assertEqual(expected, caught.exception.code)
+                self.assertNotIn("Traceback", str(caught.exception))
+
+    def test_product_handoff_projects_profile_digest_and_excludes_observer_input(
+        self,
+    ) -> None:
+        requirements = self.values["handoff"]["acknowledgment_substate_requirements"]
+        self.assertTrue(requirements["exact_profile_digest_required"])
+        self.assertEqual(
+            "private-match-pet-acknowledgment-evidence/v0.3",
+            requirements["acknowledgment_evidence_digest_domain"],
+        )
+        pre_post = next(
+            item
+            for item in self.values["handoff"]["port_fields"]
+            if item["field"] == "pre-post-state-contract"
+        )
+        self.assertIn("profile/version/digest/instance", pre_post["fail_closed_rule"])
+        projection = json.loads(
+            (ROOT / GENERATED_PATHS["handoff"]).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            requirements, projection["acknowledgment_substate_requirements"]
+        )
+        self.assertEqual(
+            str(RESULT_FIELD_POLICY_PATH), projection["public_result_field_policy_path"]
+        )
+        visibility = next(
+            item
+            for item in projection["port_fields"]
+            if item["field"] == "party-local-result-visibility"
+        )
+        self.assertIn("synthetic observer data", visibility["prohibited_content"])
+
+    def test_published_v02_bytes_are_fixed_and_explicitly_shared(self) -> None:
+        for relative, expected in PUBLISHED_V02_DIGESTS.items():
+            with self.subTest(path=relative):
+                observed = (
+                    "sha256:"
+                    + hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+                )
+                self.assertEqual(expected, observed)
+        compatibility = self.values["compatibility"]
+        self.assertEqual(
+            "exact-v0.2-bytes-under-v0.3-wrapper",
+            compatibility["rules"]["shared_profile_authority"],
+        )
+        historical = {
+            item["role"]: item for item in compatibility["graphs"][1]["artifacts"]
+        }
+        current = {
+            item["role"]: item for item in compatibility["graphs"][2]["artifacts"]
+        }
+        for role in (
+            "profile-schema",
+            "profile-secretflow",
+            "profile-nitro",
+            "profile-voprf",
+        ):
+            self.assertEqual(historical[role], current[role])
+        self.assertEqual(
+            "exact-v0.2-profile-under-v0.3-wrapper",
+            self.values["registry"]["profile_contract_authority"]["compatibility_mode"],
+        )
+
+    def test_v03_graph_rejects_stale_acknowledgment_and_cross_version_mix(self) -> None:
+        item = next(
+            case
+            for case in self.values["cases"]["valid_cases"]
+            if case.get("abort_acknowledgment_substate") == "party-a-acknowledged"
+        )
+        current_record = operation_input_for_case(self.values, item)
+        current_schema = self.values["schemas"]["operation"]
+        legacy_schema = json.loads(
+            (ROOT / "schema/pet-profile-operation-input.v0.2.schema.json").read_text()
+        )
+        self.assertFalse(
+            list(Draft202012Validator(current_schema).iter_errors(current_record))
+        )
+        self.assertTrue(
+            list(Draft202012Validator(legacy_schema).iter_errors(current_record))
+        )
+        stale = json.loads(
+            (
+                ROOT
+                / "generated/pet-integration/cases/pet-valid-abort-evaluating-ack-a.v0.2.json"
+            ).read_text()
+        )
+        self.assertTrue(list(Draft202012Validator(current_schema).iter_errors(stale)))
+        mixed = copy.deepcopy(self.values)
+        mixed["registry"]["complete_profiles"][0]["profile_version"] = "0.3"
+        mixed["registry"]["registry_digest"] = detached_digest(
+            "registry", mixed["registry"], "registry_digest"
+        )
+        with self.assertRaisesRegex(
+            PetProfileError,
+            "PET-(SCHEMA-INVALID|PROFILE-VERSION|CONTRACT-VERSION-GRAPH|CASE-INPUT-DIGEST)",
+        ):
+            validate_semantics(mixed)
+
+    def test_confidentiality_policy_has_schema_stage_handoff_runtime_parity(
+        self,
+    ) -> None:
+        validate_result_field_policy(self.values)
+        policy = self.values["result_field_policy"]
+        stage_prohibited = {
+            field
+            for operation in self.values["stage"]["operations"]
+            for field in operation["fields_prohibited_on_input"]
+        }
+        self.assertTrue(
+            {"party_local_result", "bilateral_result", "plaintext_result"}
+            <= stage_prohibited
+        )
+        global_prohibited = set(self.values["handoff"]["global_prohibited_content"])
+        self.assertTrue(
+            {"matching element", "exact intersection count", "credential"}
+            <= global_prohibited
+        )
+        source = (ROOT / "scripts/pet_profiles.py").read_text(encoding="utf-8")
+        validator_source = source[
+            source.index("def _validate_result_field_paths") : source.index(
+                "def _safe_relative"
+            )
+        ]
+        self.assertIn("child_path", validator_source)
+        self.assertIn("prohibited_names", validator_source)
+        self.assertIn(
+            "schema_valid_metadata_may_equal_decision_vocabulary",
+            policy["metadata_string_policy"],
+        )
+        self.assertNotIn("substring", validator_source.lower())
+
+    def test_current_exact_profile_authorities_never_omit_profile_digest(self) -> None:
+        item = next(
+            case
+            for case in self.values["cases"]["valid_cases"]
+            if case.get("abort_acknowledgment_substate") == "both-acknowledged"
+        )
+        record = operation_input_for_case(self.values, item)
+        exact_authorities: list[dict[str, object]] = []
+
+        def collect(value: object) -> None:
+            if isinstance(value, dict):
+                if {"profile_id", "profile_version", "profile_instance_id"} <= set(
+                    value
+                ):
+                    exact_authorities.append(value)
+                for child in value.values():
+                    collect(child)
+            elif isinstance(value, list):
+                for child in value:
+                    collect(child)
+
+        collect(record)
+        self.assertGreaterEqual(len(exact_authorities), 4)
+        for authority in exact_authorities:
+            self.assertIn("profile_digest", authority)
+
     def test_malformed_acknowledged_abort_is_bounded_before_schema_validation(
         self,
     ) -> None:
@@ -1572,7 +1896,7 @@ class PetProfileTests(unittest.TestCase):
         first = generated_files(ROOT)
         second = generated_files(ROOT)
         self.assertEqual(first, second)
-        self.assertEqual(54, len(first))
+        self.assertEqual(84, len(first))
         self.assertTrue(set(GENERATED_PATHS.values()) <= set(first))
         for relative, content in first.items():
             self.assertEqual(content, (ROOT / relative).read_bytes(), relative)
@@ -1603,7 +1927,7 @@ class PetProfileTests(unittest.TestCase):
         self.assertIn(
             "conformance/source/message-conformance-inputs.v0.1.json", input_paths
         )
-        self.assertEqual(53, len(manifest["generated_outputs"]))
+        self.assertEqual(83, len(manifest["generated_outputs"]))
 
     def _repository_copy(self):
         scratch = ROOT / "artifacts"

@@ -84,6 +84,10 @@ When a material error is found:
 4. preserve history unless it creates an active security risk
 5. define migration or re-verification requirements
 
+The PET v0.3 correction notice preserves the published v0.1 and v0.2 contract
+graphs as fixed historical authorities. Current selection requires the complete
+v0.3 wrapper graph; prior graphs are not silently promoted, mixed, or inferred.
+
 ## Relationship to the commercial product
 
 The private product repository may implement additional internal controls. Public protocol claims must not imply that unpublished controls have been independently reviewed. Public assurance evidence is published through `itdojp/private-match-assurance`.
