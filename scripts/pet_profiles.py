@@ -1632,6 +1632,17 @@ def validate_semantics(values: dict[str, Any]) -> None:
             "acknowledgment_evidence_digest_domain": (
                 "private-match-pet-acknowledgment-evidence/v0.3"
             ),
+            "acknowledgment_evidence_digest_projection": [
+                "normalized_acknowledgment_status",
+                "opaque_receipt_ref",
+                "profile_evidence_ref",
+                "session_id",
+                "profile_id",
+                "profile_version",
+                "profile_digest",
+                "profile_instance_id",
+                "evaluation_attempt_id",
+            ],
         },
         "PET-HANDOFF-STAGE-SEMANTICS",
     )
@@ -2636,6 +2647,8 @@ def _evaluating_acknowledgment_substate_contract(
                 },
                 "profile_evidence_presence": presence,
                 "binding_context_fields": [
+                    "normalized_acknowledgment_status",
+                    "opaque_receipt_ref",
                     "session_id",
                     "profile_id",
                     "profile_version",
@@ -2721,6 +2734,8 @@ def _acknowledgment_evidence_digest(binding: dict[str, Any]) -> str:
     projection = {
         key: validated[key]
         for key in (
+            "normalized_acknowledgment_status",
+            "opaque_receipt_ref",
             "profile_evidence_ref",
             "session_id",
             "profile_id",
@@ -4110,6 +4125,7 @@ STAGE_INVALID_CASE_CODES = {
     "abort-ack-binding-recomputed-profile-substitution": "PET-PROFILE-AUTHORITY",
     "abort-ack-evidence-reference-reused-profile-digest": "PET-PROFILE-AUTHORITY",
     "abort-ack-cross-authority-digest-substitution": "PET-PROFILE-AUTHORITY",
+    "abort-ack-evidence-receipt-substitution": "PET-ACKNOWLEDGMENT-EVIDENCE-BINDING",
     "abort-evaluating-exposes-arbitrary-result-field": "PET-PUBLIC-RESULT-EXPOSURE",
 }
 INVALID_CASE_CODES = {**INVALID_CASE_CODES, **STAGE_INVALID_CASE_CODES}
@@ -4194,6 +4210,7 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
         "abort-ack-binding-recomputed-profile-substitution": "EVALUATING",
         "abort-ack-evidence-reference-reused-profile-digest": "EVALUATING",
         "abort-ack-cross-authority-digest-substitution": "EVALUATING",
+        "abort-ack-evidence-receipt-substitution": "EVALUATING",
         "abort-evaluating-exposes-arbitrary-result-field": "EVALUATING",
     }
     if mutation in abort_phase_mutations:
@@ -4561,6 +4578,13 @@ def _mutate_operation_input(values: dict[str, Any], mutation: str) -> dict[str, 
         ] = values["profiles"]["private-match-experimental-voprf-component"][
             "profile_digest"
         ]
+    elif mutation == "abort-ack-evidence-receipt-substitution":
+        replacement = "sha256:" + "a7" * 32
+        c["initial_state"]["opaque_receipt_ref"] = replacement
+        for party in c["initial_state"]["receipt_acknowledgment_slots"]:
+            c["initial_state"]["result_acknowledgment_bindings"][party][
+                "opaque_receipt_ref"
+            ] = replacement
     elif mutation == "abort-evaluating-exposes-arbitrary-result-field":
         c["initial_state"]["result_value"] = "not-a-decision"
     elif mutation == "abort-wrong-terminal-phase":

@@ -297,9 +297,9 @@ limitations:
 - The handoff defines public semantics, not private Product implementation structure.
 - Registration and contract-fixture validation are not candidate execution permission.
 - No match predicate, production adapter, authentication, cloud, or KMS selection is made.
-handoff_digest: sha256:c2819a9b314cc0e710bfb001e82a25da7ac0b832684948b1da6b0902f23815b6
+handoff_digest: sha256:beebb6d65a62bd8b2eaf154bc71d63d898c4c80cfe72349d7c739144ce9fd2cb
 operation_stage_contract_path: specs/pet-integration/operation-stage-contract.v0.3.yaml
-operation_stage_contract_digest: sha256:fc948f05ba3da4d46534dbde25a40dc3d0646bcb1c55ca180029c70ce1acb3c4
+operation_stage_contract_digest: sha256:dee2caedc0d4c2d59d5369ca4ae4d829f41d0c7a7d0e12d81dad4666e11003a5
 operation_stage_projection:
 - operation: register-component
   lifecycle_stage: registry-registration
@@ -554,7 +554,7 @@ operation_stage_projection:
   query_budget_effect: phase-dependent-abort
   transcript_mutated: true
 protocol_binding_path: specs/pet-integration/protocol-binding.v0.3.yaml
-protocol_binding_digest: sha256:c71dda59e4a5ef12dade1fb52109dffd329fcd1a54fc160c36a2090d2baa0473
+protocol_binding_digest: sha256:337151c9565c7de347c4d695195b7c6ac3331da2ede7ac8f2326a4a989d56fba
 acknowledgment_substate_requirements:
   source_phase: EVALUATING
   phase_specific_abort_validation: true
@@ -567,5 +567,15 @@ acknowledgment_substate_requirements:
   exact_profile_digest_required: true
   acknowledgment_evidence_binding_version: '0.3'
   acknowledgment_evidence_digest_domain: private-match-pet-acknowledgment-evidence/v0.3
+  acknowledgment_evidence_digest_projection:
+  - normalized_acknowledgment_status
+  - opaque_receipt_ref
+  - profile_evidence_ref
+  - session_id
+  - profile_id
+  - profile_version
+  - profile_digest
+  - profile_instance_id
+  - evaluation_attempt_id
 public_result_field_policy_path: config/pet-public-result-field-policy.v0.3.json
 public_result_field_policy_digest: sha256:a7dc0d49e9f6fdd3bb25ebdf1583727dcf28fb0d052262a0a11257023f0603e9

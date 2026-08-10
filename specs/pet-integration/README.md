@@ -70,6 +70,11 @@ preserves state introduced atomically by
 `TR-ABORT` retains those receipt and proposed-result audit references because
 its reviewed effects do not write or clear them.
 
+The digest projection includes the normalized acknowledgment status and common
+opaque receipt as well as the Evidence, session, exact profile, and evaluation
+authorities. Substituting a receipt in both the enclosing state and binding
+without recomputing the Evidence digest therefore fails closed.
+
 ## Minimum result and private boundary
 
 Every complete profile exposes only `MATCH`, `NO_MATCH`, or `INDETERMINATE` as

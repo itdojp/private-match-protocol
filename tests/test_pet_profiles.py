@@ -1374,6 +1374,8 @@ class PetProfileTests(unittest.TestCase):
         projection = {
             key: binding[key]
             for key in (
+                "normalized_acknowledgment_status",
+                "opaque_receipt_ref",
                 "profile_evidence_ref",
                 "session_id",
                 "profile_id",
@@ -1391,6 +1393,30 @@ class PetProfileTests(unittest.TestCase):
             ).hexdigest()
         )
         self.assertEqual(expected, binding["profile_evidence_binding_digest"])
+
+    def test_acknowledgment_evidence_digest_binds_receipt_authority(self) -> None:
+        item = next(
+            case
+            for case in self.values["cases"]["valid_cases"]
+            if case.get("abort_acknowledgment_substate") == "both-acknowledged"
+        )
+        record = operation_input_for_case(self.values, item)
+        state = record["authoritative_context"]["initial_state"]
+        binding = state["result_acknowledgment_bindings"]["party_a"]
+        self.assertIsNotNone(binding)
+        assert binding is not None
+        changed = copy.deepcopy(binding)
+        changed["opaque_receipt_ref"] = "sha256:" + "a7" * 32
+        changed.pop("profile_evidence_binding_digest")
+        self.assertNotEqual(
+            binding["profile_evidence_binding_digest"],
+            _acknowledgment_evidence_digest(changed),
+        )
+        with self.assertRaises(PetProfileError) as caught:
+            _execute_invalid_case(
+                self.values, "abort-ack-evidence-receipt-substitution"
+            )
+        self.assertEqual("PET-ACKNOWLEDGMENT-EVIDENCE-BINDING", caught.exception.code)
 
     def test_profile_digest_binding_mutations_are_bounded_and_catalogued(self) -> None:
         mutations = {
@@ -1416,6 +1442,20 @@ class PetProfileTests(unittest.TestCase):
         self.assertEqual(
             "private-match-pet-acknowledgment-evidence/v0.3",
             requirements["acknowledgment_evidence_digest_domain"],
+        )
+        self.assertEqual(
+            [
+                "normalized_acknowledgment_status",
+                "opaque_receipt_ref",
+                "profile_evidence_ref",
+                "session_id",
+                "profile_id",
+                "profile_version",
+                "profile_digest",
+                "profile_instance_id",
+                "evaluation_attempt_id",
+            ],
+            requirements["acknowledgment_evidence_digest_projection"],
         )
         pre_post = next(
             item

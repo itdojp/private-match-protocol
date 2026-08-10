@@ -38,6 +38,19 @@
         },
         "acknowledgment_evidence_digest_domain": {
           "const": "private-match-pet-acknowledgment-evidence/v0.3"
+        },
+        "acknowledgment_evidence_digest_projection": {
+          "const": [
+            "normalized_acknowledgment_status",
+            "opaque_receipt_ref",
+            "profile_evidence_ref",
+            "session_id",
+            "profile_id",
+            "profile_version",
+            "profile_digest",
+            "profile_instance_id",
+            "evaluation_attempt_id"
+          ]
         }
       },
       "required": [
@@ -51,7 +64,8 @@
         "protocol_binding_version",
         "exact_profile_digest_required",
         "acknowledgment_evidence_binding_version",
-        "acknowledgment_evidence_digest_domain"
+        "acknowledgment_evidence_digest_domain",
+        "acknowledgment_evidence_digest_projection"
       ],
       "type": "object"
     },

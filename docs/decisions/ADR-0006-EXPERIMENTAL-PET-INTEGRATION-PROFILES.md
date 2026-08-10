@@ -198,9 +198,11 @@ only in the reviewed synthetic-global-observer result paths.
 Acknowledgment Evidence now binds the exact selected `profile_digest` in both
 the closed binding and the domain-separated digest projection. The new
 `private-match-pet-acknowledgment-evidence/v0.3` domain prevents a v0.2 digest
-projection from being interpreted as v0.3. The value must equal the selected
-profile, session/evaluation, registry, acknowledgment, observer, and Product
-handoff authorities wherever those surfaces represent the binding.
+projection from being interpreted as v0.3. The projection includes the
+normalized acknowledgment status and opaque receipt, so a receipt substitution
+cannot retain the original Evidence digest. The profile digest must equal the
+selected profile, session/evaluation, registry, acknowledgment, observer, and
+Product handoff authorities wherever those surfaces represent the binding.
 
 The complete published v0.1 and v0.2 graphs remain byte-preserved. The current
 v0.3 wrapper graph explicitly reuses the unchanged v0.2 profile contracts as
