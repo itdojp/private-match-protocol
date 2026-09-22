@@ -1,110 +1,150 @@
 # Private Match Protocol
 
-Public specification and conformance repository for the Private Match project.
+Public protocol specifications, privacy contracts, and deterministic conformance
+tests for Private Match. Maintained by ITDO Inc.
 
-Private Match is intended to let two parties evaluate a narrowly defined relationship between private inputs while disclosing only an agreed result. The repository defines what the protocol claims, what it leaks, which assumptions it depends on, and how independent implementations are tested.
+Private Match explores how two parties can evaluate a narrowly defined
+relationship between private inputs, disclose only an agreed result, and permit
+further disclosure only through explicit policy and consent. This repository
+defines the public contract; it is not the commercial service implementation.
 
-## Repository role
+> **Status: draft specifications and experimental PET contracts.** No artifact
+> is candidate or stable. No production PET has been selected, and no PET
+> candidate has been executed. Contract-validation success does not establish
+> cryptographic security, input completeness, deployment security, legal
+> compliance, or production readiness.
 
-This repository is the public system of record for:
+## Start here
 
-- protocol state machines and message schemas
-- privacy and metadata leakage contracts
-- disclosure and consent rules
-- replay, expiry, session, and commitment semantics
-- reference client and verifier components approved for publication
-- test vectors and conformance suites
-- formal specifications and model-checking inputs
-- public assurance claims related to the protocol
+| Goal | Read |
+| --- | --- |
+| Understand actors, outputs, and leakage | [Actors and trust boundaries](specs/ACTORS_AND_TRUST_BOUNDARIES.md) · [Privacy Leakage Contract](docs/PRIVACY_LEAKAGE_CONTRACT.md) |
+| Implement session lifecycle and consent | [Core State Machine](specs/state-machines/private-match-core-session-v0.1.md) |
+| Validate messages and transcripts | [Message contract](specs/messages/private-match-core-messages-v0.1.md) · [Canonical transcript](specs/messages/canonical-transcript-v0.1.md) |
+| Run or integrate conformance checks | [Core conformance suite](specs/conformance/PRIVATE_MATCH_CORE_CONFORMANCE_V0.1.md) · [Reference verifier](specs/conformance/REFERENCE_VERIFIER_CONTRACT_V0.1.md) |
+| Consume experimental PET contracts | [PET integration guide](specs/pet-integration/README.md) · [Product handoff](handoff/product-decision-engine-port.v0.3.yaml) |
+| Review change and compatibility rules | [Governance](GOVERNANCE.md) · [Roadmap](ROADMAP.md) |
 
-## Not contained here
+## What is available
 
-The following belong in private repositories:
+- Machine-readable actor, leakage, session, consent, disclosure, replay, expiry,
+  commitment, message, and transcript contracts.
+- Canonical message vectors, a Draft core conformance suite, an offline
+  reference verifier, and [adapter-result
+  comparison](specs/conformance/INTEROPERABILITY_ADAPTER_CONTRACT_V0.1.md).
+- Experimental PET profiles, lifecycle-stage-aware operation contracts, positive
+  and negative fixtures, and deterministic generated projections.
 
-- production coordinator implementation
-- customer-specific integrations and policies
-- commercial UI, billing, and tenant administration
-- infrastructure and key-management configuration
-- abuse-detection thresholds
-- customer data and interview material
-- unpublished inventions and patent candidates
-- unresolved vulnerability details
+The core profile remains `private-match-core/0.1`. The current **PET wrapper
+graph is v0.3**, with exact byte-preserved **v0.2 profile contracts** as
+explicit dependencies:
+
+| Profile | Contract class | Execution status |
+| --- | --- | --- |
+| SecretFlow KKRT | Experimental complete-decision profile | Contract fixtures only; candidate not run |
+| Nitro Enclaves | Experimental complete-decision profile | Contract fixtures only; candidate not run |
+| RFC 9497 / CIRCL VOPRF | Component-only profile | Not a complete decision engine |
+
+The v0.3 wrapper uses path-aware result confidentiality and binds acknowledgment
+Evidence to the exact profile digest. Party-local plaintext decisions do not
+enter public callbacks, Product-port projections, or Evidence. A separate
+synthetic observer exists only for offline conformance.
+
+Published v0.1/v0.2 graphs remain historical fixed-byte authorities; do not mix
+them or infer newer behavior from an older version. Select the complete current
+graph through the [compatibility
+map](config/pet-contract-compatibility.v0.3.json),
+[registry](registry/pet-integration-profiles.v0.3.yaml), and [Protocol
+binding](specs/pet-integration/protocol-binding.v0.3.yaml). See the [v0.3
+correction notice](specs/pet-integration/PET-CONTRACT-CORRECTION-v0.3.md). These
+preservation rules do not promote an artifact to stable or establish a
+production compatibility commitment.
+
+## Local validation
+
+The CI target is Ubuntu 24.04 with **CPython 3.12.11**. From the repository
+root, use that runtime and install the hash-locked build and development
+dependencies:
+
+```bash
+python3.12 -m venv .venv
+. .venv/bin/activate
+python -m pip install --require-hashes -r requirements-build.txt
+python -m pip install --require-hashes --no-build-isolation -r requirements-dev.txt
+python -m unittest discover -s tests -p 'test_*.py'
+python -m ruff check scripts tests
+python -m ruff format --check scripts tests
+python scripts/validate_leakage_contract.py --root .
+python scripts/validate_session_state_machine.py --root . --print-digest
+python scripts/validate_messages.py --root .
+python scripts/generate_message_vectors.py --root . --check
+python scripts/generate_pet_profiles.py --root . --check
+python scripts/validate_pet_profiles.py --root .
+reuse lint
+```
+
+Dependency installation fetches packages; the contract validators operate
+offline and do not execute SecretFlow, CIRCL/VOPRF, Nitro, or AWS operations.
+
+Run the core reference conformance path separately:
+
+```bash
+python scripts/generate_verifier_manifest.py --root . --check
+python scripts/generate_conformance_suite.py --root . --check
+python scripts/validate_conformance_suite.py --root .
+python scripts/run_conformance.py \
+  --root . --all --output-dir artifacts/conformance-local
+```
+
+`--check` verifies committed generated output rather than refreshing it. Follow
+the applicable artifact guide when changing source authority, and compare
+independent regenerations before review. The [CI
+workflow](.github/workflows/protocol-spec.yml) defines the complete repository
+check sequence, including adapter-result comparison.
+
+## Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `specs/` | Human-readable and machine-readable Protocol contracts |
+| `privacy/` | Leakage authority |
+| `schema/` · `schemas/` | Versioned artifact and message Schemas |
+| `registry/` · `config/` | Message/profile registries and closed authority maps |
+| `handoff/` | Public Product integration requirements |
+| `conformance/` | Inputs, cases, vectors, and expected results |
+| `scripts/` · `tests/` | Validators, generators, reference execution, and regressions |
+| `generated/` | Deterministic projections and manifests |
+
+## Security, contribution, and scope
+
+Work from an Issue and submit a scoped PR; do not redefine published field
+meanings or use an unknown version as an implicit fallback. State assumptions,
+public/private inputs, outputs, metadata leakage, and limitations before making
+a claim. Conformance tests and future formal-model work are not proofs of PET
+security.
+
+No production coordinator, customer-specific policy, private source,
+infrastructure, key-management configuration, customer data, or unpublished
+invention belongs here. Report suspected vulnerabilities through
+[SECURITY.md](SECURITY.md), not a public Issue. See [repository
+boundaries](docs/REPOSITORY_BOUNDARIES.md) and [AGENTS.md](AGENTS.md).
 
 ## Related repositories
 
-- `itdojp/private-match-research` — public market, use-case, and technology research
-- `itdojp/private-match-product` — private commercial product implementation
-- `itdojp/private-match-strategy` — private business, IP, legal, and publication decisions
-- `itdojp/private-match-assurance` — public release evidence and assurance reports
-- `itdojp/ae-framework` — assurance control plane used to organize evidence and policy gates
-
-## Current draft artifacts
-
-- [Actors and trust boundaries](specs/ACTORS_AND_TRUST_BOUNDARIES.md)
-- [Privacy Leakage Contract](docs/PRIVACY_LEAKAGE_CONTRACT.md) and its
-  [machine-readable artifact](privacy/leakage-contract.v0.1.yaml)
-- [Core session and disclosure state machine](specs/state-machines/private-match-core-session-v0.1.md)
-  and its
-  [machine-readable artifact](specs/state-machines/private-match-core-session-v0.1.yaml)
-- [Core versioned message contract](specs/messages/private-match-core-messages-v0.1.md),
-  [message registry](registry/message-types.v0.1.yaml), and
-  [canonical transcript contract](specs/messages/canonical-transcript-v0.1.md)
-- [Draft core conformance suite](specs/conformance/PRIVATE_MATCH_CORE_CONFORMANCE_V0.1.md),
-  [reference verifier contract](specs/conformance/REFERENCE_VERIFIER_CONTRACT_V0.1.md),
-  [canonical conformance-state projection](specs/conformance/CONFORMANCE_STATE_PROJECTION_V0.1.md), and
-  [offline adapter-result contract](specs/conformance/INTEROPERABILITY_ADAPTER_CONTRACT_V0.1.md)
-- [Experimental PET integration profiles](specs/pet-integration/README.md),
-  [machine-readable profile registry](registry/pet-integration-profiles.v0.3.yaml), and
-  [public Product decision-engine handoff](handoff/product-decision-engine-port.v0.3.yaml)
-
-## Maturity
-
-The repository contains draft protocol artifacts. No artifact is `candidate` or
-`stable`, no production protocol or PET has been selected, no cryptographic
-security claim has been established, and no compatibility commitment exists yet.
-SecretFlow KKRT and Nitro Enclaves are contract-only experimental complete
-profiles; RFC 9497/CIRCL VOPRF is component-only. No candidate was executed and
-no production PET or adapter has been selected.
-All valid PET fixtures execute only the shared offline contract validator.
-Profile registration and contract-fixture acceptance do not authorize a PET
-candidate, AWS operation, paid resource, or production execution.
-The PET conformance model is lifecycle-stage-aware: early operations cannot
-fabricate later commitment, attempt, receipt, verification-material, or result
-state. Party plaintext decisions remain outside public callback and Product-port
-surfaces; a separate synthetic global observer is used only by offline fixture
-conformance.
-The complete current PET wrapper authority is version `0.3`. It applies a
-path-aware public-result confidentiality policy and binds acknowledgment
-Evidence to the exact selected profile digest. The reviewed profile contracts
-remain the exact byte-preserved `v0.2` dependencies of that wrapper. Published
-`v0.1` and `v0.2` graphs remain byte-preserved historical authorities;
-mixed-version and partial graphs fail closed.
-
-## Initial design principles
-
-1. Minimize output before optimizing performance.
-2. Separate facts, protocol assumptions, security claims, and business claims.
-3. Treat repeated-query leakage as a protocol property.
-4. Bind all accepted messages to a versioned session and participant context.
-5. Fail closed when verification material or protocol state is missing.
-6. Do not use test proofs or silent fallback in production paths.
-7. Prefer reviewed protocols and libraries over novel cryptographic construction.
-8. Publish known limitations and non-goals with each version.
+| Repository | Role |
+| --- | --- |
+| [private-match-research](https://github.com/itdojp/private-match-research) | Public market, use-case, substitute, and technology research |
+| [private-match-assurance](https://github.com/itdojp/private-match-assurance) | Public assurance contracts, validation tools, and scoped claims |
+| `private-match-product` (private) | Commercial implementation and private Evidence |
+| `private-match-strategy` (private) | Business, IP, legal, and publication decisions |
+| [ae-framework](https://github.com/itdojp/ae-framework) | Evidence organization and policy judgments, not independent certification |
 
 ## License
 
-Repository content uses an explicit dual-license structure:
-
-- Narrative protocol documentation, research text, tables, and diagrams are licensed under
-  [Creative Commons Attribution 4.0 International](LICENSES/CC-BY-4.0.txt).
-- Executable or reference code, Python and TypeScript code, JSON Schemas, validators, tests,
-  fixtures, conformance vectors, GitHub Actions, and related build inputs are licensed under
-  the [Apache License 2.0](LICENSES/Apache-2.0.txt).
-
-[`REUSE.toml`](REUSE.toml) provides the machine-readable SPDX file mapping and takes
-precedence over this summary for individual files. Patent-sensitive implementation material
-and trade-secret candidates remain private or embargoed until human IP and publication
-approval; these licenses do not indicate that such material has been published here.
-
-The explicit human approval, scope, alternatives, and publication boundary for this decision
-are recorded in [ADR-0001](docs/decisions/ADR-0001-PUBLIC-LICENSING.md).
+Narrative documentation, tables, and diagrams use
+[CC-BY-4.0](LICENSES/CC-BY-4.0.txt). Executable/reference code, Schemas,
+validators, tests, fixtures, vectors, workflows, and build inputs use
+[Apache-2.0](LICENSES/Apache-2.0.txt). [REUSE.toml](REUSE.toml) is authoritative
+for the per-file mapping. See
+[ADR-0001](docs/decisions/ADR-0001-PUBLIC-LICENSING.md). Licensing does not
+approve publication of private or patent-sensitive material.
